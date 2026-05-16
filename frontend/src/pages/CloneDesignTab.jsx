@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
+import { VALID_INSTRUCT_ITEMS } from '../utils/constants';
 import SearchableSelect from '../components/SearchableSelect';
 import ALL_LANGUAGES from '../languages.json';
 import { POPULAR_LANGS, PRESETS, TAGS, CATEGORIES } from '../utils/constants';
@@ -64,7 +65,12 @@ export default function CloneDesignTab(props) {
       return;
     }
     setActivePersonality(p.id);
-    setInstruct(p.instruct);
+    // Filter instruct to only keep backend-recognized tags, strip natural
+    // language descriptions that would fail validation at generation time.
+    const clean = (p.instruct || '').split(',').map(s => s.trim())
+      .filter(s => VALID_INSTRUCT_ITEMS.includes(s.toLowerCase()))
+      .join(', ');
+    setInstruct(clean || p.instruct || '');
   };
 
   return (
