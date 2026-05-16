@@ -226,9 +226,14 @@ def _load_model_sync():
 
         try:
             if device == "cuda":
-                _set_loading("compiling", "Compiling model (torch.compile)…")
-                _model.llm = torch.compile(_model.llm, mode="reduce-overhead")
-                logger.info("torch.compile applied.")
+                # Windows 没有 Triton——torch.compile 可能不报错但推理时炸显存
+                import importlib
+                if importlib.util.find_spec("triton") is None:
+                    logger.info("torch.compile skipped: triton not available on this platform")
+                else:
+                    _set_loading("compiling", "Compiling model (torch.compile)…")
+                    _model.llm = torch.compile(_model.llm, mode="reduce-overhead")
+                    logger.info("torch.compile applied.")
         except Exception as e:
             logger.info("torch.compile skipped: %s", e)
 
