@@ -532,6 +532,12 @@ async def set_env_var(body: dict):
         )
 
     if value:
+        # Validate ffmpeg path if user is setting it manually
+        if key == "FFMPEG_PATH" and not os.path.isfile(value):
+            raise HTTPException(
+                status_code=400,
+                detail=f"File not found: {value}",
+            )
         os.environ[key] = value
         logger.info("Set environment variable: %s (length=%d)", key, len(value))
     else:
