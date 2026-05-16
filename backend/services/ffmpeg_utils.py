@@ -105,6 +105,10 @@ async def _spawn_with_retry(cmd, **kwargs):
                 delay *= 2
                 continue
             raise
+        except Exception as e:
+            # Catch any unexpected error (e.g. NotImplementedError on Windows)
+            # and re-raise immediately rather than retrying blindly.
+            raise
     raise last_err if last_err else RuntimeError("spawn failed")
 
 
