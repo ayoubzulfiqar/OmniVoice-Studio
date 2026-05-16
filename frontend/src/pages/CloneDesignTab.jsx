@@ -285,12 +285,17 @@ export default function CloneDesignTab(props) {
             <div className="clone-sliders-col">
               {Object.entries(CATEGORIES).map(([key, options]) => {
                 const many = options.length > 6;
+                const optLabel = (val) => {
+                  const tKey = `clone.opt_${val.replace(/[ -]/g, '_')}`;
+                  const tl = t(tKey);
+                  return tl !== tKey ? tl : val;
+                };
                 return (
                   <div key={key}>
                     <div className="label-row label-row--sm">
-                      {key.replace(/([A-Z])/g, ' $1').trim()}
+                      {t(`clone.cat_${key}`)}
                       <span className="clone-slider-kicker">
-                        {vdStates[key] === 'Auto' ? '· auto' : `· ${vdStates[key]}`}
+                        {vdStates[key] === 'Auto' ? t('clone.auto_kicker') : `· ${optLabel(vdStates[key])}`}
                       </span>
                     </div>
                     {many ? (
@@ -303,16 +308,21 @@ export default function CloneDesignTab(props) {
                       </select>
                     ) : (
                       <div className="chip-group">
-                        {options.map(opt => (
-                          <button
-                            key={opt}
-                            type="button"
-                            className={`chip ${vdStates[key] === opt ? 'active' : ''}`}
-                            onClick={() => setVdStates({ ...vdStates, [key]: opt })}
-                          >
-                            {opt === 'Auto' ? '✨ Auto' : opt}
-                          </button>
-                        ))}
+                        {options.map(opt => {
+                          const optTKey = `clone.opt_${opt.replace(/[ -]/g, '_')}`;
+                          const optTl = t(optTKey);
+                          const optLabel = optTl !== optTKey ? optTl : opt;
+                          return (
+                            <button
+                              key={opt}
+                              type="button"
+                              className={`chip ${vdStates[key] === opt ? 'active' : ''}`}
+                              onClick={() => setVdStates({ ...vdStates, [key]: opt })}
+                            >
+                              {opt === 'Auto' ? t('clone.opt_Auto') : optLabel}
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
