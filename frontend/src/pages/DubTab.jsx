@@ -1040,27 +1040,25 @@ function fmtDur(s) {
   return sec ? `${m}m ${sec}s` : `${m}m`;
 }
 
-const PREP_STAGE_LABEL = {
-  download: 'Downloading video…',
-  extract:  'Extracting audio…',
-  demucs:   'Separating vocals / music (Demucs)…',
-  scene:    'Detecting scene cuts…',
-  cached:   '⚡ Using cached results…',
-};
-const PREP_FULL   = ['download', 'extract', 'demucs', 'scene'];
-const PREP_CACHED = ['download', 'extract', 'cached'];
-
 /**
  * PrepOverlay — the prepare-upload stage indicator.
  * `large` makes the surrounding frame bigger (used for the empty-state drop zone).
  */
 function PrepOverlay({ stage, onAbort, large = false }) {
-  const stages = stage === 'cached' ? PREP_CACHED : PREP_FULL;
+  const { t } = useTranslation();
+  const LABEL = {
+    download: t('dub.prep_download'),
+    extract:  t('dub.prep_extract'),
+    demucs:   t('dub.prep_demucs'),
+    scene:    t('dub.prep_scene'),
+    cached:   t('dub.prep_cached'),
+  };
+  const stages = stage === 'cached' ? ['download', 'extract', 'cached'] : ['download', 'extract', 'demucs', 'scene'];
   const body = (
     <>
       <Loader className="spinner" size={large ? 28 : 20} color="#d3869b" />
       <span className="dub-prep-overlay__title" style={{ fontSize: large ? '0.95rem' : '0.85rem' }}>
-        {PREP_STAGE_LABEL[stage] || 'Preparing…'}
+        {LABEL[stage] || t('dub.prep_preparing')}
       </span>
       <div className={`dub-prep-chips ${large ? 'dub-prep-chips--lg' : ''}`}>
         {stages.map(s => (
@@ -1068,13 +1066,13 @@ function PrepOverlay({ stage, onAbort, large = false }) {
             key={s}
             className={`dub-prep-chip ${stage === s ? 'is-active' : ''} ${s === 'cached' ? 'is-cached' : ''}`}
           >
-            {s === 'cached' ? '⚡ cached' : s}
+            {s === 'cached' ? '⚡' : ''}{t(`dub.prep_chip_${s}`, { defaultValue: s })}
           </span>
         ))}
       </div>
       {stage === 'demucs' && (
         <span className="dub-prep-overlay__note">
-          Demucs can take several minutes on long videos. Long audio = longer wait.
+          {t('dub.prep_demucs_note')}
         </span>
       )}
       <Button variant="danger" size="sm" onClick={onAbort} leading={<Square size={11} />}>

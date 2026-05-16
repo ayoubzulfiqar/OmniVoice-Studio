@@ -265,7 +265,19 @@
     "export_wav": "WAV",
     "export_srt": "SRT",
     "upload_transcribe": "Upload & Transcribe",
-    "multi_lang": "Multi-lang"
+    "multi_lang": "Multi-lang",
+    "prep_download": "Downloading video…",
+    "prep_extract": "Extracting audio…",
+    "prep_demucs": "Separating vocals / music (Demucs)…",
+    "prep_scene": "Detecting scene cuts…",
+    "prep_cached": "⚡ Using cached results…",
+    "prep_preparing": "Preparing…",
+    "prep_chip_download": "download",
+    "prep_chip_extract": "extract",
+    "prep_chip_demucs": "demucs",
+    "prep_chip_scene": "scene",
+    "prep_chip_cached": "cached",
+    "prep_demucs_note": "Demucs can take several minutes on long videos. Long audio = longer wait."
   },
   "voice": {
     "personality": "Personality",

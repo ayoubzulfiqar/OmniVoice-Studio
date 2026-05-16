@@ -265,7 +265,19 @@
     "export_wav": "WAV",
     "export_srt": "SRT",
     "upload_transcribe": "上传并转录",
-    "multi_lang": "多语言"
+    "multi_lang": "多语言",
+    "prep_download": "正在下载视频…",
+    "prep_extract": "正在提取音频…",
+    "prep_demucs": "正在分离人声/音乐（Demucs）…",
+    "prep_scene": "正在检测场景切换…",
+    "prep_cached": "⚡ 使用缓存结果…",
+    "prep_preparing": "准备中…",
+    "prep_chip_download": "下载",
+    "prep_chip_extract": "提取",
+    "prep_chip_demucs": "人声分离",
+    "prep_chip_scene": "场景",
+    "prep_chip_cached": "缓存",
+    "prep_demucs_note": "Demucs 处理长视频可能需要几分钟。音频越长，等待越久。"
   },
   "voice": {
     "personality": "风格",
