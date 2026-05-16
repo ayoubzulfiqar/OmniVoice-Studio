@@ -73,22 +73,21 @@ function GeneralTab() {
     setProxySaving(true);
     try {
       const { API } = await import('../api/client');
-      const res = await fetch(`${API}/system/set-env`, {
+      const setEnv = (key, val) => fetch(`${API}/system/set-env`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'HTTP_PROXY', value }),
+        body: JSON.stringify({ key, value: val }),
       });
-      if (res.ok) {
-        // Also set HTTPS_PROXY so yt-dlp picks it up for both protocols
-        await fetch(`${API}/system/set-env`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: 'HTTPS_PROXY', value }),
-        });
+      const r = await setEnv('HTTP_PROXY', value);
+      if (r.ok) {
+        await Promise.all([
+          setEnv('HTTPS_PROXY', value),
+          setEnv('ALL_PROXY', value),
+        ]);
         toast.success(t('settings.proxy_saved'));
         setProxySaved(true);
       } else {
-        const d = await res.json().catch(() => ({}));
+        const d = await r.json().catch(() => ({}));
         toast.error(d.detail || t('settings.proxy_save_failed'));
       }
     } catch (e) { toast.error(`Save failed: ${e.message}`); }
@@ -99,16 +98,16 @@ function GeneralTab() {
     setProxySaving(true);
     try {
       const { API } = await import('../api/client');
-      await fetch(`${API}/system/set-env`, {
+      const setEnv = (key, val) => fetch(`${API}/system/set-env`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'HTTP_PROXY', value: '' }),
+        body: JSON.stringify({ key, value: val }),
       });
-      await fetch(`${API}/system/set-env`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'HTTPS_PROXY', value: '' }),
-      });
+      await Promise.all([
+        setEnv('HTTP_PROXY', ''),
+        setEnv('HTTPS_PROXY', ''),
+        setEnv('ALL_PROXY', ''),
+      ]);
       setProxyUrl('');
       setProxySaved(false);
       toast.success(t('settings.proxy_cleared'));
@@ -156,7 +155,7 @@ function GeneralTab() {
           <input
             type="text"
             className="settings-credential__input"
-            placeholder="http://127.0.0.1:7890"
+            placeholder="http://127.0.0.1:7890 or socks5://127.0.0.1:7890"
             value={proxyUrl}
             onChange={e => setProxyUrl(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && saveProxy()}
