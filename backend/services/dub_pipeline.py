@@ -318,6 +318,10 @@ def yt_download_sync(
             "writeautomaticsub": True,
             "subtitleslangs": list(sub_langs) if sub_langs else ["all"],
             "subtitlesformat": "vtt",
+            # YouTube's subtitle endpoint is prone to 429 rate-limiting;
+            # retry and continue rather than failing the whole ingest.
+            "extractor_retries": 5,
+            "ignoreerrors": True,
         })
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
