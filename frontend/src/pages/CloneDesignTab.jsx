@@ -67,10 +67,13 @@ export default function CloneDesignTab(props) {
     setActivePersonality(p.id);
     // Filter instruct to only keep backend-recognized tags, strip natural
     // language descriptions that would fail validation at generation time.
-    const clean = (p.instruct || '').split(',').map(s => s.trim())
-      .filter(s => VALID_INSTRUCT_ITEMS.includes(s.toLowerCase()))
-      .join(', ');
-    setInstruct(clean || p.instruct || '');
+    // Filter instruct to backend-recognised tags only — natural language
+    // descriptions from the API will fail generation validation.
+    console.debug('[personality] selected:', p.id, p.name, 'instruct:', p.instruct);
+    const instructItems = (p.instruct || '').split(',').map(s => s.trim());
+    const valid = instructItems.filter(s => VALID_INSTRUCT_ITEMS.includes(s.toLowerCase()));
+    console.debug('[personality] filtered instruct:', valid);
+    setInstruct(valid.length > 0 ? valid.join(', ') : '');
   };
 
   return (
