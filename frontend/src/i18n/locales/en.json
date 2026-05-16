@@ -6,7 +6,25 @@
     "delete": "Delete",
     "loading": "Loading…",
     "error": "Something went wrong",
-    "languages_count": "646 languages"
+    "languages_count": "646 languages",
+    "clear": "Clear",
+    "refresh": "Refresh",
+    "close": "Close",
+    "back": "Back",
+    "reload": "Force Reload UI",
+    "backend": "Backend",
+    "frontend": "Frontend",
+    "tauri": "Tauri"
+  },
+  "nav": {
+    "launchpad": "Launchpad",
+    "clone": "Clone",
+    "design": "Design",
+    "dub": "Dub",
+    "gallery": "Gallery",
+    "transcripts": "Transcripts",
+    "omnidrive": "OmniDrive",
+    "settings": "Settings"
   },
   "launchpad": {
     "greeting": "hello there",
@@ -19,12 +37,46 @@
     "dub_title": "Video Dubbing",
     "dub_desc": "Transcribe, translate, re-voice. Keep each speaker, line up the timing, ship it.",
     "ab_compare": "A/B Compare",
+    "ab_compare_title": "Try two voices side by side",
     "cloned_voices": "Cloned Voices",
     "designed_voices": "Designed Voices",
     "dubbing_projects": "Dubbing Projects",
     "empty_hint": "Nothing here yet — pick a card above.",
     "demo_callout": "👋 Try the demo voice — hit Generate to hear it.",
-    "locked": "LOCKED"
+    "locked": "LOCKED",
+    "open": "Open",
+    "try_it": "Try it",
+    "audio_only": "Audio Only"
+  },
+  "clone": {
+    "prompt": "Prompt",
+    "language": "Language",
+    "steps": "Steps",
+    "voice_source": "Voice Source",
+    "saved_profiles": "Saved Profiles",
+    "transcript": "Transcript",
+    "style": "Style",
+    "save_as_profile": "Save as Voice Profile",
+    "profile_name": "Profile name…",
+    "save": "Save",
+    "cancel": "Cancel",
+    "synthesize": "Synthesize Audio",
+    "synthesizing": "Synthesizing… ({{seconds}}s)",
+    "drop_audio": "Drop audio here — or click. WAV, MP3, M4A… 🎤",
+    "record": "Record",
+    "cleaning": "Cleaning…",
+    "using_profile": "Using profile: {{name}}",
+    "clear": "clear",
+    "production_overrides": "Production Overrides",
+    "denoise": "Denoise",
+    "postprocess": "Postprocess",
+    "duration": "Duration",
+    "auto": "Auto",
+    "optional": "(Optional)",
+    "toggle_sidebar": "Toggle Sidebar",
+    "delete_profile": "Delete profile",
+    "prompt_placeholder": "What should this voice say? ✍️",
+    "design_placeholder": "Describe the voice, then type what it says…"
   },
   "settings": {
     "title": "Settings",
@@ -34,7 +86,100 @@
     "privacy": "Privacy",
     "about": "About",
     "ui_scale": "UI Scale",
-    "theme": "Theme"
+    "theme": "Theme",
+    "language": "Language",
+    "language_desc": "Select the interface language",
+    "engines": "Engines",
+    "capture": "Capture",
+    "credentials": "Credentials"
+  },
+  "about": {
+    "app": "App",
+    "version": "Version",
+    "tauri_runtime": "Tauri runtime",
+    "platform": "Platform",
+    "architecture": "Architecture",
+    "python": "Python",
+    "compute_device": "Compute device",
+    "gpu_active": "GPU active",
+    "ram": "RAM",
+    "vram": "VRAM",
+    "backend": "Backend",
+    "active_model": "Active model",
+    "asr_model": "ASR model",
+    "translator": "Translator",
+    "hf_token": "HF token set",
+    "data_dir": "Data directory",
+    "outputs": "Outputs",
+    "crash_log": "Crash log",
+    "update_endpoint": "Update endpoint",
+    "yes": "yes",
+    "no": "no",
+    "web_preview": "web preview",
+    "downloading": "Downloading…",
+    "check_updates": "Check for updates",
+    "copy_diagnostics": "Copy diagnostics",
+    "github": "OmniVoice on GitHub",
+    "model_card": "Model card",
+    "commercial_license": "Commercial License"
+  },
+  "privacy": {
+    "desc": "Everything runs on <1>this machine</1>. Your audio, video, and transcripts never leave your computer unless you explicitly use an online translator (Google, DeepL, etc.) or push to HuggingFace.",
+    "uploads_at": "Uploads stored at",
+    "outputs_at": "Outputs stored at",
+    "gen_history": "Generation history",
+    "network_calls": "Network calls",
+    "model_telemetry": "Model telemetry",
+    "local_sqlite": "Local SQLite",
+    "translator_online": "Translator is online: {{provider}}",
+    "translator_offline": "Offline translator",
+    "no_tracking": "None — no tracking"
+  },
+  "credentials": {
+    "title": "Credentials",
+    "desc": "API keys and tokens are set <1>for this session only</1>. For persistence across restarts, set them as environment variables in your shell profile.",
+    "hf_token": "HuggingFace Token",
+    "hf_help": "Required for speaker diarization and faster model downloads. Get yours at huggingface.co/settings/tokens.",
+    "translate_key": "Translation API Key",
+    "translate_help": "Optional — for DeepL, OpenAI, or paid translation providers. Not needed for Google Translate (free tier).",
+    "save": "Save",
+    "saved": "✓ Set",
+    "not_set": "✗ Not set",
+    "get_token": "Get token →",
+    "saved_session": "{{key}} saved for this session",
+    "save_failed": "Failed to save",
+    "save_error": "Save failed: {{message}}"
+  },
+  "engines": {
+    "review_on": "Review",
+    "review_off": "Rapid-fire",
+    "banners_on": "Stage banners on",
+    "banners_off": "Stage banners off",
+    "backend": "Backend",
+    "status": "Status",
+    "ready": "ready",
+    "unavailable": "unavailable",
+    "use": "Use",
+    "loading": "Loading engines…",
+    "refresh": "Refresh"
+  },
+  "capture": {
+    "desc": "Global hotkeys only work in the desktop app. The web UI uses an in-page <1>Ctrl+Shift+Space</1> shortcut while the window has focus.",
+    "desc_detail": "The hotkey works system-wide while OmniVoice is running — it focuses the window and starts dictation. Avoid combos already claimed by the OS (on macOS, <1>⌘+Space</1> is Spotlight and <2>⌘+⇧+Space</2> cycles input sources). If registration fails, pick a different combo.",
+    "active_shortcut": "Active shortcut",
+    "new_shortcut": "New shortcut",
+    "press_key": "Press a key combo…",
+    "listening": "⌨︎ listening (Esc to cancel)",
+    "record_shortcut": "Record shortcut",
+    "recording": "Recording…",
+    "save": "Save",
+    "reset_default": "Reset to default"
+  },
+  "logs": {
+    "no_tauri_log": "No Tauri log on disk yet — launch via the desktop build to produce one",
+    "empty_frontend": "No frontend console entries captured yet. Interact with the app — every console.* will appear here.",
+    "empty_tauri": "No Tauri log available. Runs in the desktop shell only.",
+    "empty_backend": "Runtime log is empty. Activity will appear here as the backend logs it."
   },
   "dub": {
     "transcribe": "Transcribe",
@@ -53,5 +198,28 @@
     "language": "Language",
     "generate": "Generate",
     "name": "Name"
+  },
+  "tools": {
+    "title": "Tools",
+    "desc": "Audio processing, format conversion, and utilities"
+  },
+  "projects": {
+    "title": "Projects",
+    "empty": "No projects yet",
+    "create": "New Project"
+  },
+  "gallery": {
+    "title": "Gallery"
+  },
+  "transcriptions": {
+    "title": "Transcriptions"
+  },
+  "donate": {
+    "title": "Support",
+    "desc": "If you enjoy this project, consider donating to support our development."
+  },
+  "enterprise": {
+    "title": "Commercial License",
+    "desc": "Professional licensing and technical support for commercial users."
   }
 }

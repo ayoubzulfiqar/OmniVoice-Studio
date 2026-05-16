@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 import { Globe, Fingerprint, Wand2, Film, FolderOpen, RefreshCw, Settings2, ChevronRight, ChevronDown, Zap, Building2, Library, FileText, Trash2 } from 'lucide-react';
 import { Button, Badge } from '../ui';
@@ -41,6 +42,7 @@ export default function Header({
   mode, setMode, sysStats, modelStatus, doubleClickMaximize,
   activeProjectName, onFlushMemory,
 }) {
+  const { t } = useTranslation();
   const [flushing, setFlushing] = useState(false);
   const [flushOpen, setFlushOpen] = useState(false);
   const [loadedModels, setLoadedModels] = useState([]);
@@ -158,12 +160,12 @@ export default function Header({
           <Button
             variant="ghost"
             size="sm"
-            title="Force Reload UI"
+            title={t('common.reload')}
             onClick={() => window.location.reload()}
             leading={<RefreshCw size={9} />}
             className="hq-reload-btn"
           >
-            Reload
+            {t('common.reload')}
           </Button>
         )}
       </div>
