@@ -251,7 +251,15 @@
     "view_mode_grid": "网格",
     "youtube_results": "YouTube 搜索结果（{{count}}）",
     "clone_profile": "克隆配置",
-    "crop_audio": "裁剪音频"
+    "crop_audio": "裁剪音频",
+    "cat_disney": "迪士尼",
+    "cat_anime": "动漫",
+    "cat_marvel": "漫威/DC",
+    "cat_celebs": "名人",
+    "cat_politicians": "政治家",
+    "cat_news": "新闻主播",
+    "cat_gaming": "游戏",
+    "cat_books": "书籍/电影"
   },
   "transcriptions": {
     "title": "转录记录",

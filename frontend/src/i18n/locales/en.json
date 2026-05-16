@@ -251,7 +251,15 @@
     "view_mode_grid": "Grid",
     "youtube_results": "YouTube Results ({{count}})",
     "clone_profile": "Clone profile",
-    "crop_audio": "Crop audio"
+    "crop_audio": "Crop audio",
+    "cat_disney": "Disney",
+    "cat_anime": "Anime",
+    "cat_marvel": "Marvel/DC",
+    "cat_celebs": "Celebrities",
+    "cat_politicians": "Politicians",
+    "cat_news": "News Anchors",
+    "cat_gaming": "Gaming",
+    "cat_books": "Books/Movies"
   },
   "transcriptions": {
     "title": "Transcriptions",

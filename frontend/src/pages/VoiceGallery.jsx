@@ -253,7 +253,7 @@ export default function VoiceGallery() {
                 onClick={() => setSelectedCategory(isSelected ? null : cat.id)}
               >
                 <Icon size={12} />
-                {cat.name}
+                {t(`gallery.cat_${cat.id}`, { defaultValue: cat.name })}
               </button>
             );
           })}
