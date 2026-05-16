@@ -267,7 +267,7 @@ export default function DubTab(props) {
                   title="Upload your own .srt to bypass ASR"
                   style={{ cursor: 'pointer' }}
                 >
-                  <FileText size={11} /> Import .srt instead
+                  <FileText size={11} /> {t('dub.import_srt_alt')}
                   <input
                     id="srt-import-banner-input"
                     type="file"
@@ -310,7 +310,7 @@ export default function DubTab(props) {
                   />
                   <div className="dub-change-row">
                     <label htmlFor="video-upload" className="dub-idle-upload-label">
-                      <Film size={13} /> Change file
+                      <Film size={13} /> {t('dub.change_file')}
                     </label>
                     {dubJobId && handleDubImportSrt && (
                       <label
@@ -319,7 +319,7 @@ export default function DubTab(props) {
                         title="Use your own .srt subtitles instead of running Whisper transcription"
                         style={{ cursor: 'pointer' }}
                       >
-                        <FileText size={13} /> Import .srt
+                        <FileText size={13} /> {t('dub.import_srt')}
                         <input
                           id="srt-import-input"
                           type="file"
@@ -337,8 +337,8 @@ export default function DubTab(props) {
                       onClick={handleDubUpload}
                       disabled={dubStep === 'uploading' || dubStep === 'transcribing'}>
                       {dubStep === 'uploading' || dubStep === 'transcribing'
-                        ? <><Loader className="spinner" size={14} /> Processing…</>
-                        : <><Sparkles size={14} /> Upload &amp; Transcribe</>}
+                        ? <><Loader className="spinner" size={14} /> {t('common.loading')}</>
+                        : <><Sparkles size={14} /> {t('dub.upload_transcribe')}</>}
                     </button>
                   </div>
                 </>
@@ -415,9 +415,9 @@ export default function DubTab(props) {
 
               <div className="dub-cast dub-cast--muted">
                 <div className="dub-cast__row">
-                  <span className="dub-cast__kicker">CAST</span>
-                  <span className="dub-cast__label">Speaker 1:</span>
-                  <span className="dub-cast--muted__chip">Default</span>
+                  <span className="dub-cast__kicker">{t('dub.cast')}</span>
+                  <span className="dub-cast__label">{t('dub.speaker', { n: 1 })}</span>
+                  <span className="dub-cast--muted__chip">{t('dub.default')}</span>
                 </div>
               </div>
             </div>
@@ -427,28 +427,28 @@ export default function DubTab(props) {
             <div className="studio-panel dub-panel-col">
               <div className="dub-skel-settings">
                 <div className="dub-skel-field">
-                  <div className="label-row"><Globe className="label-icon" size={9} /> Language</div>
+                  <div className="label-row"><Globe className="label-icon" size={9} /> {t('dub.language')}</div>
                   <select className="input-base input-base--xs" disabled>
-                    <option>Auto</option>
+                    <option>{t('dub.auto')}</option>
                   </select>
                 </div>
                 <div className="dub-skel-field--sm">
-                  <div className="label-row">ISO Code</div>
+                  <div className="label-row">{t('dub.iso_code')}</div>
                   <select className="input-base input-base--xs" disabled>
                     <option>en — English</option>
                   </select>
                 </div>
                 <div className="dub-skel-field">
-                  <div className="label-row"><UserSquare2 className="label-icon" size={9} /> Style</div>
-                  <input className="input-base input-base--xs" disabled placeholder="e.g. female" />
+                  <div className="label-row"><UserSquare2 className="label-icon" size={9} /> {t('dub.style')}</div>
+                  <input className="input-base input-base--xs" disabled placeholder={t('dub.style_placeholder')} />
                 </div>
                 <button disabled className="dub-skel-translate-btn">
-                  <Languages size={10} /> Translate All
+                  <Languages size={10} /> {t('dub.translate_all')}
                 </button>
               </div>
               <div className="dub-skel-transcript-toggle">
                 <div className="override-toggle dub-skel-transcript-toggle__inner">
-                  <span><FileText size={10} className="dub-inline-icon" /> Transcript</span>
+                  <span><FileText size={10} className="dub-inline-icon" /> {t('dub.transcript')}</span>
                   <ChevronDown size={10} />
                 </div>
               </div>
@@ -480,16 +480,16 @@ export default function DubTab(props) {
           <div className="studio-panel dub-ghost-footer">
             <div className="dub-skel-gen-row">
               <button className="btn-primary dub-skel-gen-btn" disabled>
-                <Play size={11} /> Generate Dub
+                <Play size={11} /> {t('dub.generate_dub')}
               </button>
               <button className="btn-primary dub-skel-gen-btn" disabled>
-                <Download size={11} /> MP4
+                <Download size={11} /> {t('dub.export_mp4')}
               </button>
               <button className="btn-primary dub-skel-gen-btn" disabled>
-                <Volume2 size={11} /> WAV
+                <Volume2 size={11} /> {t('dub.export_wav')}
               </button>
               <button className="btn-primary dub-skel-gen-btn" disabled>
-                <FileText size={11} /> SRT
+                <FileText size={11} /> {t('dub.export_srt')}
               </button>
             </div>
           </div>
@@ -641,7 +641,7 @@ export default function DubTab(props) {
                     loading={isTranslating}
                     leading={!isTranslating && <Languages size={10} />}
                   >
-                    {isTranslating ? 'Translating…' : hasAnyTranslation ? 'Re-translate' : 'Translate All'}
+                    {isTranslating ? t('dub.translating') : hasAnyTranslation ? t('dub.retranslate') : t('dub.translate_all')}
                   </Button>
                   <Button
                     variant="subtle" size="sm"
@@ -745,8 +745,8 @@ export default function DubTab(props) {
                     />
                   </div>
                   <div className="dub-settings-field dub-settings-field--style">
-                    <div className="label-row"><UserSquare2 className="label-icon" size={9} /> Style <span className="dub-settings-field__hint">optional</span></div>
-                    <input className="input-base input-base--xs" placeholder="e.g. female" value={dubInstruct} onChange={e => setDubInstruct(e.target.value)} />
+                    <div className="label-row"><UserSquare2 className="label-icon" size={9} /> {t('dub.style')} <span className="dub-settings-field__hint">{t('dub.optional')}</span></div>
+                    <input className="input-base input-base--xs" placeholder={t('dub.style_placeholder')} value={dubInstruct} onChange={e => setDubInstruct(e.target.value)} />
                   </div>
                   <div className="dub-settings-field dub-settings-field--multi">
                     <label className="dub-multi-toggle">
@@ -755,7 +755,7 @@ export default function DubTab(props) {
                         checked={multiLangMode}
                         onChange={e => setMultiLangMode(e.target.checked)}
                       />
-                      <span>Multi-lang</span>
+                      <span>{t('dub.multi_lang')}</span>
                     </label>
                     {multiLangMode && (
                       <MultiLangPicker
@@ -804,7 +804,7 @@ export default function DubTab(props) {
               {dubTranscript && (
                 <div className="dub-transcript-toggle-wrap">
                   <div className="override-toggle dub-transcript-toggle__inner" onClick={() => setShowTranscript(!showTranscript)}>
-                    <span><FileText size={10} className="dub-inline-icon" /> Transcript</span>
+                    <span><FileText size={10} className="dub-inline-icon" /> {t('dub.transcript')}</span>
                     {showTranscript ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                   </div>
                   {showTranscript && (
@@ -986,7 +986,7 @@ export default function DubTab(props) {
               ) : (
                 <>
                   <FooterBtn tone={dubSegments.length ? 'idle' : 'idle'} onClick={() => handleDubGenerate()}
-                    disabled={!dubSegments.length} icon={<Play size={11} />} label="Generate Dub" />
+                    disabled={!dubSegments.length} icon={<Play size={11} />} label={t('dub.generate_dub')} />
                   {dubStep === 'done' && incrementalPlan && incrementalPlan.stale?.length > 0 && (
                     <FooterBtn
                       tone="pink"
