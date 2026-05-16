@@ -337,23 +337,23 @@ export default function CloneDesignTab(props) {
                 <input type="range" min="1.0" max="4.0" step="0.1" value={cfg} onChange={e => setCfg(Number(e.target.value))} />
               </div>
               <div>
-                <div className="label-row label-row--spread"><span>Speed</span><span className="val-bubble">{speed}x</span></div>
+                <div className="label-row label-row--spread"><span>{t('clone.speed')}</span><span className="val-bubble">{speed}x</span></div>
                 <input type="range" min="0.5" max="2.0" step="0.1" value={speed} onChange={e => setSpeed(Number(e.target.value))} />
               </div>
               <div>
-                <div className="label-row label-row--spread"><span>t_shift</span><span className="val-bubble">{tShift}</span></div>
+                <div className="label-row label-row--spread"><span>{t('clone.tshift')}</span><span className="val-bubble">{tShift}</span></div>
                 <input type="range" min="0" max="1.0" step="0.05" value={tShift} onChange={e => setTShift(Number(e.target.value))} />
               </div>
               <div>
-                <div className="label-row label-row--spread"><span>Pos Temp</span><span className="val-bubble">{posTemp}</span></div>
+                <div className="label-row label-row--spread"><span>{t('clone.pos_temp')}</span><span className="val-bubble">{posTemp}</span></div>
                 <input type="range" min="0" max="10" step="0.5" value={posTemp} onChange={e => setPosTemp(Number(e.target.value))} />
               </div>
               <div>
-                <div className="label-row label-row--spread"><span>Class Temp</span><span className="val-bubble">{classTemp}</span></div>
+                <div className="label-row label-row--spread"><span>{t('clone.class_temp')}</span><span className="val-bubble">{classTemp}</span></div>
                 <input type="range" min="0" max="2" step="0.1" value={classTemp} onChange={e => setClassTemp(Number(e.target.value))} />
               </div>
               <div>
-                <div className="label-row label-row--spread"><span>Layer Pen</span><span className="val-bubble">{layerPenalty}</span></div>
+                <div className="label-row label-row--spread"><span>{t('clone.layer_pen')}</span><span className="val-bubble">{layerPenalty}</span></div>
                 <input type="range" min="0" max="10" step="0.5" value={layerPenalty} onChange={e => setLayerPenalty(Number(e.target.value))} />
               </div>
               <div>

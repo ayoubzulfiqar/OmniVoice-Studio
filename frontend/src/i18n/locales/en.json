@@ -76,7 +76,12 @@
     "toggle_sidebar": "Toggle Sidebar",
     "delete_profile": "Delete profile",
     "prompt_placeholder": "What should this voice say? ✍️",
-    "design_placeholder": "Describe the voice, then type what it says…"
+    "design_placeholder": "Describe the voice, then type what it says…",
+    "speed": "Speed",
+    "tshift": "t_shift",
+    "pos_temp": "Pos Temp",
+    "class_temp": "Class Temp",
+    "layer_pen": "Layer Pen"
   },
   "settings": {
     "title": "Settings",
