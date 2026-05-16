@@ -381,7 +381,7 @@ OmniVoice Studio gives you professional-grade AI tools without the subscription 
 <div align="center">
   <br/>
   <b>Convinced? Come build with us.</b><br/>
-  <a href="https://discord.gg/bzQavDfVV9"><img src="https://img.shields.io/badge/Join_Discord-2,000+_members-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Discord" /></a>
+  <a href="https://discord.gg/bzQavDfVV9"><img src="https://img.shields.io/badge/Join_Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Discord" /></a>
   <br/><br/>
 </div>
 
