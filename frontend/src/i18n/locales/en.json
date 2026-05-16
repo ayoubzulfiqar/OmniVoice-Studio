@@ -132,7 +132,13 @@
     "language_desc": "Select the interface language",
     "engines": "Engines",
     "capture": "Capture",
-    "credentials": "Credentials"
+    "credentials": "Credentials",
+    "proxy": "Proxy",
+    "proxy_desc": "HTTP proxy for downloads (yt-dlp, HuggingFace). Restart required if changed after backend start.",
+    "proxy_saved": "Proxy set — yt-dlp will use it for downloads",
+    "proxy_save_failed": "Failed to save proxy",
+    "proxy_cleared": "Proxy cleared",
+    "proxy_clear": "Clear"
   },
   "about": {
     "app": "App",

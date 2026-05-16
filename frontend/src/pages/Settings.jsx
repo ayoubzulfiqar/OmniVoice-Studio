@@ -58,11 +58,62 @@ function GeneralTab() {
   const setLocale = useAppStore(s => s.setLocale);
   const theme = useAppStore(s => s.theme);
   const setTheme = useAppStore(s => s.setTheme);
+  const [proxyUrl, setProxyUrl] = useState('');
+  const [proxySaved, setProxySaved] = useState(false);
+  const [proxySaving, setProxySaving] = useState(false);
 
   const handleLocaleChange = (e) => {
     const id = e.target.value;
     setLocale(id);
     i18n.changeLanguage(id);
+  };
+
+  const saveProxy = async () => {
+    const value = proxyUrl.trim();
+    setProxySaving(true);
+    try {
+      const { API } = await import('../api/client');
+      const res = await fetch(`${API}/system/set-env`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'HTTP_PROXY', value }),
+      });
+      if (res.ok) {
+        // Also set HTTPS_PROXY so yt-dlp picks it up for both protocols
+        await fetch(`${API}/system/set-env`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'HTTPS_PROXY', value }),
+        });
+        toast.success(t('settings.proxy_saved'));
+        setProxySaved(true);
+      } else {
+        const d = await res.json().catch(() => ({}));
+        toast.error(d.detail || t('settings.proxy_save_failed'));
+      }
+    } catch (e) { toast.error(`Save failed: ${e.message}`); }
+    finally { setProxySaving(false); }
+  };
+
+  const clearProxy = async () => {
+    setProxySaving(true);
+    try {
+      const { API } = await import('../api/client');
+      await fetch(`${API}/system/set-env`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'HTTP_PROXY', value: '' }),
+      });
+      await fetch(`${API}/system/set-env`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'HTTPS_PROXY', value: '' }),
+      });
+      setProxyUrl('');
+      setProxySaved(false);
+      toast.success(t('settings.proxy_cleared'));
+    } catch (e) { toast.error(`Clear failed: ${e.message}`); }
+    finally { setProxySaving(false); }
   };
 
   return (
@@ -91,6 +142,34 @@ function GeneralTab() {
             <option value="catppuccin">Catppuccin</option>
           </Select>
         </span>
+      </div>
+
+      <hr className="settings-divider" />
+
+      <div className="settings-credential">
+        <div className="settings-credential__header">
+          <label className="settings-credential__label">{t('settings.proxy')}</label>
+          {proxySaved && <Badge tone="success" size="xs">{t('credentials.saved')}</Badge>}
+        </div>
+        <p className="settings-credential__help">{t('settings.proxy_desc')}</p>
+        <div className="settings-credential__row">
+          <input
+            type="text"
+            className="settings-credential__input"
+            placeholder="http://127.0.0.1:7890"
+            value={proxyUrl}
+            onChange={e => setProxyUrl(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && saveProxy()}
+          />
+          <Button size="sm" variant="subtle" onClick={saveProxy} loading={proxySaving} disabled={!proxyUrl.trim()}>
+            {t('credentials.save')}
+          </Button>
+          {proxySaved && (
+            <Button size="sm" variant="ghost" onClick={clearProxy} loading={proxySaving}>
+              {t('settings.proxy_clear')}
+            </Button>
+          )}
+        </div>
       </div>
     </section>
   );

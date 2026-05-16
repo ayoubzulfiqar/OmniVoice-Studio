@@ -518,7 +518,7 @@ async def set_env_var(body: dict):
     The value is set on os.environ for the running process.
     For persistence across restarts, users should set it in their shell profile.
     """
-    ALLOWED_KEYS = {"HF_TOKEN", "TRANSLATE_API_KEY"}
+    ALLOWED_KEYS = {"HF_TOKEN", "TRANSLATE_API_KEY", "HTTP_PROXY", "HTTPS_PROXY"}
     key = body.get("key", "")
     value = body.get("value", "")
 
