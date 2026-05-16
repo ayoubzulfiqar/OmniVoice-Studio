@@ -69,10 +69,8 @@ export default function CloneDesignTab(props) {
     // language descriptions that would fail validation at generation time.
     // Filter instruct to backend-recognised tags only — natural language
     // descriptions from the API will fail generation validation.
-    console.debug('[personality] selected:', p.id, p.name, 'instruct:', p.instruct);
     const instructItems = (p.instruct || '').split(',').map(s => s.trim());
     const valid = instructItems.filter(s => VALID_INSTRUCT_ITEMS.includes(s.toLowerCase()));
-    console.debug('[personality] filtered instruct:', valid);
     setInstruct(valid.length > 0 ? valid.join(', ') : '');
   };
 
