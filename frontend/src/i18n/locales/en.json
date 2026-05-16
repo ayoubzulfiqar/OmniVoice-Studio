@@ -31,7 +31,7 @@
   "launchpad": {
     "greeting": "hello there",
     "hero_title": "Make voices that <1>sound like you</1>.",
-    "hero_desc": "Clone a voice, design a new one, or dub a video into any of <1>{{count}} languages</1>. Built for creators who care how it sounds.",
+    "hero_desc": "Clone a voice, design a new one, or dub a video into <1>{{count}} languages</1>. Built for creators who care how it sounds.",
     "clone_title": "Voice Clone",
     "clone_desc": "Drop in a short clip — we'll mirror it. One sample is usually enough.",
     "design_title": "Voice Design",
@@ -116,7 +116,8 @@
     "opt_moderate_pitch": "moderate pitch",
     "opt_high_pitch": "high pitch",
     "opt_very_high_pitch": "very high pitch",
-    "opt_whisper": "whisper"
+    "opt_whisper": "whisper",
+    "style_placeholder": "e.g. whisper"
   },
   "settings": {
     "title": "Settings",

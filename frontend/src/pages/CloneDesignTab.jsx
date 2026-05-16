@@ -235,7 +235,7 @@ export default function CloneDesignTab(props) {
               </div>
               <div>
                 <div className="label-row">{t('clone.style')}</div>
-                <input type="text" className="input-base" value={instruct} onChange={e => setInstruct(e.target.value)} placeholder="e.g. whisper" />
+                <input type="text" className="input-base" value={instruct} onChange={e => setInstruct(e.target.value)} placeholder={t('clone.style_placeholder')} />
               </div>
             </div>
 

@@ -226,8 +226,9 @@ def _load_model_sync():
 
         try:
             if device == "cuda":
-                # Windows 没有 Triton——torch.compile 可能不报错但推理时炸显存
-                import importlib
+                # On Windows Triton is not available — torch.compile may
+                # succeed silently but crash at inference with OOM-like errors.
+                import importlib.util
                 if importlib.util.find_spec("triton") is None:
                     logger.info("torch.compile skipped: triton not available on this platform")
                 else:

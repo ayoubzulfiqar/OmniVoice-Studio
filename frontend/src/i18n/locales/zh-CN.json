@@ -116,7 +116,8 @@
     "opt_moderate_pitch": "中音",
     "opt_high_pitch": "高音",
     "opt_very_high_pitch": "极高音",
-    "opt_whisper": "低语"
+    "opt_whisper": "低语",
+    "style_placeholder": "例如：低语"
   },
   "settings": {
     "title": "设置",

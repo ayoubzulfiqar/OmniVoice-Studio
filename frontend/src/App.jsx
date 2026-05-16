@@ -80,6 +80,8 @@ function App() {
   useEffect(() => {
     if (theme && theme !== 'gruvbox') {
       document.documentElement.setAttribute('data-theme', theme);
+    } else {
+      document.documentElement.removeAttribute('data-theme');
     }
     if (locale) {
       i18n.changeLanguage(locale);
