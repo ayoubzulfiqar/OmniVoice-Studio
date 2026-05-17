@@ -29,6 +29,9 @@ export interface PrefsSlice {
   setGlossaryVisible: (on: boolean) => void;
   setReviewMode: (mode: 'on' | 'off') => void;
 
+  locale: string;
+  setLocale: (l: string) => void;
+
   theme: ThemeId;
   setTheme: (id: ThemeId) => void;
 }
@@ -45,6 +48,9 @@ export const createPrefsSlice: StateCreator<PrefsSlice, [], [], PrefsSlice> = (s
   setBurnSubs:         (on) => set({ burnSubs: on }),
   setGlossaryVisible:  (on) => set({ glossaryVisible: on }),
   setReviewMode:       (mode) => set({ reviewMode: mode }),
+
+  locale: 'en',
+  setLocale: (l) => set({ locale: l }),
 
   theme: 'gruvbox',
   setTheme: (id) => {

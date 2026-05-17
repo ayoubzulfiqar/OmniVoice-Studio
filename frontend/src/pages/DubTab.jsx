@@ -139,19 +139,19 @@ export default function DubTab(props) {
   const handleInstallEngine = async (engineId) => {
     if (!engineId || enginesSandboxed) return;
     setEngineInstalling(engineId);
-    const progressToast = toast.loading(`Installing ${engineId}…`);
+    const progressToast = toast.loading(t('dub.install_progress', { engine: engineId }));
     try {
       const res = await installTranslationEngine(engineId);
       await refreshEngines();
       if (res.restart_required) {
-        toast(`${engineId} installed. Restart the backend to load it.`, { icon: '🔄', id: progressToast, duration: 7000 });
+        toast(t('dub.install_restart', { engine: engineId }), { icon: '🔄', id: progressToast, duration: 7000 });
       } else if (res.status === 'already_installed') {
-        toast(`${engineId} was already installed`, { icon: 'ℹ️', id: progressToast });
+        toast(t('dub.install_already', { engine: engineId }), { icon: 'ℹ️', id: progressToast });
       } else {
-        toast.success(`${engineId} installed`, { id: progressToast });
+        toast.success(t('dub.install_ok', { engine: engineId }), { id: progressToast });
       }
     } catch (err) {
-      toast.error(`Install failed: ${String(err.message || err).slice(0, 200)}`, { id: progressToast, duration: 8000 });
+      toast.error(t('dub.install_failed', { message: String(err.message || err).slice(0, 200) }), { id: progressToast, duration: 8000 });
     } finally {
       setEngineInstalling(null);
     }
@@ -223,13 +223,13 @@ export default function DubTab(props) {
                 variant="icon"
                 iconSize="sm"
                 active={isSidebarCollapsed}
-                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                title="Toggle Sidebar"
-              >
-                {isSidebarCollapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
-              </Button>
-              <Film className="label-icon" size={11} />
-              <span className="dub-head__filename">{dubVideoFile ? dubVideoFile.name : t('dub.video_dubbing_studio')}</span>
+                  onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                  title={t('dub.sidebar_toggle')}
+                >
+                  {isSidebarCollapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
+                </Button>
+                <Film className="label-icon" size={11} />
+                <span className="dub-head__filename">{dubVideoFile ? dubVideoFile.name : t('dub.video_dubbing_studio')}</span>
               {dubVideoFile && <span className="dub-head__meta">· {(dubVideoFile.size / 1024 / 1024).toFixed(1)} MB</span>}
               {activeProjectName && activeProjectName !== dubFilename && (
                 <span className="dub-head__project">— {activeProjectName}</span>
@@ -257,14 +257,14 @@ export default function DubTab(props) {
                   onClick={handleDubRetryTranscribe}
                   leading={<Sparkles size={10} />}
                 >
-                  Retry transcription
+                  {t('dub.retry_transcription')}
                 </Button>
               )}
               {handleDubImportSrt && (
                 <label
                   htmlFor="srt-import-banner-input"
                   className="dub-idle-upload-label"
-                  title="Upload your own .srt to bypass ASR"
+                  title={t('dub.import_srt')}
                   style={{ cursor: 'pointer' }}
                 >
                   <FileText size={11} /> {t('dub.import_srt_alt')}
@@ -316,7 +316,7 @@ export default function DubTab(props) {
                       <label
                         htmlFor="srt-import-input"
                         className="dub-idle-upload-label"
-                        title="Use your own .srt subtitles instead of running Whisper transcription"
+                        title={t('dub.import_srt')}
                         style={{ cursor: 'pointer' }}
                       >
                         <FileText size={13} /> {t('dub.import_srt')}
@@ -363,7 +363,7 @@ export default function DubTab(props) {
                   </div>
                   <div className="dub-idle-drop__lines">
                     <div className="dub-idle-drop__title">{t('dub.drop_here')}</div>
-                    <div className="dub-idle-drop__sub">MP4 · MOV · MKV · WEBM · MP3 · WAV · FLAC · M4A</div>
+                    <div className="dub-idle-drop__sub">{t('dub.supported_formats')}</div>
                   </div>
                   <div
                     className="dub-ingest-row"
@@ -390,7 +390,7 @@ export default function DubTab(props) {
                   </div>
                   <label
                     className="dub-ingest-sub-opt"
-                    title="When the URL is a caption-bearing host (YouTube, Vimeo, TED…), also pull the original captions and any YouTube auto-translations. Seeds the editor without running Whisper; skip Translate All for languages YouTube already covers."
+                    title={t('dub.pull_captions_title')}
                     onClick={e => { e.stopPropagation(); }}
                   >
                     <input
@@ -435,7 +435,7 @@ export default function DubTab(props) {
                 <div className="dub-skel-field--sm">
                   <div className="label-row">{t('dub.iso_code')}</div>
                   <select className="input-base input-base--xs" disabled>
-                    <option>en — English</option>
+                    <option>en — {t('dub.original_audio')}</option>
                   </select>
                 </div>
                 <div className="dub-skel-field">
@@ -454,10 +454,10 @@ export default function DubTab(props) {
               </div>
               <div className="segment-table dub-skel-table">
                 <div className="segment-header">
-                  <span className="dub-skel-header-time">Time</span>
-                  <span className="dub-skel-header-spkr">Spkr</span>
-                  <span className="dub-skel-header-text">Text</span>
-                  <span className="dub-skel-header-voice">Voice</span>
+                  <span className="dub-skel-header-time">{t('dub.time_col')}</span>
+                  <span className="dub-skel-header-spkr">{t('dub.spkr_col')}</span>
+                  <span className="dub-skel-header-text">{t('dub.text_col')}</span>
+                  <span className="dub-skel-header-voice">{t('dub.voice_col')}</span>
                   <span className="dub-skel-header-acts"></span>
                 </div>
                 {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
@@ -506,20 +506,20 @@ export default function DubTab(props) {
                 iconSize="sm"
                 active={isSidebarCollapsed}
                 onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                title="Toggle Sidebar"
+                title={t('dub.sidebar_toggle')}
               >
                 {isSidebarCollapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
               </Button>
               <FileText className="label-icon" size={11} />
               <span className="dub-head__filename">{dubFilename}</span>
-              <span className="dub-head__meta">· {formatTime(dubDuration)} · {dubSegments.length} segs</span>
+              <span className="dub-head__meta">· {formatTime(dubDuration)} · {dubSegments.length} {t('dub.segs')}</span>
               {activeProjectName && activeProjectName !== dubFilename && (
                 <span className="dub-head__project">— {activeProjectName}</span>
               )}
             </div>
             <div className="dub-head__actions">
-              <Button variant="subtle" size="sm" onClick={saveProject} leading={<Save size={9} />}>Save</Button>
-              <Button variant="danger" size="sm" onClick={resetDub}>Reset</Button>
+              <Button variant="subtle" size="sm" onClick={saveProject} leading={<Save size={9} />}>{t('dub.save')}</Button>
+              <Button variant="danger" size="sm" onClick={resetDub}>{t('dub.reset')}</Button>
             </div>
           </div>
 
@@ -528,18 +528,18 @@ export default function DubTab(props) {
             <div className="studio-panel dub-panel-col">
               {hasDubbedTrack && (
                 <div className="dub-preview-toggle">
-                  <span className="dub-preview-toggle__kicker">Preview</span>
+                  <span className="dub-preview-toggle__kicker">{t('dub.preview')}</span>
                   <Segmented
                     size="sm"
                     value={previewMode}
                     onChange={setPreviewMode}
                     items={[
-                      { value: 'original', label: 'Original' },
-                      { value: 'dubbed',   label: `Dubbed (${dubLangCode})` },
+                      { value: 'original', label: t('dub.original_audio') },
+                      { value: 'dubbed',   label: t('dub.dubbed_audio', { code: dubLangCode }) },
                     ]}
                   />
                   {previewMode === 'dubbed' && (
-                    <span className="dub-preview-toggle__hint">first play may take a moment to mux</span>
+                    <span className="dub-preview-toggle__hint">{t('dub.first_play_hint')}</span>
                   )}
                 </div>
               )}
@@ -555,7 +555,7 @@ export default function DubTab(props) {
                     <div className="dub-gen-overlay__head">
                       {dubStep === 'stopping' ? <Loader className="spinner" size={14} color="#a89984" /> : <Sparkles className="spinner" size={14} color="#d3869b" />}
                       <span className={`dub-gen-overlay__title ${dubStep === 'stopping' ? 'is-stopping' : ''}`}>
-                        {dubStep === 'stopping' ? 'Stopping…' : `Dubbing ${dubProgress.current}/${dubProgress.total}…`}
+                        {dubStep === 'stopping' ? t('dub.stopping') : t('dub.generate_dub') + ` ${dubProgress.current}/${dubProgress.total}…`}
                       </span>
                     </div>
                     {dubStep === 'generating' && (
@@ -586,7 +586,7 @@ export default function DubTab(props) {
               {dubSegments.some(s => s.speaker_id) && (
                 <div className="dub-cast">
                   <div className="dub-cast__row">
-                    <span className="dub-cast__kicker" title="Assign a voice to each detected speaker. Cross-lingual clones keep the same speaker identity in a new language.">CAST</span>
+                    <span className="dub-cast__kicker" title={t('dub.cast_title')}>{t('dub.cast')}</span>
                     {[...new Set(dubSegments.map(s => s.speaker_id).filter(Boolean))].map(spk => {
                       const autoId = `auto:${(spk || '').toLowerCase().replace(/\s+/g, '_')}`;
                       const clone = speakerClones[spk];
@@ -600,16 +600,16 @@ export default function DubTab(props) {
                               setDubSegments(dubSegments.map(s => s.speaker_id === spk ? { ...s, profile_id: val } : s));
                             }}>
                             {clone && (
-                              <option value={autoId}>🎤 From video · {clone.duration.toFixed(1)}s</option>
+                              <option value={autoId}>{t('dub.from_video', { duration: clone.duration.toFixed(1) })}</option>
                             )}
-                            <option value="">Default</option>
+                            <option value="">{t('dub.default')}</option>
                             {profiles.length > 0 && (
-                              <optgroup label="Clone Profiles">
+                              <optgroup label={t('dub.clone_profiles')}>
                                 {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                               </optgroup>
                             )}
                             {PRESETS.length > 0 && (
-                              <optgroup label="Design Presets">
+                              <optgroup label={t('dub.design_presets')}>
                                 {PRESETS.map(p => <option key={p.id} value={`preset:${p.id}`}>{p.name}</option>)}
                               </optgroup>
                             )}
@@ -628,11 +628,11 @@ export default function DubTab(props) {
                     type="button"
                     className="dub-settings-summary__trigger"
                     onClick={() => setSettingsOpen(true)}
-                    title="Edit translation settings"
+                    title={t('dub.edit_settings')}
                   >
                     <ChevronDown size={10} />
                     <span><strong>{dubLang}</strong> · {dubLangCode} · {translateQuality} · {translateProvider}</span>
-                    {dubInstruct && <span className="dub-settings-summary__style">style: {dubInstruct}</span>}
+                    {dubInstruct && <span className="dub-settings-summary__style">{t('dub.style_label_prefix')}{dubInstruct}</span>}
                   </button>
                   <Button
                     variant="subtle" size="sm"
@@ -647,10 +647,10 @@ export default function DubTab(props) {
                     variant="subtle" size="sm"
                     onClick={handleCleanupSegments}
                     disabled={!dubSegments.length || !dubJobId}
-                    title="Merge tiny fragments and adjacent short segments"
+                    title={t('dub.clean_up_title')}
                     leading={<Wand2 size={10} />}
                   >
-                    Clean Up
+                    {t('dub.clean_up')}
                   </Button>
                 </div>
               )}
@@ -661,12 +661,12 @@ export default function DubTab(props) {
                     type="button"
                     className="dub-settings-summary__trigger dub-settings-close"
                     onClick={() => setSettingsOpen(false)}
-                    title="Collapse translation settings"
+                    title={t('dub.collapse_settings')}
                   >
                     <ChevronUp size={10} />
                   </button>
                   <div className="dub-settings-field dub-settings-field--lang">
-                    <div className="label-row"><Globe className="label-icon" size={9} /> Language</div>
+                    <div className="label-row"><Globe className="label-icon" size={9} /> {t('dub.language')}</div>
                     <select
                       className="input-base dub-cast__select"
                       value={dubLang}
@@ -677,10 +677,10 @@ export default function DubTab(props) {
                         if (match) setDubLangCode(match.code);
                       }}
                     >
-                      <optgroup label="Popular">
+                      <optgroup label={t('dub.popular')}>
                         {POPULAR_LANGS.map(l => <option key={`p-${l}`} value={l}>{l}</option>)}
                       </optgroup>
-                      <optgroup label="All languages">
+                      <optgroup label={t('dub.all_languages')}>
                         {ALL_LANGUAGES
                           .filter(l => !POPULAR_LANGS.includes(l))
                           .map(l => <option key={l} value={l}>{l}</option>)}
@@ -688,7 +688,7 @@ export default function DubTab(props) {
                     </select>
                   </div>
                   <div className="dub-settings-field dub-settings-field--iso">
-                    <div className="label-row">ISO</div>
+                    <div className="label-row">{t('dub.iso_code')}</div>
                     <select
                       className="input-base dub-cast__select"
                       value={dubLangCode}
@@ -701,46 +701,41 @@ export default function DubTab(props) {
                   </div>
                   <div className="dub-settings-field dub-settings-field--engine">
                     <div className="label-row">
-                      Engine
+                      {t('dub.engine_label')}
                       {activeEngineUnavailable && !enginesSandboxed && (
                         <button
                           type="button"
                           className="dub-engine-install-chip"
                           onClick={() => handleInstallEngine(translateProvider)}
                           disabled={engineInstalling === translateProvider}
-                          title={activeEngineEntry?.notes || 'Install this engine'}
+                          title={t('dub.install_engine')}
                         >
-                          {engineInstalling === translateProvider ? '…installing' : `+ install ${activeEngineEntry?.pip_package || ''}`}
+                          {engineInstalling === translateProvider ? t('dub.installing_engine') : `+ install ${activeEngineEntry?.pip_package || ''}`}
                         </button>
                       )}
                       {activeEngineUnavailable && enginesSandboxed && (
-                        <span className="dub-engine-install-chip dub-engine-install-chip--disabled" title="Installs are disabled in packaged builds">
-                          needs dev install
+                        <span className="dub-engine-install-chip dub-engine-install-chip--disabled" title={t('dub.install_disabled_title')}>
+                          {t('dub.needs_dev_install')}
                         </span>
                       )}
                     </div>
                     <select className="input-base dub-engine-select" value={translateProvider} onChange={e => setTranslateProvider(e.target.value)}>
-                      {(engines.length ? engines : [
-                        { id: 'argos', display_name: 'Argos (Fast Local)', installed: true },
-                        { id: 'nllb', display_name: 'NLLB (Heavy Local)', installed: true },
-                        { id: 'google', display_name: 'Google (Online)', installed: true },
-                        { id: 'openai', display_name: 'OpenAI (LLM)', installed: true },
-                      ]).map(p => (
+                      {(engines.length ? engines : []).map(p => (
                         <option key={p.id} value={p.id}>
-                          {p.installed ? p.display_name : `${p.display_name} — needs install`}
+                          {p.installed ? p.display_name : `${p.display_name}${t('dub.needs_install_suffix')}`}
                         </option>
                       ))}
                     </select>
                   </div>
                   <div className="dub-settings-field dub-settings-field--quality">
-                    <div className="label-row" title="Cinematic = 3-step LLM refinement (translate → reflect → adapt). Needs an LLM configured.">Quality</div>
+                    <div className="label-row" title={t('dub.quality_title')}>{t('dub.quality_label')}</div>
                     <Segmented
                       size="sm"
                       value={translateQuality}
                       onChange={setTranslateQuality}
                       items={[
-                        { value: 'fast',      label: 'Fast' },
-                        { value: 'cinematic', label: 'Cinematic' },
+                        { value: 'fast',      label: t('dub.fast_quality') },
+                        { value: 'cinematic', label: t('dub.cinematic_quality') },
                       ]}
                     />
                   </div>
@@ -771,18 +766,18 @@ export default function DubTab(props) {
                     variant="subtle" size="sm"
                     onClick={() => editSegments(dubSegments.map(s => ({ ...s, text: s.text_original || s.text, translate_error: undefined })))}
                     disabled={!dubSegments.some(s => s.text_original && s.text_original !== s.text)}
-                    title="Restore all segments to the original transcribed text"
+                    title={t('dub.restore_title')}
                   >
-                    ↺ Restore
+                    {t('dub.restore')}
                   </Button>
                   <Button
                     variant="subtle" size="sm"
                     onClick={handleCleanupSegments}
                     disabled={!dubSegments.length || !dubJobId}
-                    title="Merge tiny fragments and adjacent short segments"
+                    title={t('dub.clean_up_title')}
                     leading={<Wand2 size={10} />}
                   >
-                    Clean Up
+                    {t('dub.clean_up')}
                   </Button>
                   <Button
                     variant="primary" size="sm"
@@ -791,7 +786,7 @@ export default function DubTab(props) {
                     loading={isTranslating}
                     leading={!isTranslating && <Languages size={10} />}
                   >
-                    {isTranslating ? 'Translating…' : 'Translate All'}
+                    {isTranslating ? t('dub.translating') : t('dub.translate_all')}
                   </Button>
                 </div>
               </div>
@@ -822,9 +817,9 @@ export default function DubTab(props) {
                   type="button"
                   className="dub-glossary-chip"
                   onClick={() => setGlossaryOpen(true)}
-                  title="Pin translations for recurring terms (names, brand words, jargon)"
+                  title={t('dub.glossary_title')}
                 >
-                  + Glossary (0)
+                  {t('dub.glossary_btn', { count: 0 })}
                 </button>
               )}
               {dubJobId && glossaryVisible && (
@@ -845,13 +840,13 @@ export default function DubTab(props) {
 
               {selectedSegIds.size > 0 && (
                 <div className="dub-bulk-row dub-bulk-row--select">
-                  <span className="dub-bulk-row__label-brand">{selectedSegIds.size} selected</span>
+                  <span className="dub-bulk-row__label-brand">{t('dub.selected_count', { count: selectedSegIds.size })}</span>
                   <select className="input-base dub-bulk-select dub-bulk-select--voice"
                     value="" onChange={(e) => { const v = e.target.value; if (v === '__clear__') bulkApplyToSelected({ profile_id: '' }); else if (v) bulkApplyToSelected({ profile_id: v }); }}>
-                    <option value="">Set voice…</option>
-                    <option value="__clear__">⊘ Default</option>
+                    <option value="">{t('dub.set_voice')}</option>
+                    <option value="__clear__">{t('dub.clear_voice')}</option>
                     {speakerClones && Object.keys(speakerClones).length > 0 && (
-                      <optgroup label="From Video">
+                      <optgroup label={t('dub.cast')}>
                         {Object.keys(speakerClones).map(spk => {
                           const autoId = `auto:${(spk || '').toLowerCase().replace(/\s+/g, '_')}`;
                           return <option key={autoId} value={autoId}>🎤 {spk}</option>;
@@ -859,24 +854,24 @@ export default function DubTab(props) {
                       </optgroup>
                     )}
                     {profiles.filter(p => !p.instruct).length > 0 && (
-                      <optgroup label="Clone">
+                      <optgroup label={t('dub.clone_profiles')}>
                         {profiles.filter(p => !p.instruct).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </optgroup>
                     )}
                     {profiles.filter(p => !!p.instruct).length > 0 && (
-                      <optgroup label="Designed">
+                      <optgroup label={t('dub.design_presets')}>
                         {profiles.filter(p => !!p.instruct).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </optgroup>
                     )}
                   </select>
                   <select className="input-base dub-bulk-select dub-bulk-select--lang"
                     value="" onChange={(e) => { if (e.target.value === '__def__') bulkApplyToSelected({ target_lang: null }); else if (e.target.value) bulkApplyToSelected({ target_lang: e.target.value }); }}>
-                    <option value="">Set lang…</option>
-                    <option value="__def__">(Default)</option>
+                    <option value="">{t('dub.set_lang')}</option>
+                    <option value="__def__">{t('dub.default_lang')}</option>
                     {LANG_CODES.map(lc => <option key={lc.code} value={lc.code}>{lc.code.toUpperCase()}</option>)}
                   </select>
-                  <Button variant="danger" size="sm" onClick={bulkDeleteSelected}>Delete</Button>
-                  <Button variant="ghost"  size="sm" onClick={clearSegSelection} className="dub-bulk-row__clear">Clear</Button>
+                  <Button variant="danger" size="sm" onClick={bulkDeleteSelected}>{t('dub.delete_selected')}</Button>
+                  <Button variant="ghost"  size="sm" onClick={clearSegSelection} className="dub-bulk-row__clear">{t('dub.clear_selection')}</Button>
                 </div>
               )}
 
@@ -919,16 +914,16 @@ export default function DubTab(props) {
             {dubStep === 'done' && (
               <div className="dub-footer-banner">
                 <Badge tone="success">
-                  <Check size={11} /> Done! Tracks: {dubTracks.join(', ')}
+                  <Check size={11} /> {t('dub.tracks_done', { tracks: dubTracks.join(', ') })}
                 </Badge>
                 {incrementalPlan && incrementalPlan.stale?.length > 0 && (
                   <Badge tone="warn" className="dub-footer-banner__badge-gap">
-                    {incrementalPlan.stale.length} segment{incrementalPlan.stale.length === 1 ? '' : 's'} changed since last generate
+                    {t('dub.segments_changed', { count: incrementalPlan.stale.length })}
                   </Badge>
                 )}
                 {incrementalPlan && incrementalPlan.stale?.length === 0 && incrementalPlan.fresh?.length > 0 && (
                   <Badge tone="neutral" className="dub-footer-banner__badge-gap">
-                    all {incrementalPlan.fresh.length} segments up to date
+                    {t('dub.all_up_to_date', { count: incrementalPlan.fresh.length })}
                   </Badge>
                 )}
               </div>
@@ -941,33 +936,33 @@ export default function DubTab(props) {
               </div>
             )}
             <div className="dub-outputs-row">
-              <span className="dub-outputs-title-strong">Output Options:</span>
+              <span className="dub-outputs-title-strong">{t('dub.output_options')}</span>
               <label>
-                <input type="checkbox" checked={preserveBg} onChange={e => setPreserveBg(e.target.checked)} /> Mix BG Audio
+                <input type="checkbox" checked={preserveBg} onChange={e => setPreserveBg(e.target.checked)} /> {t('dub.mix_bg_audio')}
               </label>
-              <label title="Export subtitles with translated text on top and original italicised underneath.">
-                <input type="checkbox" checked={!!dualSubs} onChange={e => setDualSubs(e.target.checked)} /> Dual subtitles
+              <label title={t('dub.dual_subs_title')}>
+                <input type="checkbox" checked={!!dualSubs} onChange={e => setDualSubs(e.target.checked)} /> {t('dub.dual_subs')}
               </label>
-              <label title="Render subtitles directly into the MP4 video stream (hardsubs). Uses the dual-subtitle format when Dual subtitles is on.">
-                <input type="checkbox" checked={!!burnSubs} onChange={e => setBurnSubs(e.target.checked)} /> Burn subtitles
+              <label title={t('dub.burn_subs_title')}>
+                <input type="checkbox" checked={!!burnSubs} onChange={e => setBurnSubs(e.target.checked)} /> {t('dub.burn_subs')}
               </label>
               <label>
-                Default Track:
+                {t('dub.default_track')}
                 <select className="input-base dub-outputs-default" value={defaultTrack} onChange={e => setDefaultTrack(e.target.value)}>
-                  <option value="original">Original</option>
-                  {dubLangCode && <option value={dubLangCode}>{dubLangCode} (Selected Dub)</option>}
-                  {dubTracks.filter(t => t !== dubLangCode).map(t => (
-                    <option key={t} value={t}>{t} (Dub)</option>
+                  <option value="original">{t('dub.original_track')}</option>
+                  {dubLangCode && <option value={dubLangCode}>{t('dub.selected_dub', { code: dubLangCode })}</option>}
+                  {dubTracks.filter(tr => tr !== dubLangCode).map(tr => (
+                    <option key={tr} value={tr}>{t('dub.dub_track', { code: tr })}</option>
                   ))}
                 </select>
               </label>
             </div>
             {dubTracks.length > 0 && (
               <div className="dub-tracks-row">
-                <span className="dub-tracks-row__title">Export Tracks:</span>
-                <label className={exportTracks['original'] ? 'is-on' : 'is-off'}>
+                <span className="dub-tracks-row__title">{t('dub.export_tracks')}</span>
+                <label className={exportTracks['original'] !== false ? 'is-on' : 'is-off'}>
                   <input type="checkbox" checked={exportTracks['original'] !== false} onChange={e => setExportTracks(prev => ({ ...prev, original: e.target.checked }))} />
-                  <span>Original</span>
+                  <span>{t('dub.original_track')}</span>
                 </label>
                 {dubTracks.map(t => (
                   <label key={t} className={exportTracks[t] !== false ? 'is-on is-success' : 'is-off'}>
@@ -979,10 +974,10 @@ export default function DubTab(props) {
             )}
             <div className="dub-footer-btns">
               {dubStep === 'stopping' ? (
-                <FooterBtn tone="stopping" disabled icon={<Loader className="spinner" size={9} />} label="Stopping…" />
+                <FooterBtn tone="stopping" disabled icon={<Loader className="spinner" size={9} />} label={t('dub.stopping')} />
               ) : dubStep === 'generating' ? (
                 <FooterBtn tone="danger" onClick={handleDubStop} icon={<Square size={9} />}
-                  label={`Stop (${dubProgress.current}/${dubProgress.total})`} />
+                  label={t('dub.stop_progress', { current: dubProgress.current, total: dubProgress.total })} />
               ) : (
                 <>
                   <FooterBtn tone={dubSegments.length ? 'idle' : 'idle'} onClick={() => handleDubGenerate()}
@@ -992,7 +987,7 @@ export default function DubTab(props) {
                       tone="pink"
                       onClick={() => handleDubGenerate({ regenOnly: incrementalPlan.stale, preview: true })}
                       icon={<Play size={11} />}
-                      label={`Regen ${incrementalPlan.stale.length} changed`}
+                      label={t('dub.regen_changed', { count: incrementalPlan.stale.length })}
                     />
                   )}
                 </>
@@ -1002,7 +997,7 @@ export default function DubTab(props) {
                 disabled={dubStep !== 'done' && !dubSegments.length}
                 onClick={() => setExportOpen(true)}
                 icon={<Download size={11} />}
-                label="Export…"
+                label={t('dub.export_btn')}
               />
             </div>
           </div>
@@ -1076,7 +1071,7 @@ function PrepOverlay({ stage, onAbort, large = false }) {
         </span>
       )}
       <Button variant="danger" size="sm" onClick={onAbort} leading={<Square size={11} />}>
-        Stop
+        {t('dub.prep_stop')}
       </Button>
     </>
   );
@@ -1109,7 +1104,7 @@ function TranscribeOverlay({ elapsed, duration, onAbort }) {
         </div>
       )}
       <Button variant="danger" size="sm" onClick={onAbort} leading={<Square size={11} />}>
-        Stop
+        {t('dub.prep_stop')}
       </Button>
     </div>
   );

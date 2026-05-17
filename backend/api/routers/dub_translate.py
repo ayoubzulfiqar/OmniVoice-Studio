@@ -303,6 +303,17 @@ async def dub_translate(req: TranslateRequest):
 
         # Offline Argos Translate
         if provider == "argos" or provider == "libretranslate":
+            try:
+                import argostranslate  # noqa: F401
+            except ImportError:
+                friendly = (
+                    f"The '{provider}' translation engine needs the optional "
+                    f"`argostranslate` Python package, which isn't installed in "
+                    f"this backend. Install it with `uv pip install argostranslate` "
+                    f"(or `pip install argostranslate`) and restart the server, or "
+                    f"switch the Engine dropdown to another provider."
+                )
+                return JSONResponse(status_code=400, content={"error": friendly})
             def _translate_argos():
                 cache_dir = os.environ.get("OMNIVOICE_CACHE_DIR")
                 if cache_dir:
