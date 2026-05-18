@@ -46,6 +46,7 @@ def _save(data: dict) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp, _PREFS_PATH)
+        os.chmod(_PREFS_PATH, 0o600)
     except Exception:
         try:
             os.unlink(tmp)

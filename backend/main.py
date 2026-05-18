@@ -121,6 +121,7 @@ torchaudio.set_audio_backend("soundfile")
 
 class _WindowsSafeRotatingFileHandler(RotatingFileHandler):
     def doRollover(self):
+        _log = logging.getLogger("omnivoice.api")
         try:
             super().doRollover()
         except PermissionError:
@@ -130,18 +131,18 @@ class _WindowsSafeRotatingFileHandler(RotatingFileHandler):
                 if os.path.exists(sfn):
                     try:
                         os.replace(sfn, dfn)
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        _log.warning("log rotation rename failed: %s", e)
             dfn = self.rotation_filename(self.baseFilename + ".1")
             if os.path.exists(dfn):
                 try:
                     os.remove(dfn)
-                except OSError:
-                    pass
+                except OSError as e:
+                    _log.warning("log rotation remove failed: %s", e)
             try:
                 self.rotate(self.baseFilename, dfn)
             except PermissionError:
-                pass
+                _log.warning("log rotation rotate failed (PermissionError)")
             if self.stream:
                 try:
                     self.stream.close()

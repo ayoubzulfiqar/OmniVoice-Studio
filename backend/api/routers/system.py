@@ -528,7 +528,6 @@ def system_notifications():
 
 
 PERSISTENT_KEYS = {
-    "HF_TOKEN",
     "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
     "http_proxy", "https_proxy", "all_proxy",
     "FFMPEG_PATH", "FFPROBE_PATH",
@@ -542,12 +541,13 @@ PERSISTENT_KEYS = {
 async def set_env_var(body: dict):
     """Set an environment variable at runtime, persisted across restarts.
 
-    Persistent keys (proxy, FFMPEG_PATH, HF_TOKEN, …) are saved to
-    ``prefs.json`` so they survive backend restarts.  Non-persistent keys
+    Persistent keys (proxy, FFMPEG_PATH, …) are saved to
+    ``prefs.json`` so they survive backend restarts.  HF_TOKEN is
+    persisted via ``huggingface_hub.login()``.  Non-persistent keys
     (TRANSLATE_API_KEY) are set on ``os.environ`` only for the current
     process lifetime.
     """
-    ALLOWED_KEYS = PERSISTENT_KEYS | {"TRANSLATE_API_KEY"}
+    ALLOWED_KEYS = PERSISTENT_KEYS | {"HF_TOKEN", "TRANSLATE_API_KEY"}
     key = body.get("key", "")
     value = body.get("value", "")
 
@@ -569,6 +569,17 @@ async def set_env_var(body: dict):
     else:
         os.environ.pop(key, None)
         logger.info("Cleared environment variable: %s", key)
+
+    # HF_TOKEN goes through huggingface_hub.login() — not prefs.json
+    if key == "HF_TOKEN":
+        if value:
+            try:
+                from huggingface_hub import login as hf_login
+                hf_login(token=value, add_to_git_credential=False)
+                logger.info("HF_TOKEN persisted via huggingface_hub.login()")
+            except Exception as exc:
+                logger.warning("huggingface_hub.login() failed: %s", exc)
+        return {"key": key, "set": bool(value)}
 
     # Persist to prefs.json so the value survives restart
     prefs_key = f"env.{key}"
