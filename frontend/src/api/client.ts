@@ -48,9 +48,13 @@ async function readError(res: Response): Promise<string> {
 
 export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
   const pin = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('ov_pin') : null;
-  const headers: Record<string, string> = { ...(opts.headers as Record<string, string> || {}) };
-  if (pin) headers['X-OmniVoice-Pin'] = pin;
-  const res = await fetch(apiUrl(path), { ...opts, headers });
+  // Only modify the request when a PIN is set, so the default call shape
+  // (e.g. FormData posts with no headers / no Content-Type override) is
+  // preserved exactly.
+  const finalOpts: RequestInit = pin
+    ? { ...opts, headers: { ...(opts.headers as Record<string, string> || {}), 'X-OmniVoice-Pin': pin } }
+    : opts;
+  const res = await fetch(apiUrl(path), finalOpts);
   if (!res.ok) {
     // 401 from the LAN PIN middleware on a remote device → surface the gate.
     if (res.status === 401 && typeof window !== 'undefined') {
