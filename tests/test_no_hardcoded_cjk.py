@@ -121,10 +121,8 @@ def test_no_hardcoded_cjk_outside_locales():
     if offenders:
         msg = [
             "Hardcoded non-English (CJK) text found outside the translation layer.",
-            "Move user-facing strings into frontend/src/i18n/locales/*.json "
-            "(or use English).",
-            "If this CJK is functional (regex / model vocab / data / fixture), add "
-            "the file to _ALLOWED_FILES in this test with a justification.",
+            "Move user-facing strings into frontend/src/i18n/locales/*.json (or use English).",
+            "If functional CJK (regex/model-vocab/data/fixture), add the file to _ALLOWED_FILES here.",
             "",
         ]
         for rel, hits in sorted(offenders.items()):

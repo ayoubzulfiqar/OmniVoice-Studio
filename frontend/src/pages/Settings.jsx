@@ -23,7 +23,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { selectEngine } from '../api/engines';
 import { setupDownloadStreamUrl } from '../api/setup';
 import { getFrontendLogs, clearFrontendLogs } from '../utils/consoleBuffer';
-import { Tabs, Segmented, Button, Badge, Panel, Table, Progress, Select } from '../ui';
+import { Tabs, Segmented, Button, Badge, Table, Progress, Select } from '../ui';
 import { useAppStore } from '../store';
 import ApiKeysPanel from '../components/settings/ApiKeysPanel';
 import PerformancePanel from '../components/settings/PerformancePanel';
