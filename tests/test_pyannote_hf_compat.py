@@ -51,12 +51,11 @@ def test_pyannote_binds_the_shim():
     """The real proof: after the shim, pyannote's own `hf_hub_download`
     reference translates `use_auth_token` rather than raising."""
     _ensure_pyannote_hf_token_compat()
-    try:
-        from pyannote.audio.core import pipeline as _pp
-    except Exception as e:  # pragma: no cover - pyannote/torch not importable
-        pytest.skip(f"pyannote not importable: {e}")
-    # _ensure also patches already-imported pyannote modules, so the reference
-    # pyannote calls at pipeline.py:102 is the wrapped one.
+    # importorskip imports the module (or skips) — and since the shim patched
+    # huggingface_hub first, pyannote's `from huggingface_hub import
+    # hf_hub_download` (pipeline.py:34) binds the wrapped fn. (Also avoids the
+    # CodeQL "possibly-uninitialized local" false positive from a try/skip.)
+    _pp = pytest.importorskip("pyannote.audio.core.pipeline")
     assert getattr(_pp.hf_hub_download, "_ov_uat_shim", False), (
         "pyannote.audio.core.pipeline.hf_hub_download is not the use_auth_token shim"
     )
