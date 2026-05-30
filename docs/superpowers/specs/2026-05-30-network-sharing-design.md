@@ -49,7 +49,7 @@ No *new* Rust/Tauri commands are required — the feature is backend-driven and 
 - `get_state() -> ShareState`.
 - `lan_ipv4_addresses() -> list[str]`: enumerate via `psutil.net_if_addrs()`, keep `AF_INET`, drop loopback/link-local (`127.`, `169.254.`). (psutil already pinned — no new backend dep.)
 
-**Control endpoints (`backend/api/routers/system.py`)** — **loopback-only** (reject non-loopback with 403 regardless of PIN, so a LAN client can never enable exposure or read the PIN):
+**Control endpoints (`backend/api/routers/system.py`)** — the `system` router is **already loopback-gated** by `Depends(require_loopback)` (confirmed in the #157 security review: it checks the real, non-spoofable `request.client.host`). New endpoints added under this router inherit it — so a LAN client (even via the share listener) can never enable exposure, read the PIN, or reach `/system/set-env` (which can set executable paths). No new guard needed; reuse the existing dependency:
 - `POST /system/network/enable` → `network_share.enable(...)` → returns sanitized `ShareState` (incl. `pin`, `lan_addresses`, `share_port`).
 - `POST /system/network/disable` → returns `ShareState`.
 - `GET /system/network/state` → current `ShareState` (incl. `pin` only because caller is loopback).
@@ -94,7 +94,7 @@ No *new* Rust/Tauri commands are required — the feature is backend-driven and 
 ## 6. Security model
 
 - **Default is loopback-only, every launch.** Nothing is bound to `0.0.0.0` until the user explicitly enables it; no persisted auto-exposure.
-- **Control endpoints are loopback-only** — a LAN client cannot enable sharing or read the PIN.
+- **Control endpoints are loopback-only** via the existing `require_loopback` dependency on the `system` router (non-spoofable `request.client.host`, confirmed in the #157 security review) — a LAN client cannot enable sharing, read the PIN, or reach `/system/set-env` (which can set executable paths → would be RCE if exposed).
 - **`access_pin` is returned by the API only to loopback callers.**
 - **PIN gating is client-IP based:** loopback (incl. Tailscale-proxied) trusted; direct LAN requires PIN. Enforcement is inert unless a PIN is set → docker `0.0.0.0` deploys are unaffected (backward compatible).
 - **Tailscale path needs no open port and no PIN** — it proxies loopback and relies on tailnet identity + TLS.
