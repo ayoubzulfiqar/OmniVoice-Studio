@@ -1,6 +1,16 @@
 import os
 import sys
 
+# Triton is unavailable on Windows — disable torch.compile / dynamo / inductor
+# to prevent TritonMissing errors at inference time. Must be set before torch
+# is imported (it is lazily imported in services/model_manager.py). Uses
+# setdefault so an explicit user-set value is never overridden, and is guarded
+# to win32 so cross-platform default behavior is unchanged.
+if sys.platform == "win32":
+    os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
+    os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+    os.environ.setdefault("TORCHINDUCTOR_DISABLE", "1")
+
 # Ensure `backend/` is on sys.path so bare imports like `from core.config`
 # work regardless of how uvicorn is invoked:
 #   - `uvicorn main:app`           (cwd = backend/)
