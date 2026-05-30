@@ -120,9 +120,25 @@ export default function EnterprisePage({ onBack }) {
 
         {/* CTA footer */}
         <div className="ent-cta-footer">
-          <p>{t('enterprise.footer_email')}</p>
+          <p>
+            <button
+              type="button"
+              className="ent-cta-footer__link"
+              onClick={() => openExternal('mailto:OmniVoice@palash.dev')}
+              title="OmniVoice@palash.dev"
+            >
+              {t('enterprise.footer_email')}
+            </button>
+          </p>
           <p className="ent-cta-footer__sub">
-            {t('enterprise.footer_discord')}
+            <button
+              type="button"
+              className="ent-cta-footer__link"
+              onClick={() => openExternal('https://discord.gg/bzQavDfVV9')}
+              title="discord.gg/bzQavDfVV9"
+            >
+              {t('enterprise.footer_discord')}
+            </button>
           </p>
         </div>
       </div>
