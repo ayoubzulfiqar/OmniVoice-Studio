@@ -77,6 +77,17 @@ async def enable(app) -> ShareState:
         if getattr(server, "started", False):
             break
         await asyncio.sleep(0.05)
+    if not getattr(server, "started", False):
+        # Bind failed (e.g. the port was taken in the race after the
+        # free-port probe). Tear down and stay Local — never report enabled
+        # with a listener that isn't actually up (spec §7).
+        server.should_exit = True
+        try:
+            await asyncio.wait_for(_task, timeout=2)
+        except Exception:
+            pass
+        _task = None
+        raise RuntimeError("share listener failed to start")
     _server = server
     _state = ShareState(True, port, pin, lan_ipv4_addresses())
     app.state.network_share = _state
