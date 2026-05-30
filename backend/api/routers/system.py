@@ -574,12 +574,23 @@ async def set_env_var(body: dict):
         )
 
     if value:
-        # Validate ffmpeg path if user is setting it manually
-        if key == "FFMPEG_PATH" and not os.path.isfile(value):
-            raise HTTPException(
-                status_code=400,
-                detail=f"File not found: {value}",
-            )
+        # Validate executable paths if the user is setting them manually.
+        # Reject control characters / null bytes (defense-in-depth against
+        # path-injection), then require an existing regular file. NOTE: this
+        # endpoint is loopback-only and MUST remain so — a remote caller able
+        # to set FFMPEG_PATH/FFPROBE_PATH could point it at an arbitrary
+        # binary (RCE). Network sharing must never expose /system/set-env.
+        if key in ("FFMPEG_PATH", "FFPROBE_PATH"):
+            if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid path: control characters are not allowed",
+                )
+            if not os.path.isfile(value):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File not found: {value}",
+                )
         os.environ[key] = value
         logger.info("Set environment variable: %s (length=%d)", key, len(value))
 

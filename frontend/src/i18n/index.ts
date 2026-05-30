@@ -17,4 +17,12 @@ i18n
     },
   });
 
+// Selectable UI languages. Native language names live here, in the i18n
+// layer — never hardcoded in component code (see the "no hardcoded
+// non-English UI text outside locale files" rule in CLAUDE.md).
+export const LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'zh-CN', label: '简体中文' },
+];
+
 export default i18n;

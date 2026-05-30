@@ -100,7 +100,6 @@ import torchaudio
 import warnings
 import logging
 from logging.handlers import RotatingFileHandler
-import shutil
 
 # ── Restore persisted env vars from prefs.json ────────────────────────────
 # Settings saved via Settings UI (proxy, FFMPEG_PATH, HF_TOKEN, etc.) are

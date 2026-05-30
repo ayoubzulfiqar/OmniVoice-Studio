@@ -17,7 +17,7 @@ import { toast } from 'react-hot-toast';
 import { openExternal } from '../api/external';
 import { Trans, useTranslation } from 'react-i18next';
 import { systemLogs, systemLogsTauri, clearSystemLogs, clearTauriLogs } from '../api/system';
-import i18n from '../i18n';
+import i18n, { LANGUAGES } from '../i18n';
 import { useSysinfo, useModelStatus, useSystemInfo, queryKeys } from '../api/hooks';
 import { useQueryClient } from '@tanstack/react-query';
 import { selectEngine } from '../api/engines';
@@ -66,12 +66,6 @@ function GeneralTab() {
   const [proxySaving, setProxySaving] = useState(false);
   const [ffmpegPath, setFfmpegPath] = useState('');
   const [ffmpegSaving, setFfmpegSaving] = useState(false);
-  // LLM settings for cinematic translation / auto-extract
-  const [llmBaseUrl, setLlmBaseUrl] = useState('');
-  const [llmApiKey, setLlmApiKey] = useState('');
-  const [llmModel, setLlmModel] = useState('');
-  const [llmSaved, setLlmSaved] = useState(false);
-  const [llmSaving, setLlmSaving] = useState(false);
   const queryClient = useQueryClient();
 
   // Sync inputs with persisted values from backend on load
@@ -85,31 +79,6 @@ function GeneralTab() {
 
   const ffmpegOk = sysInfo?.ffmpeg_ok;
   const ffmpegCurrent = sysInfo?.ffmpeg_path;
-
-  const saveLlm = async () => {
-    const url = llmBaseUrl.trim();
-    const key = llmApiKey.trim();
-    const model = llmModel.trim();
-    if (!url || !key) { toast.error('请填写 Base URL 和 API Key'); return; }
-    setLlmSaving(true);
-    try {
-      const { API } = await import('../api/client');
-      const setEnv = (k, v) => fetch(`${API}/system/set-env`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: k, value: v }),
-      });
-      await Promise.all([
-        setEnv('TRANSLATE_BASE_URL', url),
-        setEnv('TRANSLATE_API_KEY', key),
-        model ? setEnv('TRANSLATE_MODEL', model) : Promise.resolve(),
-      ]);
-      toast.success('LLM 配置已保存');
-      setLlmSaved(true);
-      queryClient.invalidateQueries({ queryKey: queryKeys.systemInfo });
-    } catch (e) { toast.error(`保存失败: ${e.message}`); }
-    finally { setLlmSaving(false); }
-  };
 
   const saveFfmpeg = async () => {
     const value = ffmpegPath.trim();
@@ -202,8 +171,9 @@ function GeneralTab() {
         <span className="label">{t('settings.language')}</span>
         <span className="value">
           <Select size="sm" value={locale} onChange={handleLocaleChange}>
-            <option value="en">English</option>
-            <option value="zh-CN">简体中文</option>
+            {LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>{l.label}</option>
+            ))}
           </Select>
         </span>
       </div>
