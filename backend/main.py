@@ -1,6 +1,14 @@
 import os
 import sys
 
+# Ensure `backend/` is on sys.path so bare imports like `from core.config`
+# work regardless of how uvicorn is invoked:
+#   - `uvicorn main:app`           (cwd = backend/)
+#   - `uvicorn backend.main:app`   (cwd = /app, Docker)
+_backend_dir = os.path.dirname(os.path.abspath(__file__))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
 # Triton is unavailable on Windows — disable torch.compile / dynamo / inductor
 # to prevent TritonMissing errors at inference time. Must be set before torch
 # is imported (it is lazily imported in services/model_manager.py). Uses
@@ -10,14 +18,6 @@ if sys.platform == "win32":
     os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
     os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
     os.environ.setdefault("TORCHINDUCTOR_DISABLE", "1")
-
-# Ensure `backend/` is on sys.path so bare imports like `from core.config`
-# work regardless of how uvicorn is invoked:
-#   - `uvicorn main:app`           (cwd = backend/)
-#   - `uvicorn backend.main:app`   (cwd = /app, Docker)
-_backend_dir = os.path.dirname(os.path.abspath(__file__))
-if _backend_dir not in sys.path:
-    sys.path.insert(0, _backend_dir)
 
 try:
     import dotenv
