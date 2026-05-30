@@ -7,6 +7,7 @@ import logging
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query, Request
 from core.prefs import set_ as prefs_set, delete as prefs_delete
 from services import network_share
+from services import tailscale as _tailscale
 from api.schemas import SysinfoResponse, SystemInfoResponse, ModelStatusResponse, LogsResponse, FlushMemoryResponse
 from api.dependencies import require_loopback
 from fastapi.responses import FileResponse, StreamingResponse
@@ -782,3 +783,20 @@ async def network_enable(request: Request):
 async def network_disable(request: Request):
     st = await network_share.disable(request.app)
     return {"enabled": st.enabled}
+
+
+# ── Tailscale (loopback-only control surface) ────────────────────────────────
+
+@router.get("/system/tailscale/status")
+async def tailscale_status():
+    return _tailscale.status()
+
+
+@router.post("/system/tailscale/enable")
+async def tailscale_enable():
+    return _tailscale.serve_enable()
+
+
+@router.post("/system/tailscale/disable")
+async def tailscale_disable():
+    return _tailscale.serve_disable()
