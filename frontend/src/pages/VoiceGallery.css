@@ -420,7 +420,7 @@
 
 /* Animated "now playing" equalizer */
 .now-playing { display: inline-flex; align-items: flex-end; gap: 2px; width: 15px; height: 14px; }
-.now-playing i { width: 2.5px; background: currentColor; border-radius: 1px; transform-origin: bottom; animation: eq 0.9s ease-in-out infinite; }
+.now-playing i { width: 2.5px; background: currentcolor; border-radius: 1px; transform-origin: bottom; animation: eq 0.9s ease-in-out infinite; }
 .now-playing i:nth-child(1) { height: 45%; animation-delay: 0s; }
 .now-playing i:nth-child(2) { height: 80%; animation-delay: 0.15s; }
 .now-playing i:nth-child(3) { height: 60%; animation-delay: 0.3s; }

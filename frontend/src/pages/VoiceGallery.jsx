@@ -14,6 +14,7 @@ import { Button, Input } from '../ui';
 import { useArchetypeCategories, useArchetypes, useGalleryVoices, useCommunityItems } from '../api/hooks';
 import { archetypePreviewUrl, useArchetypeAsProfile } from '../api/archetypes';
 import { useCommunityItem, communitySubmitUrl } from '../api/community';
+import { openExternal } from '../api/external';
 import {
   searchYoutube, downloadYoutubeClip, deleteGalleryVoice,
   saveVoiceAsProfile, uploadVoiceClip, previewVoiceUrl,
@@ -395,7 +396,7 @@ function CommunityZone({ t, playingId, loadingPreviewId, favorites, toggleFavori
   const submit = async (type) => {
     try {
       const { url } = await communitySubmitUrl(type);
-      window.open(url, '_blank', 'noopener');
+      await openExternal(url);
     } catch {
       flash(t('gallery.submit_failed', { defaultValue: 'Could not open the submission form.' }));
     }

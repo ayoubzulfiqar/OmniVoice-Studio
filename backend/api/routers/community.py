@@ -19,9 +19,11 @@ Design / safety
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -42,6 +44,7 @@ _ALLOWED_AUDIO_HOSTS = {
 }
 _VALID_TOKENS = set(archetypes._VD._INSTRUCT_ALL_VALID)
 _USE_CASE_IDS = {c["id"] for c in archetypes.USE_CASES}
+_SOURCE_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")  # owner/repo only
 
 
 # ── Config: which content repos to load ───────────────────────────────────────
@@ -174,7 +177,7 @@ def community_manifest(refresh: bool = Query(False)):
 def community_items(
     use_case: Optional[str] = None,
     gender: Optional[str] = None,
-    type: Optional[str] = None,
+    item_type: Optional[str] = Query(None, alias="type"),
     lang: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = Query(60, ge=1, le=500),
@@ -189,7 +192,7 @@ def community_items(
             return False
         if gender and f.get("gender") != gender:
             return False
-        if type and it.get("type") != type:
+        if item_type and it.get("type") != item_type:
             return False
         if lang and it.get("language") != lang:
             return False
@@ -202,10 +205,12 @@ def community_items(
 
 
 @router.get("/community/submit-url")
-def community_submit_url(type: str = Query("preset"), source: Optional[str] = Query(None)):
+def community_submit_url(item_type: str = Query("preset", alias="type"), source: Optional[str] = Query(None)):
     """Build the prefilled GitHub submission URL (server-free, local-first)."""
     src = source or configured_sources()[0]
-    template = "preset-submission.yml" if type == "preset" else "voice-submission.yml"
+    if not _SOURCE_RE.match(src or ""):
+        src = configured_sources()[0]  # ignore a malformed/untrusted source override
+    template = "preset-submission.yml" if item_type == "preset" else "voice-submission.yml"
     return {"url": f"https://github.com/{src}/issues/new?template={template}"}
 
 
@@ -217,7 +222,7 @@ async def community_use(item_id: str, name: Optional[str] = Query(None)):
     (host-allow-listed, SHA-256-verified) reference clip. Both create a
     ``voice_profiles`` row usable everywhere voices are picked.
     """
-    _, items, _, _ = _load(refresh=False)
+    _, items, _, _ = await asyncio.to_thread(_load, False)
     item = next((it for it in items if it["id"] == item_id), None)
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found in the gallery.")
@@ -244,8 +249,8 @@ async def community_use(item_id: str, name: Optional[str] = Query(None)):
                 "sample_script": ref_text or "Hello — this is a preview of this voice.",
             }
             await _render_archetype_wav(pseudo, audio_path)
-        else:  # voice — download the reference clip
-            _download_voice_audio(item, audio_path)
+        else:  # voice — download the reference clip (off the event loop)
+            await asyncio.to_thread(_download_voice_audio, item, audio_path)
     except HTTPException:
         raise
     except Exception as e:
