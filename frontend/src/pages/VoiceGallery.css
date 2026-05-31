@@ -433,3 +433,7 @@
 
 .load-more { display: flex; justify-content: center; padding: 12px 0; }
 .import-explainer { flex-shrink: 0; padding: 8px 10px; margin-bottom: 8px; background: var(--bg-tertiary); border-radius: 8px; font-size: 0.72rem; color: var(--text-secondary); line-height: 1.4; }
+.community-explainer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.submit-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.submit-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.03); color: var(--text-primary); border-radius: 8px; font-size: 0.7rem; cursor: pointer; transition: border-color 0.15s ease, color 0.15s ease; }
+.submit-btn:hover { border-color: var(--accent); color: var(--accent); }

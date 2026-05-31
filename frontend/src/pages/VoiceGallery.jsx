@@ -8,11 +8,12 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Search, Download, Play, Pause, Trash2, X, Loader, Star,
-  Wand2, UserPlus, Sparkles, RotateCcw, Grid, List, Upload, Scissors,
+  Wand2, UserPlus, Sparkles, RotateCcw, Grid, List, Upload, Scissors, Store, Send,
 } from 'lucide-react';
 import { Button, Input } from '../ui';
-import { useArchetypeCategories, useArchetypes, useGalleryVoices } from '../api/hooks';
+import { useArchetypeCategories, useArchetypes, useGalleryVoices, useCommunityItems } from '../api/hooks';
 import { archetypePreviewUrl, useArchetypeAsProfile } from '../api/archetypes';
+import { useCommunityItem, communitySubmitUrl } from '../api/community';
 import {
   searchYoutube, downloadYoutubeClip, deleteGalleryVoice,
   saveVoiceAsProfile, uploadVoiceClip, previewVoiceUrl,
@@ -132,6 +133,9 @@ export default function VoiceGallery() {
             <button className={`zone-tab ${zone === 'archetypes' ? 'active' : ''}`} onClick={() => setZone('archetypes')}>
               <Sparkles size={14} /> {t('gallery.zone_archetypes', { defaultValue: 'Archetypes' })}
             </button>
+            <button className={`zone-tab ${zone === 'community' ? 'active' : ''}`} onClick={() => setZone('community')}>
+              <Store size={14} /> {t('gallery.zone_community', { defaultValue: 'Community' })}
+            </button>
             <button className={`zone-tab ${zone === 'imports' ? 'active' : ''}`} onClick={() => setZone('imports')}>
               <Upload size={14} /> {t('gallery.zone_imports', { defaultValue: 'My Imports' })}
             </button>
@@ -167,6 +171,17 @@ export default function VoiceGallery() {
             setInstruct('');
             setMode('design');
           }}
+        />
+      ) : zone === 'community' ? (
+        <CommunityZone
+          t={t}
+          playingId={playingId}
+          loadingPreviewId={loadingPreviewId}
+          favorites={favorites}
+          toggleFavorite={toggleFavorite}
+          onPlayAudio={(url, id) => playUrl(url, id)}
+          flash={flash}
+          onDesign={(instruct) => { setVdStates({ ...vdStates }); setInstruct(instruct); setMode('design'); }}
         />
       ) : (
         <ImportsZone
@@ -367,6 +382,75 @@ function ArchetypeCard({
           <Wand2 size={14} />
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Community zone (marketplace) ─────────────────────────────────────────────
+function CommunityZone({ t, playingId, loadingPreviewId, favorites, toggleFavorite, onPlayAudio, flash, onDesign }) {
+  const itemsQ = useCommunityItems({ limit: 100 });
+  const items = itemsQ.data?.items || [];
+  const favSet = useMemo(() => new Set(favorites), [favorites]);
+
+  const submit = async (type) => {
+    try {
+      const { url } = await communitySubmitUrl(type);
+      window.open(url, '_blank', 'noopener');
+    } catch {
+      flash(t('gallery.submit_failed', { defaultValue: 'Could not open the submission form.' }));
+    }
+  };
+
+  return (
+    <div className="gallery-content gallery-scroll">
+      <div className="import-explainer community-explainer">
+        <span>{t('gallery.community_explainer', { defaultValue: 'Designed presets and recorded voices shared by the community, loaded from the omnivoice-gallery.' })}</span>
+        <div className="submit-actions">
+          <button className="submit-btn" onClick={() => submit('preset')}>
+            <Send size={13} /> {t('gallery.submit_preset', { defaultValue: 'Submit a preset' })}
+          </button>
+          <button className="submit-btn" onClick={() => submit('voice')}>
+            <Send size={13} /> {t('gallery.submit_voice', { defaultValue: 'Submit a voice' })}
+          </button>
+        </div>
+      </div>
+
+      {itemsQ.isLoading ? (
+        <div className="loading"><Loader className="spin" size={18} /></div>
+      ) : items.length === 0 ? (
+        <div className="empty">
+          {t('gallery.community_empty', { defaultValue: 'No community voices loaded yet — connect to the internet and reopen, or be the first to submit one.' })}
+        </div>
+      ) : (
+        <div className="archetype-grid grid">
+          {items.map((it) => (
+            <ArchetypeCard
+              key={it.id}
+              a={it}
+              t={t}
+              viewMode="grid"
+              isFavorite={favSet.has(it.id)}
+              isPlaying={playingId === it.id}
+              isLoadingPreview={loadingPreviewId === it.id}
+              onToggleFavorite={toggleFavorite}
+              onPreview={(item) => (item.audio?.url
+                ? onPlayAudio(item.audio.url, item.id)
+                : flash(t('gallery.no_preview', { defaultValue: 'No preview — add it with "Use voice" to hear it.' })))}
+              onUse={async (item) => {
+                try {
+                  const r = await useCommunityItem(item.id, item.name);
+                  flash(t('gallery.saved_as_profile', { defaultValue: 'Added "{{name}}" to your voices.', name: r.name }));
+                } catch {
+                  flash(t('gallery.use_failed', { defaultValue: 'Could not add that voice.' }));
+                }
+              }}
+              onDesign={(item) => (item.instruct
+                ? onDesign(item.instruct)
+                : flash(t('gallery.no_designer', { defaultValue: 'Recorded voice — use "Use voice" instead.' })))}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
