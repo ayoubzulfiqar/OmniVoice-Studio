@@ -13,7 +13,7 @@ import {
 import { Button, Input } from '../ui';
 import { useArchetypeCategories, useArchetypes, useGalleryVoices, useCommunityItems } from '../api/hooks';
 import { archetypePreviewUrl, useArchetypeAsProfile } from '../api/archetypes';
-import { useCommunityItem, communitySubmitUrl } from '../api/community';
+import { addCommunityItem, communitySubmitUrl } from '../api/community';
 import { openExternal } from '../api/external';
 import {
   searchYoutube, downloadYoutubeClip, deleteGalleryVoice,
@@ -439,7 +439,7 @@ function CommunityZone({ t, playingId, loadingPreviewId, favorites, toggleFavori
                 : flash(t('gallery.no_preview', { defaultValue: 'No preview — add it with "Use voice" to hear it.' })))}
               onUse={async (item) => {
                 try {
-                  const r = await useCommunityItem(item.id, item.name);
+                  const r = await addCommunityItem(item.id, item.name);
                   flash(t('gallery.saved_as_profile', { defaultValue: 'Added "{{name}}" to your voices.', name: r.name }));
                 } catch {
                   flash(t('gallery.use_failed', { defaultValue: 'Could not add that voice.' }));
