@@ -210,7 +210,11 @@
     "locked": "잠김",
     "open": "열기",
     "try_it": "사용해 보세요",
-    "audio_only": "오디오만"
+    "audio_only": "오디오만",
+    "stories_title": "스토리",
+    "stories_desc": "다중 음성 오디오북 — 캐릭터 캐스팅, 스크립트 삽입, 장별로 내보내기.",
+    "gallery_title": "보이스 갤러리",
+    "gallery_desc": "악센트, 연령, 스타일별로 미리 디자인된 음성을 찾아보세요. 설정이 필요 없습니다."
   },
   "clone": {
     "prompt": "프롬프트",
@@ -309,7 +313,12 @@
     "copy_diagnostics": "진단 복사",
     "github": "GitHub의 OmniVoice",
     "model_card": "모델 카드",
-    "commercial_license": "상업용 라이센스"
+    "commercial_license": "상업용 라이센스",
+    "update_channel": "업데이트 채널",
+    "channel_stable": "안정 버전",
+    "channel_preview": "미리 보기",
+    "channel_set": "업데이트 채널이 {{channel}}(으)로 설정됨",
+    "channel_preview_hint": "미리 보기는 최신 main 빌드를 따릅니다. 새로운 기능을 빨리 사용할 수 있지만 테스트는 적습니다. 안정 버전이 더 최신이면 안정 버전으로 대체됩니다."
   },
   "privacy": {
     "desc": "모든 것이 <1>이 머신</1>에서 실행됩니다. 온라인 번역기(Google, DeepL 등)를 명시적으로 사용하거나 HuggingFace에 푸시하지 않는 한 귀하의 오디오, 비디오 및 스크립트는 컴퓨터를 떠나지 않습니다.",
@@ -841,7 +850,37 @@
     "cat_politicians": "정치인",
     "cat_news": "뉴스 앵커",
     "cat_gaming": "게임",
-    "cat_books": "책/영화"
+    "cat_books": "책/영화",
+    "subtitle": "수백 가지의 미리 만들어진 디자인 음성 중 하나를 선택하여 사용하세요.",
+    "zone_archetypes": "원형",
+    "zone_imports": "내 수입품",
+    "all": "모두",
+    "favorites": "즐겨찾기",
+    "favorite": "즐겨찾기",
+    "reset": "재설정",
+    "preview": "미리보기",
+    "use_voice": "음성 사용",
+    "open_designer": "디자이너에서 열기",
+    "no_matches": "이 필터와 일치하는 음성이 없습니다.",
+    "load_more": "더 로드하기",
+    "saved_as_profile": "목소리에 \"{{name}}\"을(를) 추가했습니다.",
+    "use_failed": "해당 음성을 생성할 수 없습니다. 엔진이 로드 중일 수 있습니다.",
+    "preview_failed": "미리보기를 사용할 수 없습니다. 음성 엔진이 아직 로드 중일 수 있습니다.",
+    "import_explainer": "권한이 있는 URL을 붙여넣거나 파일을 업로드하고, 필요한 부분을 다듬어 음성으로 저장하세요. 귀하는 귀하가 수입하는 모든 것에 대한 라이선스에 대한 책임을 집니다.",
+    "import_placeholder": "비디오/오디오 URL을 붙여넣거나 검색어를 입력하세요…",
+    "imported_clip": "가져온 클립",
+    "upload": "파일 업로드",
+    "import": "가져오기",
+    "my_imports": "내 수입품",
+    "no_imports": "아직 가져온 항목이 없습니다. 시작하려면 위에 URL을 붙여넣으세요.",
+    "search_results": "{{count}} 결과",
+    "download_failed": "다운로드 실패: {{msg}}",
+    "search_failed": "검색에 실패했습니다.",
+    "upload_failed": "업로드에 실패했습니다.",
+    "save_failed": "프로필을 저장할 수 없습니다.",
+    "confirm_delete": "'{{name}}'을 삭제하시겠습니까?",
+    "trim_load_failed": "다듬기 위해 오디오를 로드할 수 없습니다.",
+    "delete": "삭제"
   },
   "transcriptions": {
     "title": "전사",
@@ -1466,5 +1505,34 @@
   "app": {
     "loading": "로드 중…",
     "trimmed_loaded": "잘린 오디오 로드됨"
+  },
+  "update": {
+    "available": "업데이트 {{version}} 사용 가능",
+    "install": "설치 후 다시 시작",
+    "install_hint": "업데이트를 다운로드하고 새 버전으로 다시 시작합니다",
+    "downloading": "업데이트 중… {{pct}}%",
+    "restart": "다시 시작하여 업데이트",
+    "busy": "먼저 더빙을 완료한 후 업데이트를 설치하세요.",
+    "whats_new": "새로운 소식",
+    "failed": "업데이트 실패",
+    "retry": "재시도",
+    "dismiss": "닫기"
+  },
+  "archetypes": {
+    "featured": "추천",
+    "browse_all": "모두 찾아보기",
+    "use_narration": "내레이션 & 스토리",
+    "use_conversational": "대화",
+    "use_characters": "캐릭터 및 애니메이션",
+    "use_social": "소셜 미디어",
+    "use_entertainment": "엔터테인먼트 및 TV",
+    "use_advertisement": "광고",
+    "use_informative": "유익하고 교육적인",
+    "facet_gender": "성별",
+    "facet_age": "나이",
+    "facet_pitch": "피치",
+    "facet_accent": "악센트",
+    "facet_lang": "언어",
+    "facet_whisper": "속삭임"
   }
 }

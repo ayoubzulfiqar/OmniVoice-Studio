@@ -211,7 +211,11 @@
     "locked": "GESPERRT",
     "open": "Offen",
     "try_it": "Probieren Sie es aus",
-    "audio_only": "Nur Audio"
+    "audio_only": "Nur Audio",
+    "stories_title": "Geschichten",
+    "stories_desc": "Mehrsprachige Hörbücher – Besetzung Ihrer Charaktere, Einfügen eines Skripts, Export nach Kapitel.",
+    "gallery_title": "Sprachgalerie",
+    "gallery_desc": "Durchsuchen Sie vorgefertigte Stimmen nach Akzent, Alter und Stil – ohne Einrichtung."
   },
   "clone": {
     "prompt": "Prompt",
@@ -310,7 +314,12 @@
     "copy_diagnostics": "Diagnose kopieren",
     "github": "OmniVoice auf GitHub",
     "model_card": "Modellkarte",
-    "commercial_license": "Kommerzielle Lizenz"
+    "commercial_license": "Kommerzielle Lizenz",
+    "update_channel": "Update-Kanal",
+    "channel_stable": "Stabil",
+    "channel_preview": "Vorschau",
+    "channel_set": "Update-Kanal auf {{channel}} gesetzt",
+    "channel_preview_hint": "Die Vorschau folgt dem neuesten main-Build – neuere Funktionen, weniger getestet. Wechselt zurück zu Stabil, wenn eine stabile Version voraus ist."
   },
   "privacy": {
     "desc": "Alles läuft auf <1>dieser Maschine</1>. Ihre Audio-, Video- und Transkripte verlassen niemals Ihren Computer, es sei denn, Sie verwenden ausdrücklich einen Online-Übersetzer (Google, DeepL usw.) oder pushen an HuggingFace.",
@@ -842,7 +851,37 @@
     "cat_politicians": "Politiker",
     "cat_news": "Nachrichtensprecher",
     "cat_gaming": "Spielen",
-    "cat_books": "Bücher/Filme"
+    "cat_books": "Bücher/Filme",
+    "subtitle": "Hunderte vorgefertigte Stimmen – wählen Sie eine aus und legen Sie los.",
+    "zone_archetypes": "Archetypen",
+    "zone_imports": "Meine Importe",
+    "all": "Alle",
+    "favorites": "Favoriten",
+    "favorite": "Favorit",
+    "reset": "Zurücksetzen",
+    "preview": "Vorschau",
+    "use_voice": "Benutzen Sie die Stimme",
+    "open_designer": "Im Designer öffnen",
+    "no_matches": "Keine Stimmen entsprechen diesen Filtern.",
+    "load_more": "Mehr laden",
+    "saved_as_profile": "„{{name}}“ zu Ihren Stimmen hinzugefügt.",
+    "use_failed": "Diese Stimme konnte nicht erstellt werden – die Engine wird möglicherweise geladen.",
+    "preview_failed": "Vorschau nicht verfügbar – die Sprach-Engine wird möglicherweise noch geladen.",
+    "import_explainer": "Fügen Sie eine URL ein, für die Sie Rechte haben (oder laden Sie eine Datei hoch), schneiden Sie den benötigten Teil ab und speichern Sie ihn als Stimme. Sie sind für die Lizenzierung aller von Ihnen importierten Produkte verantwortlich.",
+    "import_placeholder": "Fügen Sie eine Video-/Audio-URL ein oder geben Sie „Suchen“ ein …",
+    "imported_clip": "Importierter Clip",
+    "upload": "Datei hochladen",
+    "import": "Importieren",
+    "my_imports": "Meine Importe",
+    "no_imports": "Noch nichts importiert. Fügen Sie oben eine URL ein, um zu beginnen.",
+    "search_results": "{{count}} Ergebnisse",
+    "download_failed": "Download fehlgeschlagen: {{msg}}",
+    "search_failed": "Die Suche ist fehlgeschlagen.",
+    "upload_failed": "Der Upload ist fehlgeschlagen.",
+    "save_failed": "Profil konnte nicht gespeichert werden.",
+    "confirm_delete": "„{{name}}“ löschen?",
+    "trim_load_failed": "Audio zum Zuschneiden konnte nicht geladen werden.",
+    "delete": "Löschen"
   },
   "transcriptions": {
     "title": "Transkriptionen",
@@ -1467,5 +1506,34 @@
   "app": {
     "loading": "Laden…",
     "trimmed_loaded": "Zugeschnittenes Audio geladen"
+  },
+  "update": {
+    "available": "Update {{version}} verfügbar",
+    "install": "Installieren und neu starten",
+    "install_hint": "Update herunterladen und in die neue Version neu starten",
+    "downloading": "Wird aktualisiert… {{pct}} %",
+    "restart": "Zum Aktualisieren neu starten",
+    "busy": "Beende zuerst deine Synchronisation – dann installiere das Update.",
+    "whats_new": "Was ist neu?",
+    "failed": "Update fehlgeschlagen",
+    "retry": "Versuchen Sie es noch einmal",
+    "dismiss": "Entlassen"
+  },
+  "archetypes": {
+    "featured": "Hervorgehoben",
+    "browse_all": "Alle durchsuchen",
+    "use_narration": "Erzählung & Geschichte",
+    "use_conversational": "Konversation",
+    "use_characters": "Charaktere und Animation",
+    "use_social": "Soziale Medien",
+    "use_entertainment": "Unterhaltung und Fernsehen",
+    "use_advertisement": "Werbung",
+    "use_informative": "Informativ und lehrreich",
+    "facet_gender": "Geschlecht",
+    "facet_age": "Alter",
+    "facet_pitch": "Tonhöhe",
+    "facet_accent": "Akzent",
+    "facet_lang": "Sprache",
+    "facet_whisper": "Flüstern"
   }
 }

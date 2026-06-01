@@ -211,7 +211,11 @@
     "locked": "ロックされています",
     "open": "開く",
     "try_it": "試してみてください",
-    "audio_only": "音声のみ"
+    "audio_only": "音声のみ",
+    "stories_title": "ストーリー",
+    "stories_desc": "マルチボイスオーディオブック — キャラクターをキャストし、スクリプトを入力し、章ごとにエクスポートします。",
+    "gallery_title": "ボイスギャラリー",
+    "gallery_desc": "アクセント、年齢、スタイルごとに既製のデザインされた音声を参照できます。セットアップは必要ありません。"
   },
   "clone": {
     "prompt": "プロンプト",
@@ -310,7 +314,12 @@
     "copy_diagnostics": "コピー診断",
     "github": "GitHub 上のオムニボイス",
     "model_card": "モデルカード",
-    "commercial_license": "商用ライセンス"
+    "commercial_license": "商用ライセンス",
+    "update_channel": "アップデートチャンネル",
+    "channel_stable": "安定版",
+    "channel_preview": "プレビュー",
+    "channel_set": "アップデートチャンネルを {{channel}} に設定しました",
+    "channel_preview_hint": "プレビューは最新の main ビルドを追跡します。新機能をいち早く利用できますが、テストは少なめです。安定版が先行している場合は安定版にフォールバックします。"
   },
   "privacy": {
     "desc": "すべては<1>このマシン</1> 上で実行されます。オンライン翻訳者 (Google、DeepL など) を明示的に使用するか、HuggingFace にプッシュしない限り、オーディオ、ビデオ、およびトランスクリプトがコンピューターから流出することはありません。",
@@ -842,7 +851,37 @@
     "cat_politicians": "政治家",
     "cat_news": "ニュースアンカー",
     "cat_gaming": "ゲーム",
-    "cat_books": "本/映画"
+    "cat_books": "本/映画",
+    "subtitle": "何百もの既製のデザインされた音声 - 1 つを選んですぐに使用できます。",
+    "zone_archetypes": "原型",
+    "zone_imports": "私の輸入品",
+    "all": "すべて",
+    "favorites": "お気に入り",
+    "favorite": "お気に入り",
+    "reset": "リセット",
+    "preview": "プレビュー",
+    "use_voice": "音声を使用する",
+    "open_designer": "デザイナーで開く",
+    "no_matches": "これらのフィルターに一致する音声はありません。",
+    "load_more": "さらにロードする",
+    "saved_as_profile": "ボイスに「{{name}}」を追加しました。",
+    "use_failed": "その音声を作成できませんでした。エンジンが読み込まれている可能性があります。",
+    "preview_failed": "プレビューは利用できません — 音声エンジンがまだ読み込まれている可能性があります。",
+    "import_explainer": "権限のある URL を貼り付け（またはファイルをアップロード）、必要な部分をトリミングして音声として保存します。輸入するあらゆるもののライセンスについてはお客様の責任となります。",
+    "import_placeholder": "ビデオ/オーディオの URL を貼り付けるか、入力して検索します…",
+    "imported_clip": "インポートされたクリップ",
+    "upload": "ファイルをアップロードする",
+    "import": "インポート",
+    "my_imports": "私の輸入品",
+    "no_imports": "まだ何もインポートされていません。上に URL を貼り付けて開始してください。",
+    "search_results": "{{count}} の結果",
+    "download_failed": "ダウンロードに失敗しました: {{msg}}",
+    "search_failed": "検索に失敗しました。",
+    "upload_failed": "アップロードに失敗しました。",
+    "save_failed": "プロフィールを保存できませんでした。",
+    "confirm_delete": "「{{name}}」を削除しますか?",
+    "trim_load_failed": "トリミングするオーディオをロードできませんでした。",
+    "delete": "削除"
   },
   "transcriptions": {
     "title": "転写",
@@ -1467,5 +1506,34 @@
   "app": {
     "loading": "読み込み中…",
     "trimmed_loaded": "トリミングされたオーディオがロードされました"
+  },
+  "update": {
+    "available": "アップデート {{version}} が利用可能です",
+    "install": "インストールして再起動",
+    "install_hint": "アップデートをダウンロードして新しいバージョンで再起動します",
+    "downloading": "更新中… {{pct}}%",
+    "restart": "再起動してアップデート",
+    "busy": "先に吹き替えを完了してから、アップデートをインストールしてください。",
+    "whats_new": "新機能",
+    "failed": "アップデートに失敗しました",
+    "retry": "再試行",
+    "dismiss": "解雇する"
+  },
+  "archetypes": {
+    "featured": "注目の",
+    "browse_all": "すべて閲覧する",
+    "use_narration": "ナレーション＆ストーリー",
+    "use_conversational": "会話型",
+    "use_characters": "キャラクターとアニメーション",
+    "use_social": "ソーシャルメディア",
+    "use_entertainment": "エンターテインメントとテレビ",
+    "use_advertisement": "広告",
+    "use_informative": "有益で教育的",
+    "facet_gender": "性別",
+    "facet_age": "年齢",
+    "facet_pitch": "ピッチ",
+    "facet_accent": "アクセント",
+    "facet_lang": "言語",
+    "facet_whisper": "ささやき"
   }
 }

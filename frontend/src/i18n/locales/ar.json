@@ -210,7 +210,11 @@
     "locked": "مغلق",
     "open": "مفتوح",
     "try_it": "جربه",
-    "audio_only": "الصوت فقط"
+    "audio_only": "الصوت فقط",
+    "stories_title": "قصص",
+    "stories_desc": "كتب صوتية متعددة الأصوات - ألقي شخصياتك، وأدخل النص، وقم بالتصدير حسب الفصل.",
+    "gallery_title": "معرض الصوت",
+    "gallery_desc": "تصفح الأصوات المصممة الجاهزة حسب اللهجة والعمر والأسلوب - بدون إعداد."
   },
   "clone": {
     "prompt": "موجه",
@@ -309,7 +313,12 @@
     "copy_diagnostics": "نسخ التشخيص",
     "github": "أومنيفويس على جيثب",
     "model_card": "البطاقة النموذجية",
-    "commercial_license": "رخصة تجارية"
+    "commercial_license": "رخصة تجارية",
+    "update_channel": "قناة التحديث",
+    "channel_stable": "مستقر",
+    "channel_preview": "معاينة",
+    "channel_set": "تم ضبط قناة التحديث على {{channel}}",
+    "channel_preview_hint": "تتابع المعاينة أحدث إصدار من main — ميزات أحدث وأقل اختبارًا. تعود إلى المستقر إذا كان هناك إصدار مستقر أحدث."
   },
   "privacy": {
     "desc": "كل شيء يعمل على <1>هذا الجهاز</1>. لا يغادر الصوت والفيديو والنصوص جهاز الكمبيوتر الخاص بك أبدًا ما لم تستخدم صراحةً مترجمًا عبر الإنترنت (Google، DeepL، وما إلى ذلك) أو تضغط على HuggingFace.",
@@ -841,7 +850,37 @@
     "cat_politicians": "السياسيون",
     "cat_news": "مذيعي الأخبار",
     "cat_gaming": "الألعاب",
-    "cat_books": "كتب / أفلام"
+    "cat_books": "كتب / أفلام",
+    "subtitle": "مئات من الأصوات المصممة الجاهزة - اختر واحدة وانطلق.",
+    "zone_archetypes": "النماذج الأولية",
+    "zone_imports": "وارداتي",
+    "all": "الكل",
+    "favorites": "المفضلة",
+    "favorite": "المفضلة",
+    "reset": "إعادة تعيين",
+    "preview": "معاينة",
+    "use_voice": "استخدم الصوت",
+    "open_designer": "فتح في المصمم",
+    "no_matches": "لا توجد أصوات تتطابق مع هذه المرشحات.",
+    "load_more": "تحميل المزيد",
+    "saved_as_profile": "تمت إضافة \"{{name}}\" إلى أصواتك.",
+    "use_failed": "تعذر إنشاء هذا الصوت — ربما يكون المحرك قيد التحميل.",
+    "preview_failed": "المعاينة غير متاحة — ربما لا يزال المحرك الصوتي قيد التحميل.",
+    "import_explainer": "الصق عنوان URL الذي لديك حقوقه (أو قم بتحميل ملف)، وقم بقص الجزء الذي تحتاجه، واحفظه كصوت. أنت مسؤول عن ترخيص أي شيء تستورده.",
+    "import_placeholder": "الصق عنوان URL للفيديو/الصوت، أو اكتب للبحث...",
+    "imported_clip": "مقطع مستورد",
+    "upload": "تحميل الملف",
+    "import": "استيراد",
+    "my_imports": "وارداتي",
+    "no_imports": "لا شيء مستورد بعد الصق عنوان URL أعلاه للبدء.",
+    "search_results": "{{count}} النتائج",
+    "download_failed": "فشل التنزيل: {{msg}}",
+    "search_failed": "فشل البحث.",
+    "upload_failed": "فشل التحميل.",
+    "save_failed": "لا يمكن حفظ الملف الشخصي.",
+    "confirm_delete": "هل تريد حذف \"{{name}}\"؟",
+    "trim_load_failed": "تعذر تحميل الصوت للاقتطاع.",
+    "delete": "حذف"
   },
   "transcriptions": {
     "title": "النسخ",
@@ -1466,5 +1505,34 @@
   "app": {
     "loading": "جارٍ التحميل…",
     "trimmed_loaded": "تم تحميل الصوت المقطوع"
+  },
+  "update": {
+    "available": "يتوفّر التحديث {{version}}",
+    "install": "تثبيت وإعادة التشغيل",
+    "install_hint": "نزّل التحديث وأعد التشغيل إلى الإصدار الجديد",
+    "downloading": "جارٍ التحديث… {{pct}}%",
+    "restart": "أعد التشغيل للتحديث",
+    "busy": "أكمل الدبلجة أولاً — ثم ثبّت التحديث.",
+    "whats_new": "ما هو الجديد",
+    "failed": "فشل التحديث",
+    "retry": "أعد المحاولة",
+    "dismiss": "استبعاد"
+  },
+  "archetypes": {
+    "featured": "مميز",
+    "browse_all": "تصفح الكل",
+    "use_narration": "السرد والقصة",
+    "use_conversational": "محادثة",
+    "use_characters": "الشخصيات والرسوم المتحركة",
+    "use_social": "وسائل التواصل الاجتماعي",
+    "use_entertainment": "الترفيه والتلفزيون",
+    "use_advertisement": "إعلان",
+    "use_informative": "إعلامية وتعليمية",
+    "facet_gender": "الجنس",
+    "facet_age": "العمر",
+    "facet_pitch": "الملعب",
+    "facet_accent": "لهجة",
+    "facet_lang": "اللغة",
+    "facet_whisper": "الهمس"
   }
 }

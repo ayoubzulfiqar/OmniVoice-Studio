@@ -35,8 +35,12 @@ import type { PillSlice } from './pillSlice';
 import { createPillSlice } from './pillSlice';
 import type { StoriesSlice } from './storiesSlice';
 import { createStoriesSlice } from './storiesSlice';
+import type { UpdaterSlice } from './updaterSlice';
+import { createUpdaterSlice } from './updaterSlice';
+import type { GallerySlice } from './gallerySlice';
+import { createGallerySlice } from './gallerySlice';
 
-export type AppStore = PrefsSlice & GlossarySlice & UiSlice & DubSlice & GenerateSlice & PillSlice & StoriesSlice;
+export type AppStore = PrefsSlice & GlossarySlice & UiSlice & DubSlice & GenerateSlice & PillSlice & StoriesSlice & UpdaterSlice & GallerySlice;
 
 /**
  * `useAppStore` — single root store. Don't create siblings. Slices compose here.
@@ -55,6 +59,8 @@ export const useAppStore = create<AppStore>()(
       ...createGenerateSlice(set, get, api),
       ...createPillSlice(set, get, api),
       ...createStoriesSlice(set, get, api),
+      ...createUpdaterSlice(set, get, api),  // transient — not in partialize
+      ...createGallerySlice(set, get, api),
     }),
     {
       name: 'omnivoice.app',
@@ -88,6 +94,11 @@ export const useAppStore = create<AppStore>()(
         denoise:       s.denoise,
         postprocess:   s.postprocess,
         vdStates:      s.vdStates,
+        // Voice gallery — favorites + view/zone/filter preferences stick.
+        favoriteArchetypeIds: s.favoriteArchetypeIds,
+        galleryViewMode:      s.galleryViewMode,
+        galleryZone:          s.galleryZone,
+        archetypeFilters:     s.archetypeFilters,
         // Stories Editor — persist the project; strip transient runtime fields
         // (generating, audioUrl) so a dead blob: URL / stuck spinner never rehydrates.
         storyTracks:   s.storyTracks.map(({ id, character, text, profileId, emotion, speed }) =>

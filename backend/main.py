@@ -117,8 +117,6 @@ os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
 os.environ.setdefault("TORCHAUDIO_USE_TORCHCODEC", "0")
 sys.modules.setdefault("torchcodec", None)
 
-import soundfile as sf
-import torch
 import torchaudio
 import warnings
 import logging
@@ -298,6 +296,8 @@ from api.routers import (
     stories,
     setup,
     gallery,
+    archetypes,
+    community,
     batch,
     watermark,
     events,
@@ -624,6 +624,8 @@ app.include_router(tools.router)
 app.include_router(stories.router)
 app.include_router(setup.router)
 app.include_router(gallery.router)
+app.include_router(archetypes.router)
+app.include_router(community.router)
 app.include_router(batch.router)
 app.include_router(watermark.router)
 app.include_router(events.router)

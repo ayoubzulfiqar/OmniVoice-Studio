@@ -210,7 +210,11 @@
     "locked": "LÅST",
     "open": "Öppna",
     "try_it": "Prova det",
-    "audio_only": "Endast ljud"
+    "audio_only": "Endast ljud",
+    "stories_title": "Berättelser",
+    "stories_desc": "Ljudböcker med flera röster – cast dina karaktärer, släpp in ett manus, exportera efter kapitel.",
+    "gallery_title": "Röstgalleri",
+    "gallery_desc": "Bläddra bland färdigdesignade röster efter accent, ålder och stil – inga inställningar."
   },
   "clone": {
     "prompt": "Fråga",
@@ -309,7 +313,12 @@
     "copy_diagnostics": "Kopiera diagnostik",
     "github": "OmniVoice på GitHub",
     "model_card": "Modellkort",
-    "commercial_license": "Kommersiell licens"
+    "commercial_license": "Kommersiell licens",
+    "update_channel": "Uppdateringskanal",
+    "channel_stable": "Stabil",
+    "channel_preview": "Förhandsvisning",
+    "channel_set": "Uppdateringskanal inställd på {{channel}}",
+    "channel_preview_hint": "Förhandsvisning följer det senaste main-bygget – nyare funktioner, mindre testade. Återgår till stabil om en stabil version ligger före."
   },
   "privacy": {
     "desc": "Allt körs på <1>denna maskin</1>. Ditt ljud, video och transkriptioner lämnar aldrig din dator om du inte uttryckligen använder en onlineöversättare (Google, DeepL, etc.) eller trycker till HuggingFace.",
@@ -841,7 +850,37 @@
     "cat_politicians": "Politiker",
     "cat_news": "Företagsnyheter Anchors",
     "cat_gaming": "Spelande",
-    "cat_books": "Böcker/filmer"
+    "cat_books": "Böcker/filmer",
+    "subtitle": "Hundratals färdigdesignade röster — välj en och gå.",
+    "zone_archetypes": "Arketyper",
+    "zone_imports": "Mina importer",
+    "all": "Alla",
+    "favorites": "Favoriter",
+    "favorite": "Favorit",
+    "reset": "Återställ",
+    "preview": "Förhandsgranska",
+    "use_voice": "Använd röst",
+    "open_designer": "Öppna i Designer",
+    "no_matches": "Inga röster matchar dessa filter.",
+    "load_more": "Ladda mer",
+    "saved_as_profile": "Lade till \"{{name}}\" till dina röster.",
+    "use_failed": "Det gick inte att skapa den rösten – motorn kanske laddas.",
+    "preview_failed": "Förhandsgranskningen är inte tillgänglig – röstmotorn kanske fortfarande laddas.",
+    "import_explainer": "Klistra in en URL som du har rättigheterna till (eller ladda upp en fil), trimma delen du behöver och spara den som en röst. Du är ansvarig för licensieringen av allt du importerar.",
+    "import_placeholder": "Klistra in en video-/ljudadress eller skriv för att söka...",
+    "imported_clip": "Importerat klipp",
+    "upload": "Ladda upp fil",
+    "import": "Importera",
+    "my_imports": "Mina importer",
+    "no_imports": "Inget importerat ännu. Klistra in en URL ovan för att komma igång.",
+    "search_results": "{{count}} resultat",
+    "download_failed": "Nedladdning misslyckades: {{msg}}",
+    "search_failed": "Sökningen misslyckades.",
+    "upload_failed": "Uppladdningen misslyckades.",
+    "save_failed": "Det gick inte att spara profilen.",
+    "confirm_delete": "Ta bort \"{{name}}\"?",
+    "trim_load_failed": "Det gick inte att ladda ljudet för trimning.",
+    "delete": "Ta bort"
   },
   "transcriptions": {
     "title": "Transkriptioner",
@@ -1466,5 +1505,34 @@
   "app": {
     "loading": "Laddar...",
     "trimmed_loaded": "Trimmat ljud har laddats"
+  },
+  "update": {
+    "available": "Uppdatering {{version}} tillgänglig",
+    "install": "Installera och starta om",
+    "install_hint": "Ladda ner uppdateringen och starta om i den nya versionen",
+    "downloading": "Uppdaterar… {{pct}} %",
+    "restart": "Starta om för att uppdatera",
+    "busy": "Slutför din dubbning först – installera sedan uppdateringen.",
+    "whats_new": "Vad är nytt",
+    "failed": "Uppdateringen misslyckades",
+    "retry": "Försök igen",
+    "dismiss": "Avvisa"
+  },
+  "archetypes": {
+    "featured": "Utvalda",
+    "browse_all": "Bläddra bland alla",
+    "use_narration": "Berättelse & berättelse",
+    "use_conversational": "Konversation",
+    "use_characters": "Karaktärer och animationer",
+    "use_social": "Sociala medier",
+    "use_entertainment": "Underhållning & TV",
+    "use_advertisement": "Annons",
+    "use_informative": "Informativ och pedagogisk",
+    "facet_gender": "Kön",
+    "facet_age": "Ålder",
+    "facet_pitch": "Pitch",
+    "facet_accent": "Accent",
+    "facet_lang": "Språk",
+    "facet_whisper": "Viska"
   }
 }

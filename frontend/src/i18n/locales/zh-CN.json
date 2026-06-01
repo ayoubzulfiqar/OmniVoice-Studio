@@ -132,7 +132,11 @@
     "locked": "已锁定",
     "open": "打开",
     "try_it": "试试看",
-    "audio_only": "仅音频"
+    "audio_only": "仅音频",
+    "stories_title": "故事",
+    "stories_desc": "多角色有声书——为角色分配语音，粘贴脚本，按章节导出。",
+    "gallery_title": "语音库",
+    "gallery_desc": "按口音、年龄和风格浏览现成的设计语音——无需设置。"
   },
   "clone": {
     "prompt": "提示词",
@@ -279,7 +283,12 @@
     "copy_diagnostics": "复制诊断信息",
     "github": "GitHub 仓库",
     "model_card": "模型卡片",
-    "commercial_license": "商业许可"
+    "commercial_license": "商业许可",
+    "update_channel": "更新通道",
+    "channel_stable": "稳定版",
+    "channel_preview": "预览版",
+    "channel_set": "更新通道已设置为 {{channel}}",
+    "channel_preview_hint": "预览版跟踪最新的 main 构建——功能更新，但测试较少。若稳定版更新，则回退到稳定版。"
   },
   "privacy": {
     "desc": "所有数据都在<1>本机</1>运行。您的音频、视频和转录内容不会离开您的电脑，除非您显式使用在线翻译器（Google、DeepL 等）或推送到 HuggingFace。",
@@ -811,7 +820,37 @@
     "cat_politicians": "政治家",
     "cat_news": "新闻主播",
     "cat_gaming": "游戏",
-    "cat_books": "书籍/电影"
+    "cat_books": "书籍/电影",
+    "subtitle": "Hundreds of ready-made designed voices — pick one and go.",
+    "zone_archetypes": "原型",
+    "zone_imports": "My Imports",
+    "all": "全部",
+    "favorites": "收藏夹",
+    "favorite": "最爱",
+    "reset": "重置",
+    "preview": "预览",
+    "use_voice": "Use voice",
+    "open_designer": "Open in Designer",
+    "no_matches": "No voices match these filters.",
+    "load_more": "加载更多",
+    "saved_as_profile": "Added \"{{name}}\" to your voices.",
+    "use_failed": "无法创建该声音 - 引擎可能正在加载。",
+    "preview_failed": "预览不可用 - 语音引擎可能仍在加载。",
+    "import_explainer": "粘贴您有权访问的 URL（或上传文件），修剪您需要的部分，然后将其另存为语音。您负责对您进口的任何物品进行许可。",
+    "import_placeholder": "Paste a video/audio URL, or type to search…",
+    "imported_clip": "Imported clip",
+    "upload": "上传文件",
+    "import": "进口",
+    "my_imports": "My Imports",
+    "no_imports": "Nothing imported yet. Paste a URL above to get started.",
+    "search_results": "{{count}} results",
+    "download_failed": "Download failed: {{msg}}",
+    "search_failed": "搜索失败。",
+    "upload_failed": "Upload failed.",
+    "save_failed": "Could not save profile.",
+    "confirm_delete": "Delete \"{{name}}\"?",
+    "trim_load_failed": "Could not load audio for trimming.",
+    "delete": "删除"
   },
   "transcriptions": {
     "title": "转录记录",
@@ -1466,5 +1505,34 @@
   "app": {
     "loading": "加载中...",
     "trimmed_loaded": "已加载修剪后的音频"
+  },
+  "update": {
+    "available": "有可用更新 {{version}}",
+    "install": "安装并重启",
+    "install_hint": "下载更新并重启到新版本",
+    "downloading": "更新中… {{pct}}%",
+    "restart": "重启以更新",
+    "busy": "请先完成配音，再安装更新。",
+    "whats_new": "更新内容",
+    "failed": "更新失败",
+    "retry": "重试",
+    "dismiss": "解雇"
+  },
+  "archetypes": {
+    "featured": "精选",
+    "browse_all": "浏览全部",
+    "use_narration": "Narration & Story",
+    "use_conversational": "会话型",
+    "use_characters": "Characters & Animation",
+    "use_social": "Social Media",
+    "use_entertainment": "Entertainment & TV",
+    "use_advertisement": "广告",
+    "use_informative": "Informative & Educational",
+    "facet_gender": "性别",
+    "facet_age": "年龄",
+    "facet_pitch": "间距",
+    "facet_accent": "口音",
+    "facet_lang": "语言",
+    "facet_whisper": "耳语"
   }
 }

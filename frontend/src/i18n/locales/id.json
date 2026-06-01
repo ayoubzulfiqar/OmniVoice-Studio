@@ -210,7 +210,11 @@
     "locked": "TERKUNCI",
     "open": "Buka",
     "try_it": "Cobalah",
-    "audio_only": "Hanya Audio"
+    "audio_only": "Hanya Audio",
+    "stories_title": "Cerita",
+    "stories_desc": "Buku audio multi-suara — masukkan karakter Anda, masukkan skrip, ekspor per bab.",
+    "gallery_title": "Galeri Suara",
+    "gallery_desc": "Telusuri suara rancangan siap pakai berdasarkan aksen, usia, dan gaya — tanpa penyiapan."
   },
   "clone": {
     "prompt": "Cepat",
@@ -309,7 +313,12 @@
     "copy_diagnostics": "Salin diagnostik",
     "github": "OmniVoice di GitHub",
     "model_card": "Kartu model",
-    "commercial_license": "Lisensi Komersial"
+    "commercial_license": "Lisensi Komersial",
+    "update_channel": "Saluran pembaruan",
+    "channel_stable": "Stabil",
+    "channel_preview": "Pratinjau",
+    "channel_set": "Saluran pembaruan disetel ke {{channel}}",
+    "channel_preview_hint": "Pratinjau mengikuti build main terbaru — fitur lebih baru, lebih sedikit diuji. Kembali ke stabil jika ada rilis stabil yang lebih baru."
   },
   "privacy": {
     "desc": "Semuanya berjalan di <1>mesin ini</1>. Audio, video, dan transkrip Anda tidak pernah keluar dari komputer kecuali Anda secara eksplisit menggunakan penerjemah online (Google, DeepL, dll.) atau mendorong ke HuggingFace.",
@@ -841,7 +850,37 @@
     "cat_politicians": "Politisi",
     "cat_news": "Pembawa Berita",
     "cat_gaming": "Permainan",
-    "cat_books": "Buku/Film"
+    "cat_books": "Buku/Film",
+    "subtitle": "Ratusan desain suara siap pakai — pilih satu dan mulai.",
+    "zone_archetypes": "Arketipe",
+    "zone_imports": "Impor Saya",
+    "all": "Semua",
+    "favorites": "Favorit",
+    "favorite": "Favorit",
+    "reset": "Setel ulang",
+    "preview": "Pratinjau",
+    "use_voice": "Gunakan suara",
+    "open_designer": "Buka di Desainer",
+    "no_matches": "Tidak ada suara yang cocok dengan filter ini.",
+    "load_more": "Muat lebih banyak",
+    "saved_as_profile": "Menambahkan \"{{name}}\" ke suara Anda.",
+    "use_failed": "Tidak dapat mengeluarkan suara itu — mesin mungkin sedang memuat.",
+    "preview_failed": "Pratinjau tidak tersedia — mesin suara mungkin masih memuat.",
+    "import_explainer": "Tempelkan URL yang haknya Anda miliki (atau unggah file), potong bagian yang Anda perlukan, dan simpan sebagai suara. Anda bertanggung jawab atas pelisensian apa pun yang Anda impor.",
+    "import_placeholder": "Tempelkan URL video/audio, atau ketik untuk mencari…",
+    "imported_clip": "Klip yang diimpor",
+    "upload": "Unggah berkas",
+    "import": "Impor",
+    "my_imports": "Impor Saya",
+    "no_imports": "Belum ada yang diimpor. Tempelkan URL di atas untuk memulai.",
+    "search_results": "{{count}} hasil",
+    "download_failed": "Pengunduhan gagal: {{msg}}",
+    "search_failed": "Pencarian gagal.",
+    "upload_failed": "Gagal mengunggah.",
+    "save_failed": "Tidak dapat menyimpan profil.",
+    "confirm_delete": "Hapus \"{{name}}\"?",
+    "trim_load_failed": "Tidak dapat memuat audio untuk pemangkasan.",
+    "delete": "Hapus"
   },
   "transcriptions": {
     "title": "Transkripsi",
@@ -1466,5 +1505,34 @@
   "app": {
     "loading": "Memuat…",
     "trimmed_loaded": "Audio yang dipangkas dimuat"
+  },
+  "update": {
+    "available": "Pembaruan {{version}} tersedia",
+    "install": "Instal dan mulai ulang",
+    "install_hint": "Unduh pembaruan dan mulai ulang ke versi baru",
+    "downloading": "Memperbarui… {{pct}}%",
+    "restart": "Mulai ulang untuk memperbarui",
+    "busy": "Selesaikan sulih suara Anda dulu — lalu instal pembaruannya.",
+    "whats_new": "Apa yang baru",
+    "failed": "Pembaruan gagal",
+    "retry": "Coba lagi",
+    "dismiss": "Singkirkan"
+  },
+  "archetypes": {
+    "featured": "Unggulan",
+    "browse_all": "Telusuri semuanya",
+    "use_narration": "Narasi & Cerita",
+    "use_conversational": "Percakapan",
+    "use_characters": "Karakter & Animasi",
+    "use_social": "Media Sosial",
+    "use_entertainment": "Hiburan & TV",
+    "use_advertisement": "Iklan",
+    "use_informative": "Informatif & Edukasi",
+    "facet_gender": "Jenis Kelamin",
+    "facet_age": "Usia",
+    "facet_pitch": "Pitch",
+    "facet_accent": "Aksen",
+    "facet_lang": "Bahasa",
+    "facet_whisper": "Bisikan"
   }
 }

@@ -210,7 +210,11 @@
     "locked": "ĐÃ KHÓA",
     "open": "Mở",
     "try_it": "Hãy thử nó",
-    "audio_only": "Chỉ âm thanh"
+    "audio_only": "Chỉ âm thanh",
+    "stories_title": "Truyện",
+    "stories_desc": "Sách nói nhiều giọng nói — chọn nhân vật, nhập tập lệnh, xuất theo chương.",
+    "gallery_title": "Thư viện giọng nói",
+    "gallery_desc": "Duyệt qua các giọng nói được thiết kế sẵn theo giọng, độ tuổi và phong cách — không cần thiết lập."
   },
   "clone": {
     "prompt": "Lời nhắc",
@@ -309,7 +313,12 @@
     "copy_diagnostics": "Sao chép chẩn đoán",
     "github": "OmniVoice trên GitHub",
     "model_card": "Thẻ mẫu",
-    "commercial_license": "Giấy phép thương mại"
+    "commercial_license": "Giấy phép thương mại",
+    "update_channel": "Kênh cập nhật",
+    "channel_stable": "Ổn định",
+    "channel_preview": "Xem trước",
+    "channel_set": "Đã đặt kênh cập nhật thành {{channel}}",
+    "channel_preview_hint": "Bản xem trước theo dõi bản dựng main mới nhất — tính năng mới hơn, ít được kiểm thử hơn. Quay lại bản ổn định nếu có bản phát hành ổn định mới hơn."
   },
   "privacy": {
     "desc": "Mọi thứ đều chạy trên <1>máy này</1>. Âm thanh, video và bản ghi của bạn không bao giờ rời khỏi máy tính của bạn trừ khi bạn sử dụng một cách rõ ràng một trình dịch trực tuyến (Google, DeepL, v.v.) hoặc đẩy tới HuggingFace.",
@@ -841,7 +850,37 @@
     "cat_politicians": "Chính trị gia",
     "cat_news": "Neo tin tức",
     "cat_gaming": "chơi game",
-    "cat_books": "Sách/Phim"
+    "cat_books": "Sách/Phim",
+    "subtitle": "Hàng trăm giọng nói được thiết kế sẵn — hãy chọn một giọng nói và sử dụng.",
+    "zone_archetypes": "nguyên mẫu",
+    "zone_imports": "Nhập khẩu của tôi",
+    "all": "Tất cả",
+    "favorites": "Yêu thích",
+    "favorite": "yêu thích",
+    "reset": "Đặt lại",
+    "preview": "Xem trước",
+    "use_voice": "Sử dụng giọng nói",
+    "open_designer": "Mở trong Trình thiết kế",
+    "no_matches": "Không có giọng nói nào phù hợp với các bộ lọc này.",
+    "load_more": "Tải thêm",
+    "saved_as_profile": "Đã thêm \"{{name}}\" vào giọng nói của bạn.",
+    "use_failed": "Không thể tạo ra giọng nói đó - động cơ có thể đang tải.",
+    "preview_failed": "Không có bản xem trước — công cụ giọng nói có thể vẫn đang tải.",
+    "import_explainer": "Dán URL mà bạn có quyền (hoặc tải tệp lên), cắt bớt phần bạn cần và lưu nó dưới dạng giọng nói. Bạn chịu trách nhiệm cấp phép cho bất cứ thứ gì bạn nhập khẩu.",
+    "import_placeholder": "Dán URL video/âm thanh hoặc nhập để tìm kiếm…",
+    "imported_clip": "Đoạn phim đã nhập",
+    "upload": "Tải tập tin lên",
+    "import": "Nhập khẩu",
+    "my_imports": "Nhập khẩu của tôi",
+    "no_imports": "Chưa có gì được nhập khẩu. Dán URL ở trên để bắt đầu.",
+    "search_results": "{{count}} kết quả",
+    "download_failed": "Tải xuống không thành công: {{msg}}",
+    "search_failed": "Tìm kiếm không thành công.",
+    "upload_failed": "Tải lên không thành công.",
+    "save_failed": "Không thể lưu hồ sơ.",
+    "confirm_delete": "Xóa \"{{name}}\"?",
+    "trim_load_failed": "Không thể tải âm thanh để cắt.",
+    "delete": "Xóa"
   },
   "transcriptions": {
     "title": "Phiên âm",
@@ -1466,5 +1505,34 @@
   "app": {
     "loading": "Đang tải…",
     "trimmed_loaded": "Đã tải âm thanh đã cắt bớt"
+  },
+  "update": {
+    "available": "Đã có bản cập nhật {{version}}",
+    "install": "Cài đặt và khởi động lại",
+    "install_hint": "Tải bản cập nhật và khởi động lại vào phiên bản mới",
+    "downloading": "Đang cập nhật… {{pct}}%",
+    "restart": "Khởi động lại để cập nhật",
+    "busy": "Hoàn tất lồng tiếng của bạn trước — rồi cài đặt bản cập nhật.",
+    "whats_new": "Có gì mới",
+    "failed": "Cập nhật không thành công",
+    "retry": "Thử lại",
+    "dismiss": "Loại bỏ"
+  },
+  "archetypes": {
+    "featured": "Nổi bật",
+    "browse_all": "Duyệt tất cả",
+    "use_narration": "Tường thuật & Câu chuyện",
+    "use_conversational": "đàm thoại",
+    "use_characters": "Nhân vật & Hoạt hình",
+    "use_social": "Truyền thông xã hội",
+    "use_entertainment": "Giải trí & Truyền hình",
+    "use_advertisement": "quảng cáo",
+    "use_informative": "Thông tin & Giáo dục",
+    "facet_gender": "Giới tính",
+    "facet_age": "Tuổi",
+    "facet_pitch": "Cao độ",
+    "facet_accent": "Giọng",
+    "facet_lang": "Ngôn ngữ",
+    "facet_whisper": "Thì thầm"
   }
 }

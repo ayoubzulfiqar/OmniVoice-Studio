@@ -9,6 +9,7 @@ import { clearSystemLogs, clearTauriLogs } from '../api/system';
 import { useSystemLogs, useTauriLogs, useClearLogs, useClearTauriLogs } from '../api/hooks';
 import { getFrontendLogs, clearFrontendLogs } from '../utils/consoleBuffer';
 import { useTranslation } from 'react-i18next';
+import { useAppStore } from '../store';
 import NetworkToggle from './NetworkToggle';
 import './LogsFooter.css';
 

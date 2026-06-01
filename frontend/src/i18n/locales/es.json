@@ -211,7 +211,11 @@
     "locked": "BLOQUEADO",
     "open": "Abierto",
     "try_it": "Pruébalo",
-    "audio_only": "Sólo audio"
+    "audio_only": "Sólo audio",
+    "stories_title": "Historias",
+    "stories_desc": "Audiolibros con varias voces: elige tus personajes, introduce un guión y exporta por capítulo.",
+    "gallery_title": "Galería de voz",
+    "gallery_desc": "Explore voces diseñadas ya preparadas por acento, edad y estilo, sin configuración."
   },
   "clone": {
     "prompt": "rápido",
@@ -310,7 +314,12 @@
     "copy_diagnostics": "Copiar diagnóstico",
     "github": "OmniVoice en GitHub",
     "model_card": "tarjeta modelo",
-    "commercial_license": "Licencia Comercial"
+    "commercial_license": "Licencia Comercial",
+    "update_channel": "Canal de actualización",
+    "channel_stable": "Estable",
+    "channel_preview": "Vista previa",
+    "channel_set": "Canal de actualización configurado en {{channel}}",
+    "channel_preview_hint": "La vista previa sigue la última compilación de main: funciones más nuevas, menos probadas. Vuelve a estable si hay una versión estable más reciente."
   },
   "privacy": {
     "desc": "Todo se ejecuta en <1>esta máquina</1>. Su audio, video y transcripciones nunca salen de su computadora a menos que utilice explícitamente un traductor en línea (Google, DeepL, etc.) o acceda a HuggingFace.",
@@ -842,7 +851,37 @@
     "cat_politicians": "Políticos",
     "cat_news": "Presentadores de noticias",
     "cat_gaming": "Juegos",
-    "cat_books": "Libros/Películas"
+    "cat_books": "Libros/Películas",
+    "subtitle": "Cientos de voces diseñadas ya preparadas: elige una y listo.",
+    "zone_archetypes": "Arquetipos",
+    "zone_imports": "Mis Importaciones",
+    "all": "Todos",
+    "favorites": "Favoritos",
+    "favorite": "Favorito",
+    "reset": "Reiniciar",
+    "preview": "Vista previa",
+    "use_voice": "usar voz",
+    "open_designer": "Abrir en Diseñador",
+    "no_matches": "Ninguna voz coincide con estos filtros.",
+    "load_more": "Cargar más",
+    "saved_as_profile": "Se agregó \"{{name}}\" a tus voces.",
+    "use_failed": "No se pudo crear esa voz; es posible que el motor se esté cargando.",
+    "preview_failed": "Vista previa no disponible: es posible que el motor de voz aún se esté cargando.",
+    "import_explainer": "Pegue una URL sobre la que tenga derechos (o cargue un archivo), recorte la parte que necesita y guárdela como voz. Usted es responsable de la concesión de licencias de todo lo que importe.",
+    "import_placeholder": "Pegue una URL de video/audio, o escriba para buscar...",
+    "imported_clip": "Clip importado",
+    "upload": "Subir archivo",
+    "import": "Importar",
+    "my_imports": "Mis Importaciones",
+    "no_imports": "Nada importado todavía. Pegue una URL arriba para comenzar.",
+    "search_results": "{{count}} resultados",
+    "download_failed": "Error de descarga: {{msg}}",
+    "search_failed": "La búsqueda falló.",
+    "upload_failed": "La carga falló.",
+    "save_failed": "No se pudo guardar el perfil.",
+    "confirm_delete": "¿Eliminar \"{{name}}\"?",
+    "trim_load_failed": "No se pudo cargar el audio para recortar.",
+    "delete": "Eliminar"
   },
   "transcriptions": {
     "title": "Transcripciones",
@@ -1467,5 +1506,34 @@
   "app": {
     "loading": "Cargando…",
     "trimmed_loaded": "Audio recortado cargado"
+  },
+  "update": {
+    "available": "Actualización {{version}} disponible",
+    "install": "Instalar y reiniciar",
+    "install_hint": "Descarga la actualización y reinicia en la nueva versión",
+    "downloading": "Actualizando… {{pct}}%",
+    "restart": "Reiniciar para actualizar",
+    "busy": "Termina tu doblaje primero — luego instala la actualización.",
+    "whats_new": "¿Qué hay de nuevo?",
+    "failed": "La actualización falló",
+    "retry": "Reintentar",
+    "dismiss": "Descartar"
+  },
+  "archetypes": {
+    "featured": "Destacado",
+    "browse_all": "Explorar todo",
+    "use_narration": "Narración e historia",
+    "use_conversational": "conversacional",
+    "use_characters": "Personajes y animación",
+    "use_social": "Redes Sociales",
+    "use_entertainment": "Entretenimiento y televisión",
+    "use_advertisement": "anuncio",
+    "use_informative": "Informativo y Educativo",
+    "facet_gender": "Género",
+    "facet_age": "edad",
+    "facet_pitch": "Tono",
+    "facet_accent": "acento",
+    "facet_lang": "Idioma",
+    "facet_whisper": "susurro"
   }
 }
