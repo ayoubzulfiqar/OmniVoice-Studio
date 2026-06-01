@@ -82,7 +82,7 @@ export default function VoiceGallery() {
       setSearchResults([]);
     } catch (e) {
       console.error('Download failed:', e);
-      alert('Download failed: ' + e.message);
+      alert(t('gallery_extra.download_failed', { message: e.message }));
     } finally {
       setIsDownloading(false);
     }
@@ -159,13 +159,13 @@ export default function VoiceGallery() {
   };
 
   const handleSaveAsProfile = async (voice) => {
-    const name = prompt(`Enter a name for this voice profile:`, voice.name);
+    const name = prompt(t('gallery_extra.save_prompt'), voice.name);
     if (!name) return;
     try {
       await saveVoiceAsProfile(voice.id, name);
-      alert('Voice saved as profile!');
+      alert(t('gallery_extra.saved_as_profile'));
     } catch (e) {
-      alert('Failed to save profile');
+      alert(t('gallery_extra.save_profile_failed'));
     }
   };
 
@@ -188,7 +188,7 @@ export default function VoiceGallery() {
       const file = new File([blob], `${voice.name}.wav`, { type: 'audio/wav' });
       setTrimmingVoice({ voice, file });
     } catch (e) {
-      alert("Failed to load audio for trimming: " + e.message);
+      alert(t('gallery_extra.trim_load_failed', { message: e.message }));
     }
   };
 
@@ -208,7 +208,7 @@ export default function VoiceGallery() {
       loadVoices();
       setTrimmingVoice(null);
     } catch (e) {
-      alert("Failed to upload cropped voice: " + e.message);
+      alert(t('gallery_extra.upload_crop_failed', { message: e.message }));
     }
   };
 
