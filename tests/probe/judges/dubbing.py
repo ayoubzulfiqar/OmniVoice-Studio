@@ -56,7 +56,7 @@ def segments_duration_ratio(segments: list, min_ratio: float = 0.5, max_ratio: f
         name="segments_duration_ratio",
         passed=ok,
         measured=len(outliers),
-        detail=f"all {validated} segment(s) within [{min_ratio}, {max_ratio}]×"
+        detail=f"all {validated} segment(s) within [{min_ratio}, {max_ratio}]x"
         if ok else f"out-of-band ratios: {', '.join(outliers)}",
     )
 

@@ -16,7 +16,9 @@ def test_migration_upgrades_existing_data(probe_report):
     spec = probe_spec.load_spec(_SPEC)
     with env.seeded_data_dir() as data_dir:
         context = env.capture_first_run(data_dir)
-    results = probe_spec.run_judges(spec, context)
+        # Run judges INSIDE the with-block: the migration spec's path_exists check
+        # must see the seeded DB before the temp data dir is torn down on exit.
+        results = probe_spec.run_judges(spec, context)
     probe_report.record(spec, results)
     assert probe_spec.blocking_failures(results) == [], "\n".join(str(r) for r in results)
     # Data integrity: the existing DB file must still be present after migration
