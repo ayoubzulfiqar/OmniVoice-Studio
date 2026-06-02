@@ -1,9 +1,9 @@
 # Publish Docker images to GitHub Container Registry (GHCR).
 #
 # Triggers:
-#   - push of a tag matching `v*` (e.g. `v0.3.0`) → :0.3.0, :0.3, :latest
-#   - push to main branch                          → :main (rolling "edge" build)
-#   - workflow_dispatch                            → :sha-<short> (ad-hoc test build)
+#   - push of a tag matching `v*` (e.g. `v0.3.0`) → :0.3.0, :0.3, :latest, :sha-
+#   - push to main branch                          → :main, :sha- (rolling "edge" build)
+#   - workflow_dispatch                            → :sha- only (ad-hoc test build)
 #
 # Tag ↔ image mapping
 #   :latest   — always the most recent versioned release (set on every v* tag push)
@@ -56,26 +56,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Tag strategy:
-      #   v0.3.0 tag push  → :0.3.0, :0.3, :latest
-      #   main branch push → :main
-      #   workflow_dispatch → :sha-<short>
+      # Tag strategy (`:sha-<short>` is emitted on every trigger):
+      #   v0.3.0 tag push   → :0.3.0, :0.3, :latest, :sha-
+      #   main branch push  → :main, :sha-
+      #   workflow_dispatch → :sha- only
       #
       # Fix for stale :latest (issues #249, #251):
       #   The previous rule used `enable={{is_default_branch}}`, which evaluates
       #   to false on tag pushes (detached HEAD) — so :latest was never updated
-      #   when a release tag was pushed. Replaced with `enable=${{ github.ref_type
-      #   == 'tag' }}` so :latest tracks every versioned release exactly.
+      #   when a release tag was pushed. The version / :latest / :main rules are
+      #   gated on `github.event_name == 'push'` so a manual workflow_dispatch can
+      #   only ever produce a throwaway `:sha-` tag (never republish a mutable
+      #   tag), and :latest additionally excludes prerelease tags (those contain a
+      #   `-`, e.g. v1.0.0-rc.1) so a prerelease can't clobber :latest.
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'push' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'push' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref_type == 'tag' && !contains(github.ref, '-') }}
+            type=raw,value=main,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
             type=sha,prefix=sha-,format=short
 
       - name: Build and push
