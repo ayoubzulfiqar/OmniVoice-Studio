@@ -28,21 +28,35 @@ def _seg_durations(seg: dict) -> tuple[float, float]:
 
 def segments_duration_ratio(segments: list, min_ratio: float = 0.5, max_ratio: float = 1.6) -> JudgeResult:
     """Each dubbed segment's duration must stay within [min,max]× its source —
-    catches dub tracks that drift badly out of sync with the original."""
+    catches dub tracks that drift badly out of sync with the original.
+
+    Fails when zero segments are validated (all durations missing/zero/negative)
+    because a vacuously-true pass would hide an empty or corrupt segment list.
+    """
     outliers = []
+    validated = 0
     for i, seg in enumerate(segments or []):
         src, dub = _seg_durations(seg)
         if src <= 0:
             continue
+        validated += 1
         ratio = dub / src
         if not (min_ratio <= ratio <= max_ratio):
             outliers.append(f"#{i}={ratio:.2f}")
+    if validated == 0:
+        return JudgeResult(
+            name="segments_duration_ratio",
+            passed=False,
+            measured=0,
+            detail=f"no segments with valid (>0) source duration in {len(segments or [])} segment(s) — "
+            "nothing was actually validated",
+        )
     ok = not outliers
     return JudgeResult(
         name="segments_duration_ratio",
         passed=ok,
         measured=len(outliers),
-        detail=f"all {len(segments or [])} segments within [{min_ratio}, {max_ratio}]×"
+        detail=f"all {validated} segment(s) within [{min_ratio}, {max_ratio}]×"
         if ok else f"out-of-band ratios: {', '.join(outliers)}",
     )
 

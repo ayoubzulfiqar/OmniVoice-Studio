@@ -4,7 +4,7 @@ Localization is a CLAUDE.md hard rule: all user-facing text goes through the i18
 layer. These judges check the locale files for *structural* correctness:
   - every locale file is valid JSON (blocking)
   - no locale has ORPHAN keys absent from the reference locale — those are dead
-    or mistyped keys that will silently fall back and never render (blocking)
+    or mistyped keys that will silently fall back and never render (advisory)
   - translation coverage per locale (advisory — incomplete translations fall back
     to the reference and are tolerated, so this reports a trend, never gates)
 """
@@ -41,6 +41,16 @@ def _load_locales(locales_dir: str) -> tuple[dict[str, dict], list[str]]:
 
 def locale_valid_json(locales_dir: str) -> JudgeResult:
     locales, bad = _load_locales(locales_dir)
+    if not locales and not bad:
+        # No locale files found at all — the directory is empty or missing.
+        # Treat as a hard failure so a missing/empty locales dir can't silently
+        # pass a blocking gate.
+        return JudgeResult(
+            name="locale_valid_json",
+            passed=False,
+            measured=0,
+            detail=f"no locale JSON files found in {locales_dir!r}",
+        )
     return JudgeResult(
         name="locale_valid_json",
         passed=not bad,

@@ -27,7 +27,7 @@ def test_faster_whisper_backend_wires_up():
 @pytest.mark.skipif(os.environ.get("PROBE_E2E") != "1", reason="real ASR is enable-on-demand (PROBE_E2E=1)")
 def test_real_round_trip_asr():
     sample = os.environ.get("PROBE_ASR_SAMPLE")
-    if not sample or not os.path.exists(sample):
+    if not sample or not os.path.isfile(sample):
         pytest.skip("set PROBE_ASR_SAMPLE=/path/to/speech.wav to run the real round-trip")
     tr = T.FasterWhisperTranscriber(model_size=os.environ.get("PROBE_ASR_MODEL", "tiny"))
     heard = tr.transcribe(sample)

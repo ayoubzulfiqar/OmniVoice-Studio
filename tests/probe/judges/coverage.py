@@ -18,7 +18,8 @@ def scan_specs(specs_dir: str) -> list[dict]:
 
     out = []
     for path in sorted(glob.glob(os.path.join(specs_dir, "*.probe.yaml"))):
-        doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
         out.append({"feature": doc.get("feature"), "layer": doc.get("layer"),
                     "file": os.path.basename(path)})
     return out

@@ -15,6 +15,7 @@ steps:
       srt: $.srt
       vtt: $.vtt
       zip_names: $.zip_names
+      dub_audio: $.dub_audio     # dubbed audio track path (for language-ID advisory)
 
 judge:
   checks:

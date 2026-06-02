@@ -56,4 +56,4 @@ def test_real_locales_spec(probe_report):
     probe_report.record(spec, results)
     assert probe_spec.blocking_failures(results) == []
     # The advisory orphan-key finding is present (proof the suite surfaces it).
-    assert any(r.name == "locale_no_orphan_keys" and r.advisory for r in results)
+    assert any(r.name == "locale_no_orphan_keys" and r.advisory and r.passed is False for r in results)

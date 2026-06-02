@@ -26,6 +26,14 @@ import time
 ENDPOINTS = [("/health", "health"), ("/system/info", "sysinfo"), ("/model/status", "model")]
 
 
+def _db_files(data_dir: str) -> set:
+    """Return the set of DB file paths currently present under data_dir."""
+    found = set()
+    for pat in ("*.sqlite3", "*.sqlite", "*.db"):
+        found.update(glob.glob(os.path.join(data_dir, "**", pat), recursive=True))
+    return found
+
+
 def main() -> int:
     data_dir, out_path = sys.argv[1], sys.argv[2]
     os.environ["OMNIVOICE_MODEL"] = "test"
@@ -36,6 +44,11 @@ def main() -> int:
     backend = os.path.join(repo_root, "backend")
     if backend not in sys.path:
         sys.path.insert(0, backend)
+
+    # Snapshot DB files that already exist BEFORE boot so we can detect
+    # creation (not just presence) — a pre-existing file does not mean this
+    # boot created it (e.g. seeded migration fixture already has a DB).
+    pre_boot_db_files = _db_files(data_dir)
 
     from fastapi.testclient import TestClient
     from main import app
@@ -77,7 +90,10 @@ def main() -> int:
                 ctx["ws_transcribe_connected"] = True
         except Exception as exc:  # noqa: BLE001
             ctx["ws_transcribe_connected"] = False
-            ctx["ws_transcribe_error"] = str(exc)[:200]
+            # Store only the exception type — not the raw message — to avoid
+            # leaking absolute home paths or secret-like substrings that may
+            # appear in WebSocket handshake error text.
+            ctx["ws_transcribe_error"] = type(exc).__name__
 
     # OpenAPI inventory (no client/lifespan needed). WebSocket routes aren't in
     # the OpenAPI schema, so enumerate them from the route table separately.
@@ -90,13 +106,14 @@ def main() -> int:
     )
 
     ctx["data_dir"] = data_dir
-    ctx["db_path"] = ""
-    for pat in ("*.sqlite3", "*.sqlite", "*.db"):
-        hits = glob.glob(os.path.join(data_dir, "**", pat), recursive=True)
-        if hits:
-            ctx["db_path"] = hits[0]
-            break
-    ctx["db_created"] = bool(ctx["db_path"])
+    post_boot_db_files = _db_files(data_dir)
+    new_db_files = post_boot_db_files - pre_boot_db_files
+    # db_path: any DB file present after boot (for reference by other judges)
+    all_db = sorted(post_boot_db_files)
+    ctx["db_path"] = all_db[0] if all_db else ""
+    # db_created: True only when this boot actually CREATED a new DB file
+    # (not just found a pre-existing one — e.g. the migration seeded fixture).
+    ctx["db_created"] = bool(new_db_files)
 
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(ctx, fh)
