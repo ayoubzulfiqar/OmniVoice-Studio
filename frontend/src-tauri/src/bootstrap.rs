@@ -498,10 +498,18 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
                     Ok(ref s) if s.success()
                 );
                 if !pr_final_ok {
-                    log::error!(
-                        "pkg_resources still not importable after targeted setuptools install — \
-                         dubbing will fail; run: uv pip install 'setuptools>=75,<80' in the backend venv (#248)"
+                    // Repair could not restore pkg_resources — fail loudly instead of
+                    // handing back a venv that will crash on the first ASR/dub call. The
+                    // "pkg_resources" text routes to the PKG_RESOURCES_MISSING failure
+                    // mapping (clear, doc-linked remediation in the UI). (#248)
+                    fail(
+                        progress,
+                        "pkg_resources is missing from the backend venv and the automatic \
+                         setuptools repair did not restore it. Open a terminal and run \
+                         `uv pip install 'setuptools>=75,<80'` in the backend venv, then \
+                         restart. (#248)",
                     );
+                    return None;
                 }
             }
             return Some((venv_py, backend_dir));

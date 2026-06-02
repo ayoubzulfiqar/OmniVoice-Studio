@@ -336,8 +336,8 @@ check_endpoint "GET /system/quarantine-status" "${BACKEND_URL}/system/quarantine
 #
 # Export restricted-network env vars so that a uv failure here reflects a real
 # bootstrap regression, not harness networking. UV_PYTHON_PREFERENCE=only-system
-# skips the python-build-standalone download (already in the venv); the index +
-# timeout vars guard against PyPI timeouts masking import failures. Empty values
+# skips the python-build-standalone download (already in the venv); the timeout +
+# retry vars guard against PyPI timeouts masking import failures. Empty values
 # are preserved so callers can override them at the shell level.
 export UV_PYTHON_PREFERENCE="${UV_PYTHON_PREFERENCE:-only-system}"
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-120}"
