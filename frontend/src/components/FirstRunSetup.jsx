@@ -12,9 +12,11 @@
  *
  * Design language: powering on a piece of studio hardware. Serif masthead
  * (Source Serif 4), engraved mono panel labels (IBM Plex Mono), a breathing
- * waveform, and disk space rendered as LED capacity meters. All motion is
- * CSS-only (transform/opacity) and honors prefers-reduced-motion; every
- * asset is bundled — a first run may be on a restricted network.
+ * waveform, and disk space rendered as LED capacity meters. Desktop-first:
+ * a wide two-column deck of rack panels floating directly on the backdrop
+ * (no outer chassis box), collapsing to one column on narrow windows. All
+ * motion is CSS-only (transform/opacity) and honors prefers-reduced-motion;
+ * every asset is bundled — a first run may be on a restricted network.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -51,7 +53,7 @@ function useTargetCheck(path) {
 }
 
 /** Breathing waveform masthead — bar heights are stable per mount. */
-function Waveform({ bars = 56 }) {
+function Waveform({ bars = 96 }) {
   const heights = useMemo(
     () => Array.from({ length: bars }, (_, i) => {
       // Deterministic pseudo-random silhouette: layered sines read as speech
@@ -100,13 +102,13 @@ function CapacityMeter({ need, free }) {
 }
 
 /** One storage location row: label, path, meter, Change… picker, status. */
-function StorageRow({ label, desc, path, need, check, onPick, delay }) {
+function StorageRow({ label, desc, path, need, check, onPick }) {
   const { t } = useTranslation();
   const lowSpace = check?.freeBytes != null && check.freeBytes < need;
   const notWritable = check && !check.writable;
   const blocked = lowSpace || notWritable;
   return (
-    <div className={`frs-row frs-rise ${blocked ? 'frs-row--blocked' : ''}`} style={{ '--rise': delay }}>
+    <div className={`frs-row ${blocked ? 'frs-row--blocked' : ''}`}>
       <div className="frs-row__text">
         <span className="frs-row__label">{label}</span>
         <span className="frs-row__desc">{desc}</span>
@@ -137,13 +139,34 @@ function StorageRow({ label, desc, path, need, check, onPick, delay }) {
 }
 
 /** Rack panel: engraved title strip + corner screws. */
-function Panel({ title, delay, children }) {
+function Panel({ title, delay, className = '', children }) {
   return (
-    <section className="frs-panel frs-rise" style={{ '--rise': delay }}>
+    <section className={`frs-panel frs-rise ${className}`} style={{ '--rise': delay }}>
       <span className="frs-panel__screws" aria-hidden="true" />
       <h2 className="frs-panel__title">{title}</h2>
       {children}
     </section>
+  );
+}
+
+/** LED radio option — used for install mode, compute and update channel. */
+function OptionCard({ active, disabled, onSelect, name, desc, badge, compact }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      className={`frs-opt ${compact ? 'frs-opt--compact' : ''} ${active ? 'is-active' : ''}`}
+      disabled={disabled}
+      onClick={() => !disabled && onSelect()}
+    >
+      <span className="frs-opt__led" aria-hidden="true" />
+      <span className="frs-opt__head">
+        <span className="frs-opt__name">{name}</span>
+        {badge && <span className="frs-opt__badge">{badge}</span>}
+      </span>
+      <span className="frs-opt__desc">{desc}</span>
+    </button>
   );
 }
 
@@ -172,7 +195,9 @@ export default function FirstRunSetup() {
           modelsDir: s.defaults.modelsDir,
           region: s.defaults.region,
           updateChannel: s.defaults.updateChannel,
-          torchVariant: s.defaults.torchVariant,
+          // Pre-select ROCm when the machine looks AMD — detection is shown
+          // on the card, and the user can always flip back to Auto.
+          torchVariant: s.hardware?.kind === 'rocm' ? 'rocm' : s.defaults.torchVariant,
           mirrors: { pypiIndex: '', hfEndpoint: '', pythonDownloads: '' },
         });
       } catch (e) {
@@ -183,6 +208,7 @@ export default function FirstRunSetup() {
 
   const portable = plan?.installMode === 'portable';
   const req = setup?.requirements;
+  const hw = setup?.hardware;
   const combinedNeed = req ? req.envBytes + req.modelsBytes + req.dataBytes : 0;
 
   // Live target probes — in portable mode only the anchor folder matters.
@@ -266,7 +292,7 @@ export default function FirstRunSetup() {
     return (
       <div className="frs">
         <div className="frs__atmo" aria-hidden="true" />
-        <div className="frs__card frs__card--loading">
+        <div className="frs__loading">
           {serverError
             ? <pre className="frs__error">{serverError}</pre>
             : t('firstrun.loading', 'Preparing setup…')}
@@ -277,11 +303,16 @@ export default function FirstRunSetup() {
 
   const blocked = blockers.length > 0;
   const spaceBlocker = blockers.find((b) => b.key === 'space');
+  const hwLine = hw
+    ? [hw.gpu, hw.cpuCores ? `${hw.cpuCores}×CPU` : null, hw.ramGb ? `${hw.ramGb} GB RAM` : null]
+        .filter(Boolean)
+        .join(' · ')
+    : null;
 
   return (
     <div className="frs">
       <div className="frs__atmo" aria-hidden="true" />
-      <div className="frs__card">
+      <div className="frs__deck">
 
         {/* ── Masthead: waveform + serif headline + serial plate ────────── */}
         <header className="frs__mast frs-rise" style={{ '--rise': 0 }}>
@@ -307,151 +338,169 @@ export default function FirstRunSetup() {
           </div>
         </header>
 
-        {/* ── Install mode ──────────────────────────────────────────────── */}
-        <Panel title={t('firstrun.mode_title', 'Install mode')} delay={1}>
-          <div className="frs__modes" role="radiogroup">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={!portable}
-              className={`frs-mode ${!portable ? 'is-active' : ''}`}
-              onClick={() => set({ installMode: 'installed' })}
-            >
-              <span className="frs-mode__led" aria-hidden="true" />
-              <span className="frs-mode__name">{t('firstrun.mode_installed', 'Installed')}</span>
-              <span className="frs-mode__desc">{t('firstrun.mode_installed_desc', 'Uses standard system folders. Recommended for most users.')}</span>
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={portable}
-              className={`frs-mode ${portable ? 'is-active' : ''}`}
-              disabled={!setup.portable.available}
-              onClick={() => setup.portable.available && set({ installMode: 'portable' })}
-            >
-              <span className="frs-mode__led" aria-hidden="true" />
-              <span className="frs-mode__name">{t('firstrun.mode_portable', 'Portable')}</span>
-              <span className="frs-mode__desc">
-                {setup.portable.available
-                  ? t('firstrun.mode_portable_desc', 'Everything lives in one folder next to the app — move it to another disk or machine as a unit.')
-                  : t('firstrun.mode_portable_unavailable', 'Unavailable: the folder next to the app is not writable.')}
-              </span>
-            </button>
-          </div>
-        </Panel>
+        {/* ── Wide deck: storage rail (left) + decision rail (right) ────── */}
+        <div className="frs__grid">
+          <div className="frs__col frs__col--main">
 
-        {/* ── Storage + space gate ──────────────────────────────────────── */}
-        <Panel title={t('firstrun.storage_title', 'Storage')} delay={2}>
-          {portable ? (
-            <StorageRow
-              label={t('firstrun.portable_folder', 'Portable folder')}
-              desc={t('firstrun.portable_folder_desc', 'App environment, models, and your voice data — one folder, fully movable.')}
-              path={portableBase}
-              need={combinedNeed}
-              check={portableCheck}
-              delay={3}
-            />
-          ) : (
-            <>
-              <StorageRow
-                label={t('firstrun.env_dir', 'App environment')}
-                desc={t('firstrun.env_dir_desc', 'Python runtime and AI libraries.')}
-                path={plan.envDir}
-                need={req.envBytes}
-                check={envCheck}
-                onPick={() => pickDir('envDir')}
-                delay={3}
-              />
-              <StorageRow
-                label={t('firstrun.data_dir', 'Voice data & projects')}
-                desc={t('firstrun.data_dir_desc', 'Your voices, dubs, outputs and project database.')}
-                path={plan.dataDir}
-                need={req.dataBytes}
-                check={dataCheck}
-                onPick={() => pickDir('dataDir')}
-                delay={4}
-              />
-              <StorageRow
-                label={t('firstrun.models_dir', 'Model cache')}
-                desc={t('firstrun.models_dir_desc', 'Downloaded AI models — the largest and most relocatable part.')}
-                path={plan.modelsDir}
-                need={req.modelsBytes}
-                check={modelsCheck}
-                onPick={() => pickDir('modelsDir')}
-                delay={5}
-              />
-            </>
-          )}
-        </Panel>
-
-        {/* ── Compute + channel ─────────────────────────────────────────── */}
-        <div className="frs__duo">
-          <Panel title={t('firstrun.compute_title', 'Compute')} delay={6}>
-            <label className="frs-field">
-              <span>{t('firstrun.compute_label', 'GPU / accelerator')}</span>
-              <select
-                className="frs-select"
-                value={plan.torchVariant}
-                onChange={(e) => set({ torchVariant: e.target.value })}
-              >
-                <option value="auto">{t('firstrun.compute_auto', 'Auto (NVIDIA CUDA / Apple MPS / CPU)')}</option>
-                <option value="rocm">{t('firstrun.compute_rocm', 'AMD GPU (ROCm, Linux)')}</option>
-              </select>
-            </label>
-            <label className="frs-field">
-              <span>{t('firstrun.channel_label', 'Update channel')}</span>
-              <select
-                className="frs-select"
-                value={plan.updateChannel}
-                onChange={(e) => set({ updateChannel: e.target.value })}
-              >
-                <option value="stable">{t('firstrun.channel_stable', 'Stable')}</option>
-                <option value="preview">{t('firstrun.channel_preview', 'Preview (latest main)')}</option>
-              </select>
-            </label>
-          </Panel>
-
-          <Panel title={t('firstrun.network_title', 'Network')} delay={7}>
-            <label className="frs-field">
-              <span>{t('firstrun.region_label', 'Download region')}</span>
-              <select
-                className="frs-select"
-                value={plan.region}
-                onChange={(e) => set({ region: e.target.value })}
-              >
-                <option value="auto">🌐 {t('bootstrap.auto_detect', 'Auto-detect')}</option>
-                <option value="global">🌐 {t('bootstrap.region_global', 'Global (direct)')}</option>
-                <option value="china">🇨🇳 {t('bootstrap.region_china', 'China (mirror)')}</option>
-                <option value="russia">🇷🇺 {t('bootstrap.region_russia', 'Russia (mirror)')}</option>
-                <option value="restricted">🌍 {t('bootstrap.region_restricted', 'Restricted (mirror)')}</option>
-              </select>
-            </label>
-            <details className="frs__advanced">
-              <summary>{t('firstrun.mirrors_title', 'Custom mirrors (advanced)')}</summary>
-              <div className="frs__mirror-fields">
-                {[
-                  ['pypiIndex', t('firstrun.mirror_pypi', 'PyPI index URL'), 'https://mirrors.aliyun.com/pypi/simple/'],
-                  ['hfEndpoint', t('firstrun.mirror_hf', 'Hugging Face endpoint'), 'https://hf-mirror.com'],
-                  ['pythonDownloads', t('firstrun.mirror_python', 'Python downloads mirror'), 'https://gh-proxy.com/…'],
-                ].map(([field, label, ph]) => (
-                  <label key={field} className="frs-field">
-                    <span>{label}</span>
-                    <input
-                      className="frs-input"
-                      type="url"
-                      placeholder={ph}
-                      value={plan.mirrors[field]}
-                      onChange={(e) => set({ mirrors: { ...plan.mirrors, [field]: e.target.value } })}
-                    />
-                  </label>
-                ))}
+            <Panel title={t('firstrun.mode_title', 'Install mode')} delay={1}>
+              <div className="frs__options frs__options--two" role="radiogroup">
+                <OptionCard
+                  active={!portable}
+                  onSelect={() => set({ installMode: 'installed' })}
+                  name={t('firstrun.mode_installed', 'Installed')}
+                  desc={t('firstrun.mode_installed_desc', 'Uses standard system folders. Recommended for most users.')}
+                />
+                <OptionCard
+                  active={portable}
+                  disabled={!setup.portable.available}
+                  onSelect={() => set({ installMode: 'portable' })}
+                  name={t('firstrun.mode_portable', 'Portable')}
+                  desc={setup.portable.available
+                    ? t('firstrun.mode_portable_desc', 'Everything lives in one folder next to the app — move it to another disk or machine as a unit.')
+                    : t('firstrun.mode_portable_unavailable', 'Unavailable: the folder next to the app is not writable.')}
+                />
               </div>
-            </details>
-          </Panel>
+            </Panel>
+
+            <Panel title={t('firstrun.storage_title', 'Storage')} delay={2}>
+              {portable ? (
+                <StorageRow
+                  label={t('firstrun.portable_folder', 'Portable folder')}
+                  desc={t('firstrun.portable_folder_desc', 'App environment, models, and your voice data — one folder, fully movable.')}
+                  path={portableBase}
+                  need={combinedNeed}
+                  check={portableCheck}
+                />
+              ) : (
+                <>
+                  <StorageRow
+                    label={t('firstrun.env_dir', 'App environment')}
+                    desc={t('firstrun.env_dir_desc', 'Python runtime and AI libraries.')}
+                    path={plan.envDir}
+                    need={req.envBytes}
+                    check={envCheck}
+                    onPick={() => pickDir('envDir')}
+                  />
+                  <StorageRow
+                    label={t('firstrun.data_dir', 'Voice data & projects')}
+                    desc={t('firstrun.data_dir_desc', 'Your voices, dubs, outputs and project database.')}
+                    path={plan.dataDir}
+                    need={req.dataBytes}
+                    check={dataCheck}
+                    onPick={() => pickDir('dataDir')}
+                  />
+                  <StorageRow
+                    label={t('firstrun.models_dir', 'Model cache')}
+                    desc={t('firstrun.models_dir_desc', 'Downloaded AI models — the largest and most relocatable part.')}
+                    path={plan.modelsDir}
+                    need={req.modelsBytes}
+                    check={modelsCheck}
+                    onPick={() => pickDir('modelsDir')}
+                  />
+                </>
+              )}
+            </Panel>
+
+            <Panel title={t('firstrun.network_title', 'Network')} delay={3}>
+              <div className="frs__net">
+                <label className="frs-field frs__net-region">
+                  <span>{t('firstrun.region_label', 'Download region')}</span>
+                  <select
+                    className="frs-select"
+                    value={plan.region}
+                    onChange={(e) => set({ region: e.target.value })}
+                  >
+                    <option value="auto">🌐 {t('bootstrap.auto_detect', 'Auto-detect')}</option>
+                    <option value="global">🌐 {t('bootstrap.region_global', 'Global (direct)')}</option>
+                    <option value="china">🇨🇳 {t('bootstrap.region_china', 'China (mirror)')}</option>
+                    <option value="russia">🇷🇺 {t('bootstrap.region_russia', 'Russia (mirror)')}</option>
+                    <option value="restricted">🌍 {t('bootstrap.region_restricted', 'Restricted (mirror)')}</option>
+                  </select>
+                </label>
+                <details className="frs__advanced">
+                  <summary>{t('firstrun.mirrors_title', 'Custom mirrors (advanced)')}</summary>
+                  <div className="frs__mirror-fields">
+                    {[
+                      ['pypiIndex', t('firstrun.mirror_pypi', 'PyPI index URL'), 'https://mirrors.aliyun.com/pypi/simple/'],
+                      ['hfEndpoint', t('firstrun.mirror_hf', 'Hugging Face endpoint'), 'https://hf-mirror.com'],
+                      ['pythonDownloads', t('firstrun.mirror_python', 'Python downloads mirror'), 'https://gh-proxy.com/…'],
+                    ].map(([field, label, ph]) => (
+                      <label key={field} className="frs-field">
+                        <span>{label}</span>
+                        <input
+                          className="frs-input"
+                          type="url"
+                          placeholder={ph}
+                          value={plan.mirrors[field]}
+                          onChange={(e) => set({ mirrors: { ...plan.mirrors, [field]: e.target.value } })}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </details>
+              </div>
+            </Panel>
+          </div>
+
+          <div className="frs__col frs__col--side">
+
+            <Panel title={t('firstrun.compute_title', 'Compute')} delay={2}>
+              {hwLine && (
+                <div className="frs__hw" title={hwLine}>
+                  <span className="frs__hw-dot" aria-hidden="true" />
+                  <span className="frs__hw-label">
+                    {t('firstrun.compute_detected', { defaultValue: 'Detected' })}
+                  </span>
+                  <span className="frs__hw-value">{hwLine}</span>
+                </div>
+              )}
+              <div className="frs__options" role="radiogroup">
+                <OptionCard
+                  compact
+                  active={plan.torchVariant === 'auto'}
+                  onSelect={() => set({ torchVariant: 'auto' })}
+                  name={t('firstrun.compute_auto', 'Auto (NVIDIA CUDA / Apple MPS / CPU)')}
+                  desc={t('firstrun.compute_auto_desc', 'Picks the best backend on this machine at runtime — CUDA on NVIDIA, MPS on Apple Silicon, CPU otherwise.')}
+                  badge={hw?.kind === 'cuda' || hw?.kind === 'mps'
+                    ? t('firstrun.compute_match', { defaultValue: 'matches this machine' })
+                    : null}
+                />
+                <OptionCard
+                  compact
+                  active={plan.torchVariant === 'rocm'}
+                  onSelect={() => set({ torchVariant: 'rocm' })}
+                  name={t('firstrun.compute_rocm', 'AMD GPU (ROCm, Linux)')}
+                  desc={t('firstrun.compute_rocm_desc', 'Installs PyTorch ROCm wheels for AMD graphics cards on Linux. Leave on Auto if unsure.')}
+                  badge={hw?.kind === 'rocm'
+                    ? t('firstrun.compute_match', { defaultValue: 'matches this machine' })
+                    : null}
+                />
+              </div>
+            </Panel>
+
+            <Panel title={t('firstrun.channel_label', 'Update channel')} delay={3}>
+              <div className="frs__options" role="radiogroup">
+                <OptionCard
+                  compact
+                  active={plan.updateChannel === 'stable'}
+                  onSelect={() => set({ updateChannel: 'stable' })}
+                  name={t('firstrun.channel_stable', 'Stable')}
+                  desc={t('firstrun.channel_stable_desc', 'Tested releases only — updates arrive after community validation.')}
+                />
+                <OptionCard
+                  compact
+                  active={plan.updateChannel === 'preview'}
+                  onSelect={() => set({ updateChannel: 'preview' })}
+                  name={t('firstrun.channel_preview', 'Preview (latest main)')}
+                  desc={t('firstrun.channel_preview_desc', 'Rolling builds from the latest main — new engines and fixes first, occasional rough edges.')}
+                />
+              </div>
+            </Panel>
+          </div>
         </div>
 
         {/* ── Footer: gate + arm ────────────────────────────────────────── */}
-        <footer className="frs__foot frs-rise" style={{ '--rise': 8 }}>
+        <footer className="frs__foot frs-rise" style={{ '--rise': 5 }}>
           {serverError && <pre className="frs__error">{serverError}</pre>}
           {spaceBlocker && (
             <p className="frs__blocker">

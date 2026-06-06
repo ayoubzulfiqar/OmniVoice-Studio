@@ -1641,6 +1641,12 @@
     "blocked_not_writable": "Ein gewählter Ordner ist nicht beschreibbar – wähle einen anderen Ort.",
     "total_required": "Benötigter Speicher insgesamt: ~{{size}} (einmaliger Download beim ersten Start)",
     "start": "Installation starten",
-    "starting": "Starte…"
+    "starting": "Starte…",
+    "compute_detected": "Erkannt",
+    "compute_match": "passt zu diesem Rechner",
+    "compute_auto_desc": "Wählt zur Laufzeit das beste Backend dieses Rechners — CUDA auf NVIDIA, MPS auf Apple Silicon, sonst CPU.",
+    "compute_rocm_desc": "Installiert PyTorch-ROCm-Wheels für AMD-Grafikkarten unter Linux. Im Zweifel auf Auto lassen.",
+    "channel_stable_desc": "Nur getestete Releases — Updates kommen nach Community-Validierung.",
+    "channel_preview_desc": "Rollende Builds vom neuesten main — neue Engines und Fixes zuerst, gelegentlich kleine Kanten."
   }
 }

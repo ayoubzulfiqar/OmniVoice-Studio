@@ -1641,6 +1641,12 @@
     "blocked_not_writable": "Un dossier choisi n'est pas inscriptible — choisissez un autre emplacement.",
     "total_required": "Espace disque total : ~{{size}} (téléchargement unique au premier lancement)",
     "start": "Démarrer l'installation",
-    "starting": "Démarrage…"
+    "starting": "Démarrage…",
+    "compute_detected": "Détecté",
+    "compute_match": "correspond à cette machine",
+    "compute_auto_desc": "Choisit le meilleur backend de cette machine à l'exécution — CUDA sur NVIDIA, MPS sur Apple Silicon, sinon CPU.",
+    "compute_rocm_desc": "Installe les wheels ROCm de PyTorch pour les cartes AMD sous Linux. Laissez Auto en cas de doute.",
+    "channel_stable_desc": "Uniquement des versions testées — les mises à jour arrivent après validation par la communauté.",
+    "channel_preview_desc": "Builds continues du dernier main — nouveaux moteurs et correctifs en premier, quelques aspérités possibles."
   }
 }

@@ -1640,6 +1640,12 @@
     "blocked_not_writable": "所选文件夹不可写——请更换位置。",
     "total_required": "共需磁盘空间：约 {{size}}（首次使用时一次性下载）",
     "start": "开始安装",
-    "starting": "正在启动…"
+    "starting": "正在启动…",
+    "compute_detected": "已检测",
+    "compute_match": "与本机匹配",
+    "compute_auto_desc": "运行时自动选择本机最佳后端——NVIDIA 用 CUDA、Apple 芯片用 MPS，否则用 CPU。",
+    "compute_rocm_desc": "为 Linux 上的 AMD 显卡安装 PyTorch ROCm 版本。不确定时请保持“自动”。",
+    "channel_stable_desc": "仅推送经过测试的正式版本——经社区验证后才更新。",
+    "channel_preview_desc": "来自最新 main 分支的滚动构建——最先获得新引擎和修复，偶有小问题。"
   }
 }

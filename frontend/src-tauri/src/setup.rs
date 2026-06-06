@@ -237,6 +237,85 @@ pub struct SetupState {
     pub defaults: SetupDefaults,
     pub portable: PortableSupport,
     pub requirements: Requirements,
+    pub hardware: HardwareInfo,
+}
+
+/// What the machine offers, shown on the Compute card so the accelerator
+/// choice is informed rather than a guess. Detection is best-effort and
+/// must never block setup: every probe degrades to None/CPU.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HardwareInfo {
+    /// Marketing name when detectable ("NVIDIA GeForce RTX 4070 …").
+    pub gpu: Option<String>,
+    /// "cuda" | "rocm" | "mps" | "cpu" — which torch path this maps to.
+    pub kind: String,
+    pub cpu_cores: usize,
+    pub ram_gb: f64,
+}
+
+fn detect_hardware() -> HardwareInfo {
+    use std::process::Command;
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0);
+    let ram_gb = {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        (sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0
+    };
+
+    // NVIDIA: nvidia-smi ships with the driver on Linux + Windows.
+    if let Ok(out) = Command::new("nvidia-smi")
+        .args(["--query-gpu=name", "--format=csv,noheader"])
+        .output()
+    {
+        if out.status.success() {
+            if let Some(name) = String::from_utf8_lossy(&out.stdout).lines().next() {
+                let name = name.trim();
+                if !name.is_empty() {
+                    return HardwareInfo {
+                        gpu: Some(name.to_string()),
+                        kind: "cuda".into(),
+                        cpu_cores: cores,
+                        ram_gb,
+                    };
+                }
+            }
+        }
+    }
+
+    // Apple Silicon → MPS.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        return HardwareInfo {
+            gpu: Some("Apple Silicon".into()),
+            kind: "mps".into(),
+            cpu_cores: cores,
+            ram_gb,
+        };
+    }
+
+    // AMD on Linux: a DRM card with vendor 0x1002 → ROCm candidate. No
+    // marketing name without lspci, so stay generic.
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(entries) = fs::read_dir("/sys/class/drm") {
+            for e in entries.flatten() {
+                let vendor = e.path().join("device").join("vendor");
+                if let Ok(v) = fs::read_to_string(&vendor) {
+                    if v.trim() == "0x1002" {
+                        return HardwareInfo {
+                            gpu: Some("AMD GPU".into()),
+                            kind: "rocm".into(),
+                            cpu_cores: cores,
+                            ram_gb,
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    HardwareInfo { gpu: None, kind: "cpu".into(), cpu_cores: cores, ram_gb }
 }
 
 #[derive(Serialize)]
@@ -414,6 +493,7 @@ pub fn get_setup_state(app: tauri::AppHandle) -> SetupState {
             models_bytes: REQUIRED_MODELS_BYTES,
             data_bytes: REQUIRED_DATA_BYTES,
         },
+        hardware: detect_hardware(),
     }
 }
 
@@ -611,6 +691,13 @@ mod tests {
         assert_eq!(none_if_default(&Some("".into()), d), None);
         assert_eq!(none_if_default(&Some("/default/dir".into()), d), None);
         assert_eq!(none_if_default(&Some("/custom".into()), d), Some("/custom".into()));
+    }
+
+    #[test]
+    fn detect_hardware_never_panics_and_reports_a_known_kind() {
+        let hw = detect_hardware();
+        assert!(["cuda", "rocm", "mps", "cpu"].contains(&hw.kind.as_str()), "kind: {}", hw.kind);
+        assert!(hw.ram_gb >= 0.0);
     }
 
     #[test]

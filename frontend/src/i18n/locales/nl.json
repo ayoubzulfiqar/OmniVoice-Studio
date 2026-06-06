@@ -1640,6 +1640,12 @@
     "blocked_not_writable": "Een gekozen map is niet beschrijfbaar — kies een andere locatie.",
     "total_required": "Totaal benodigde schijfruimte: ~{{size}} (eenmalige download bij eerste gebruik)",
     "start": "Installatie starten",
-    "starting": "Starten…"
+    "starting": "Starten…",
+    "compute_detected": "Gedetecteerd",
+    "compute_match": "past bij deze machine",
+    "compute_auto_desc": "Kiest tijdens runtime de beste backend van deze machine — CUDA op NVIDIA, MPS op Apple Silicon, anders CPU.",
+    "compute_rocm_desc": "Installeert PyTorch ROCm-wheels voor AMD-kaarten op Linux. Laat op Auto staan bij twijfel.",
+    "channel_stable_desc": "Alleen geteste releases — updates komen na validatie door de community.",
+    "channel_preview_desc": "Doorlopende builds van de nieuwste main — nieuwe engines en fixes eerst, af en toe een ruw randje."
   }
 }

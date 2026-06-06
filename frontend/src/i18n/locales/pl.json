@@ -1640,6 +1640,12 @@
     "blocked_not_writable": "Wybrany folder nie jest zapisywalny — wybierz inną lokalizację.",
     "total_required": "Łącznie potrzeba: ~{{size}} (jednorazowe pobranie przy pierwszym użyciu)",
     "start": "Rozpocznij instalację",
-    "starting": "Uruchamianie…"
+    "starting": "Uruchamianie…",
+    "compute_detected": "Wykryto",
+    "compute_match": "pasuje do tej maszyny",
+    "compute_auto_desc": "Wybiera najlepszy backend tej maszyny w czasie działania — CUDA na NVIDIA, MPS na Apple Silicon, inaczej CPU.",
+    "compute_rocm_desc": "Instaluje pakiety PyTorch ROCm dla kart AMD w Linuksie. W razie wątpliwości zostaw Auto.",
+    "channel_stable_desc": "Tylko przetestowane wydania — aktualizacje przychodzą po walidacji społeczności.",
+    "channel_preview_desc": "Kroczące kompilacje z najnowszego main — nowe silniki i poprawki najpierw, czasem drobne niedociągnięcia."
   }
 }

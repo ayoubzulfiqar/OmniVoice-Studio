@@ -1640,6 +1640,12 @@
     "blocked_not_writable": "Uma pasta escolhida não é gravável — escolha outro local.",
     "total_required": "Espaço total necessário: ~{{size}} (download único no primeiro uso)",
     "start": "Iniciar instalação",
-    "starting": "Iniciando…"
+    "starting": "Iniciando…",
+    "compute_detected": "Detectado",
+    "compute_match": "corresponde a esta máquina",
+    "compute_auto_desc": "Escolhe o melhor backend desta máquina em tempo de execução — CUDA em NVIDIA, MPS em Apple Silicon, senão CPU.",
+    "compute_rocm_desc": "Instala as wheels ROCm do PyTorch para placas AMD no Linux. Deixe em Auto se não tiver certeza.",
+    "channel_stable_desc": "Apenas versões testadas — as atualizações chegam após validação da comunidade.",
+    "channel_preview_desc": "Builds contínuas do main mais recente — novos motores e correções primeiro, com arestas ocasionais."
   }
 }

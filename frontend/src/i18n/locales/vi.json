@@ -1640,6 +1640,12 @@
     "blocked_not_writable": "Một thư mục đã chọn không ghi được — hãy chọn vị trí khác.",
     "total_required": "Tổng dung lượng cần: ~{{size}} (tải một lần khi dùng lần đầu)",
     "start": "Bắt đầu cài đặt",
-    "starting": "Đang khởi động…"
+    "starting": "Đang khởi động…",
+    "compute_detected": "Đã phát hiện",
+    "compute_match": "khớp với máy này",
+    "compute_auto_desc": "Chọn backend tốt nhất của máy này khi chạy — CUDA trên NVIDIA, MPS trên Apple Silicon, còn lại dùng CPU.",
+    "compute_rocm_desc": "Cài wheel PyTorch ROCm cho card đồ họa AMD trên Linux. Nếu không chắc, hãy để Tự động.",
+    "channel_stable_desc": "Chỉ các bản phát hành đã kiểm thử — cập nhật đến sau khi cộng đồng xác nhận.",
+    "channel_preview_desc": "Bản dựng liên tục từ main mới nhất — engine và bản sửa mới nhất trước tiên, đôi khi còn thô."
   }
 }
