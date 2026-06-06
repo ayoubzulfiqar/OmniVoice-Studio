@@ -10,19 +10,6 @@
   min-width: 0;
 }
 
-/* Welcome: three static "what's next" cards in a row. */
-.swiz-welcome-grid { grid-template-columns: repeat(3, 1fr); }
-
-@media (max-width: 980px) {
-  .swiz-welcome-grid { grid-template-columns: 1fr; }
-}
-
-/* Static option-card lookalikes: same surface, not clickable. Their
-   descriptions stay visible — the active-only fold is for radio groups. */
-.swiz-static { cursor: default; }
-.swiz-static:hover { background: color-mix(in srgb, var(--frs-ink) 4%, transparent); transform: none; }
-.swiz-static .frs-opt__desc { max-height: none; opacity: 0.6; }
-
 .swiz-note {
   margin: 0;
   font-size: 0.74rem;

@@ -99,9 +99,10 @@ function PreflightPanel({ report, loading, onRecheck }) {
 
 function StepperNav({ step, onStep }) {
   const { t } = useTranslation();
-  // Models + engines share one act: models are the required gate, engines
-  // the optional extras — two panels, one decision moment, fewer steps.
-  const stepLabels = [t('setup.welcome'), t('setup.system_check'), t('firstrun.stage_models', 'Models & engines'), t('setup.try_dictation')];
+  // Three steps, no welcome ceremony: the journey rail + setup page already
+  // oriented the user. Models + engines share one act (required gate +
+  // optional extras).
+  const stepLabels = [t('setup.system_check'), t('firstrun.stage_models', 'Models & engines'), t('setup.try_dictation')];
   return (
     <nav className="frs-wsteps" data-tauri-drag-region>
       {stepLabels.map((label, i) => (
@@ -153,7 +154,7 @@ export default function SetupWizard({ onReady }) {
 
   // Poll setup status every 4s while on Models step
   useEffect(() => {
-    if (step !== 2) return;
+    if (step !== 1) return;
     const iv = setInterval(() => setupQuery.refetch(), 4000);
     return () => clearInterval(iv);
   }, [step, setupQuery]);
@@ -166,16 +167,9 @@ export default function SetupWizard({ onReady }) {
   const cachePath = status?.hf_cache_dir || '~/.cache/huggingface';
 
   const STEP_SUBTITLES = [
-    t('setup.hero_desc'),
     t('setup.system_check_desc'),
     t('setup.install_models_desc'),
     t('setup.try_dictation'),
-  ];
-
-  const WELCOME_CARDS = [
-    { title: t('setup.system_check'), desc: t('setup.system_check_desc') },
-    { title: t('firstrun.stage_models', 'Models & engines'), desc: t('setup.install_models_desc') },
-    { title: t('setup.try_dictation'), desc: null },
   ];
 
   return (
@@ -202,51 +196,20 @@ export default function SetupWizard({ onReady }) {
           </div>
         </header>
 
-        {/* 0. Welcome */}
+        {/* 0. System check — first thing a user sees: the probe auto-runs,
+            no welcome ceremony (the journey rail + setup page already
+            oriented them). */}
         {step === 0 && (
           <div className="swiz-slide" key="step-0">
-            <section className="frs-panel frs-rise" style={{ '--rise': 1 }}>
-              <h2 className="frs-panel__title">{t('setup.welcome')}</h2>
-              <div className="frs__options swiz-welcome-grid">
-                {WELCOME_CARDS.map((card, i) => (
-                  <div className="frs-opt frs-opt--compact swiz-static" key={i}>
-                    <span className="frs-opt__head">
-                      <span className="frs-opt__name">{i + 1}. {card.title}</span>
-                    </span>
-                    {card.desc && <span className="frs-opt__desc">{card.desc}</span>}
-                  </div>
-                ))}
-              </div>
-              <p className="swiz-note">{t('setup.first_run')}</p>
-            </section>
-            <div className="frs-wnav frs-rise" style={{ '--rise': 2 }}>
-              <span />
-              <button
-                type="button"
-                className="frs-btn frs-btn--primary is-armed"
-                onClick={() => setStep(1)}
-              >
-                <span className="frs-btn__led" aria-hidden="true" />
-                {t('setup.get_started')} →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 1. System check */}
-        {step === 1 && (
-          <div className="swiz-slide" key="step-1">
             <div className="frs-rise" style={{ '--rise': 1 }}>
               <PreflightPanel report={pre} loading={preLoading} onRecheck={recheckPreflight} />
             </div>
             <div className="frs-wnav frs-rise" style={{ '--rise': 2 }}>
-              <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(0)}>
-                ← {t('setup.back')}
-              </button>
+              <span />
               <button
                 type="button"
                 className={`frs-btn frs-btn--primary ${preflightOk ? 'is-armed' : ''}`}
-                onClick={() => setStep(2)}
+                onClick={() => setStep(1)}
                 disabled={!preflightOk}
                 title={preflightOk ? '' : t('setup.resolve_blockers')}
               >
@@ -259,10 +222,10 @@ export default function SetupWizard({ onReady }) {
           </div>
         )}
 
-        {/* 2. Models & engines — one act: models are the required gate,
+        {/* 1. Models & engines — one act: models are the required gate,
             engines the optional extras right beneath. */}
-        {step === 2 && (
-          <div className="swiz-slide" key="step-2">
+        {step === 1 && (
+          <div className="swiz-slide" key="step-1">
             <section className="frs-panel frs-rise" style={{ '--rise': 1 }}>
               <h2 className="frs-panel__title">{t('setup.install_models')}</h2>
               <div className="frs-embed">
@@ -282,13 +245,13 @@ export default function SetupWizard({ onReady }) {
               </div>
             </section>
             <div className="frs-wnav frs-rise" style={{ '--rise': 3 }}>
-              <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(1)}>
+              <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(0)}>
                 ← {t('setup.back')}
               </button>
               <button
                 type="button"
                 className={`frs-btn frs-btn--primary ${modelsReady ? 'is-armed' : ''}`}
-                onClick={() => setStep(3)}
+                onClick={() => setStep(2)}
                 disabled={!modelsReady}
                 title={modelsReady ? '' : t('setup.install_required_models')}
               >
@@ -299,10 +262,10 @@ export default function SetupWizard({ onReady }) {
           </div>
         )}
 
-        {/* 3. Dictation — guided walkthrough. Skippable (per cross-platform
+        {/* 2. Dictation — guided walkthrough. Skippable (per cross-platform
             parity rule: some users genuinely don't want dictation). */}
-        {step === 3 && (
-          <div className="swiz-slide" key="step-3">
+        {step === 2 && (
+          <div className="swiz-slide" key="step-2">
             <section className="frs-panel frs-rise" style={{ '--rise': 1 }}>
               <h2 className="frs-panel__title">{t('setup.try_dictation')}</h2>
               <div className="frs-embed">
@@ -310,7 +273,7 @@ export default function SetupWizard({ onReady }) {
               </div>
             </section>
             <div className="frs-wnav frs-rise" style={{ '--rise': 2 }}>
-              <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(2)}>
+              <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(1)}>
                 ← {t('setup.back')}
               </button>
               <div className="frs-wnav__group">
@@ -330,7 +293,7 @@ export default function SetupWizard({ onReady }) {
           </div>
         )}
 
-        {!status && step > 1 && (
+        {!status && step > 0 && (
           <div className="swiz-loading">
             <Loader className="spinner" size={14} /> {t('setup.checking')}
           </div>
