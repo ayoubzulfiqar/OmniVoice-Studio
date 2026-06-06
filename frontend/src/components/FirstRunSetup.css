@@ -1,0 +1,331 @@
+/* First-run install setup screen — visual kin of BootstrapSplash (same
+   backdrop, card treatment and type scale) so the handoff from setup →
+   install progress reads as one continuous flow. */
+
+.frs {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--chrome-bg, #141414);
+  color: var(--chrome-fg, #eee);
+  font-family: 'Inter Variable', 'Inter', system-ui, sans-serif;
+  z-index: 9999;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.frs__card {
+  width: 100%;
+  max-width: 640px;
+  background: color-mix(in srgb, var(--chrome-fg, #eee) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chrome-fg, #eee) 10%, transparent);
+  border-radius: 14px;
+  padding: 1.75rem 2rem;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+}
+
+.frs__card--loading {
+  max-width: 420px;
+  align-items: center;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+
+.frs__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.frs__title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.frs__subtitle {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  opacity: 0.65;
+  max-width: 40ch;
+}
+
+.frs__head-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.frs__version {
+  font-size: 0.72rem;
+  opacity: 0.45;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Sections ───────────────────────────────────────────────────────── */
+
+.frs__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.frs__section-title {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.5;
+}
+
+/* ── Mode cards ─────────────────────────────────────────────────────── */
+
+.frs__modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.frs-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.7rem 0.85rem;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, var(--chrome-fg, #eee) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chrome-fg, #eee) 12%, transparent);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.frs-mode:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--chrome-fg, #eee) 24%, transparent);
+}
+
+.frs-mode.is-active {
+  border-color: color-mix(in srgb, var(--chrome-accent, #7c9cff) 60%, transparent);
+  background: color-mix(in srgb, var(--chrome-accent, #7c9cff) 10%, transparent);
+}
+
+.frs-mode:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.frs-mode__name { font-size: 0.85rem; font-weight: 600; }
+.frs-mode__desc { font-size: 0.72rem; line-height: 1.4; opacity: 0.65; }
+
+/* ── Storage rows ───────────────────────────────────────────────────── */
+
+.frs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--chrome-fg, #eee) 10%, transparent);
+  border-radius: 10px;
+}
+
+.frs-row--blocked {
+  border-color: color-mix(in srgb, var(--chrome-severity-err, #cc241d) 55%, transparent);
+}
+
+.frs-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.frs-row__label { font-size: 0.8rem; font-weight: 600; }
+.frs-row__desc { font-size: 0.7rem; opacity: 0.6; }
+
+.frs-row__path {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.68rem;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34ch;
+  direction: rtl;       /* ellipsize the head — the tail of a path matters */
+  text-align: left;
+}
+
+.frs-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.frs-row__need { font-size: 0.7rem; opacity: 0.55; white-space: nowrap; }
+
+.frs-row__free {
+  font-size: 0.72rem;
+  white-space: nowrap;
+  color: var(--chrome-severity-ok, #98971a);
+}
+
+.frs-row__free.is-low { color: var(--chrome-severity-err, #cc241d); font-weight: 600; }
+
+/* ── Fields ─────────────────────────────────────────────────────────── */
+
+.frs__inline-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.frs-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  opacity: 0.95;
+}
+
+.frs-field > span { opacity: 0.65; }
+
+.frs-select,
+.frs-input {
+  background: color-mix(in srgb, var(--chrome-fg, #eee) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chrome-fg, #eee) 12%, transparent);
+  color: inherit;
+  color-scheme: dark;
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 7px;
+  min-width: 0;
+}
+
+.frs-select { cursor: pointer; }
+
+.frs-select option {
+  background: var(--chrome-bg, #141414);
+  color: var(--chrome-fg, #eee);
+}
+
+.frs-input::placeholder { opacity: 0.35; }
+
+/* ── Advanced mirrors disclosure ────────────────────────────────────── */
+
+.frs__advanced summary {
+  font-size: 0.72rem;
+  opacity: 0.6;
+  cursor: pointer;
+  user-select: none;
+  padding: 0.15rem 0;
+}
+
+.frs__advanced summary:hover { opacity: 0.9; }
+
+.frs__mirror-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid color-mix(in srgb, var(--chrome-fg, #eee) 10%, transparent);
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────── */
+
+.frs__foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-top: 1px solid color-mix(in srgb, var(--chrome-fg, #eee) 8%, transparent);
+  padding-top: 0.9rem;
+}
+
+.frs__foot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.frs__totals { font-size: 0.72rem; opacity: 0.6; }
+
+.frs__blocker {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--chrome-severity-err, #cc241d);
+}
+
+.frs__error {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.7rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--chrome-severity-err, #cc241d);
+  background: color-mix(in srgb, var(--chrome-severity-err, #cc241d) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chrome-severity-err, #cc241d) 30%, transparent);
+  border-radius: 8px;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────── */
+
+.frs-btn {
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 0.45rem 1rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.frs-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.frs-btn--primary {
+  background: var(--chrome-accent, #7c9cff);
+  color: var(--chrome-bg, #141414);
+}
+
+.frs-btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--chrome-accent, #7c9cff) 85%, white);
+}
+
+.frs-btn--ghost {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--chrome-fg, #eee) 16%, transparent);
+  color: inherit;
+  font-weight: 500;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.7rem;
+}
+
+.frs-btn--ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--chrome-fg, #eee) 8%, transparent);
+}
+
+/* ── Narrow widths ──────────────────────────────────────────────────── */
+
+@media (max-width: 560px) {
+  .frs__modes, .frs__inline-fields { grid-template-columns: 1fr; }
+  .frs-row { flex-direction: column; align-items: flex-start; }
+}

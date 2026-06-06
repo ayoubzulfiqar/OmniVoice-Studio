@@ -8,12 +8,16 @@
  *      last N lines so users can see *something* happening during the 5–10
  *      min dependency install.
  */
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { copyText } from "../utils/copyText";
 import './BootstrapSplash.css';
 import { useTranslation } from 'react-i18next';
 import i18n, { LANGUAGES } from '../i18n';
 import { useAppStore } from '../store';
+
+// First-run only: keep the setup screen out of the main bundle so every
+// regular launch pays nothing for it.
+const FirstRunSetup = lazy(() => import('./FirstRunSetup'));
 
 const getSystemLanguage = () => {
   if (typeof navigator === 'undefined') return 'en';
@@ -244,6 +248,19 @@ export function BootstrapSplash({ stage, message }) {
 
   const stageProgress = progress && progress.stage === stage ? progress : null;
   const pctFromBytes = stageProgress?.percent != null ? stageProgress.percent : null;
+
+  // First run with nothing installed: Rust parks in `awaiting_setup` and the
+  // install-plan screen takes over. complete_setup advances the stage, and
+  // the regular progress UI below resumes automatically on the next poll.
+  // (Checked after every hook above so the setup → install transition keeps
+  // the hook order stable.)
+  if (stage === 'awaiting_setup') {
+    return (
+      <Suspense fallback={<div className="bootstrap-splash" />}>
+        <FirstRunSetup />
+      </Suspense>
+    );
+  }
 
   return (
     <div className="bootstrap-splash">
