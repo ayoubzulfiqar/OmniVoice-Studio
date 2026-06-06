@@ -87,6 +87,13 @@ resolve_app() {
 
 APP="$(resolve_app "$TARGET")"
 
+# Detect an ad-hoc signature: a VALID seal but not Developer-ID / not notarized.
+# This is the free default (tauri.conf.json bundle.macOS.signingIdentity "-") —
+# it makes a downloaded copy show the GUI-bypassable "unidentified developer"
+# prompt instead of the un-bypassable "damaged" error.
+IS_ADHOC=0
+if codesign -dvv "$APP" 2>&1 | grep -q 'Signature=adhoc'; then IS_ADHOC=1; fi
+
 # ── Result accounting ─────────────────────────────────────────────────────
 FAILS=0
 WARNS=0
@@ -116,7 +123,20 @@ if [ $CS_RC -eq 0 ]; then ok "signature valid (deep, strict)"; else problem "cod
 echo "[2/6] spctl -a -vv --type execute  (Gatekeeper)"
 SPCTL_OUT="$(spctl --assess -a -vv --type execute "$APP" 2>&1)"; SPCTL_RC=$?
 printf '%s\n' "$SPCTL_OUT" | sed 's/^/      /'
-if [ $SPCTL_RC -eq 0 ]; then ok "Gatekeeper accepts the bundle"; else problem "Gatekeeper rejected the bundle (rc=$SPCTL_RC) — users would see \"app is damaged\" / \"Move to Trash\""; fi
+if [ $SPCTL_RC -eq 0 ]; then
+  ok "Gatekeeper accepts the bundle (signed + notarized)"
+elif [ "$IS_ADHOC" = 1 ] && [ $CS_RC -eq 0 ]; then
+  if [ "$REQUIRE_SIGNED" = 1 ]; then
+    echo "  ✗ FAIL: ad-hoc only, not notarized — Gatekeeper won't auto-accept a production release"; FAILS=$((FAILS+1))
+  else
+    echo "  ⓘ ad-hoc signed (valid seal, not notarized): a downloaded copy shows the"
+    echo "      \"unidentified developer\" prompt — users open it WITHOUT Terminal via"
+    echo "      right-click → Open, or Settings → Privacy & Security → \"Open Anyway\"."
+    echo "      Notarize (paid Apple ID) for a warning-free double-click."
+  fi
+else
+  problem "Gatekeeper rejected (rc=$SPCTL_RC) and the signature is invalid/missing — users would see \"app is damaged\" / \"Move to Trash\" with NO GUI bypass"
+fi
 
 # ── 3. No unsigned nested components ──────────────────────────────────────
 # Tauri/Apple require every nested Mach-O (helpers, frameworks, dylibs,
@@ -177,7 +197,13 @@ if [ "$FAILS" -gt 0 ]; then
   hr; exit 1
 elif [ "$WARNS" -gt 0 ]; then
   echo "RESULT: PASS (report-only) — $WARNS warning(s)."
-  echo "Bundle is unsigned/un-notarized, which is expected for dev/preview builds."
+  if [ "$IS_ADHOC" = 1 ]; then
+    echo "Bundle is ad-hoc signed: users can open it WITHOUT Terminal (right-click → Open"
+    echo "/ Settings → \"Open Anyway\"). Not notarized — sign + notarize (paid Apple ID)"
+    echo "for a warning-free double-click."
+  else
+    echo "Bundle is unsigned/un-notarized, which is expected for dev/preview builds."
+  fi
   echo "For a production release run with --require-signed after enabling Apple signing."
   hr; exit 0
 else

@@ -10,13 +10,28 @@ desktop bundle. It pairs with two helper scripts and the release workflow:
 - **`.github/workflows/release.yml`** — builds, optionally signs (opt-in), and
   runs `verify-macos-signing.sh` on the macOS leg.
 
-> **Current state of this repo:** Apple Developer ID signing is **opt-in and OFF
-> by default** (see the *Configure Apple signing* step in `release.yml`). Default
-> stable + all preview builds ship **unsigned**; users clear quarantine manually
-> (see [`docs/install/macos.md`](install/macos.md#gatekeeper-quarantine), issues
-> #134/#72). Turning on signed releases means fixing the Apple secrets and setting
-> the repo variable `MACOS_SIGNING_ENABLED = true` — at which point the
+> **Current state of this repo:** Apple Developer ID signing + notarization is
+> **opt-in and OFF by default** (see the *Configure Apple signing* step in
+> `release.yml`). Default stable + all preview builds are **ad-hoc signed** —
+> `tauri.conf.json > bundle > macOS > signingIdentity = "-"` gives the bundle a
+> *valid* seal (free, no Apple account), so a downloaded copy shows the
+> **GUI-bypassable "unidentified developer"** prompt (right-click → Open) instead
+> of the un-bypassable **"app is damaged"** error a broken/missing seal produces.
+> It is **not** notarized, so users still confirm the first launch once (see
+> [`docs/install/macos.md`](install/macos.md#gatekeeper-quarantine), issues
+> #134/#72). For a warning-free double-click, enable signing: fix the Apple
+> secrets, set the repo variable `MACOS_SIGNING_ENABLED = true` (the env-set
+> `APPLE_SIGNING_IDENTITY` overrides the `"-"` default) — at which point the
 > verification below switches to **strict** automatically and gates the release.
+
+### Signing tiers at a glance
+
+| Tier | Cost | What the user sees | Terminal? |
+|------|------|--------------------|-----------|
+| **Unsigned / broken seal** | free | "app is damaged" — **no GUI bypass** | yes (`xattr`) |
+| **Ad-hoc signed** (current default) | free | "unidentified developer" → right-click → Open / "Open Anyway" | **no** |
+| **Developer ID, not notarized** | $99/yr | "unidentified developer" → right-click → Open | no |
+| **Developer ID + notarized + stapled** | $99/yr | nothing — clean double-click | no |
 
 ---
 
