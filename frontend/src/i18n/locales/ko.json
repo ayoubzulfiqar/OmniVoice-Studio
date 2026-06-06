@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "테스트된 릴리스만 — 커뮤니티 검증 후 업데이트가 도착합니다.",
     "channel_preview_desc": "최신 main의 롤링 빌드 — 새 엔진과 수정 사항을 가장 먼저 받지만 가끔 거친 부분이 있습니다.",
     "installing_title": "설치 중",
-    "activity_title": "활동"
+    "activity_title": "활동",
+    "stage_setup": "설정",
+    "stage_models": "모델 및 엔진"
   }
 }

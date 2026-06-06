@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "Tylko przetestowane wydania — aktualizacje przychodzą po walidacji społeczności.",
     "channel_preview_desc": "Kroczące kompilacje z najnowszego main — nowe silniki i poprawki najpierw, czasem drobne niedociągnięcia.",
     "installing_title": "Instalowanie",
-    "activity_title": "Aktywność"
+    "activity_title": "Aktywność",
+    "stage_setup": "Konfiguracja",
+    "stage_models": "Modele i silniki"
   }
 }

@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "إصدارات مُختبرة فقط — تصل التحديثات بعد تحقق المجتمع.",
     "channel_preview_desc": "بنى متجددة من أحدث main — محركات وإصلاحات جديدة أولًا، مع خشونة طفيفة أحيانًا.",
     "installing_title": "جارٍ التثبيت",
-    "activity_title": "النشاط"
+    "activity_title": "النشاط",
+    "stage_setup": "الإعداد",
+    "stage_models": "النماذج والمحركات"
   }
 }

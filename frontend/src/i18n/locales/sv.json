@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "Endast testade utgåvor — uppdateringar kommer efter community-validering.",
     "channel_preview_desc": "Rullande byggen från senaste main — nya motorer och fixar först, ibland lite ojämnt.",
     "installing_title": "Installerar",
-    "activity_title": "Aktivitet"
+    "activity_title": "Aktivitet",
+    "stage_setup": "Installation",
+    "stage_models": "Modeller & motorer"
   }
 }

@@ -1649,6 +1649,8 @@
     "channel_stable_desc": "Nur getestete Releases — Updates kommen nach Community-Validierung.",
     "channel_preview_desc": "Rollende Builds vom neuesten main — neue Engines und Fixes zuerst, gelegentlich kleine Kanten.",
     "installing_title": "Installation",
-    "activity_title": "Aktivität"
+    "activity_title": "Aktivität",
+    "stage_setup": "Einrichtung",
+    "stage_models": "Modelle & Engines"
   }
 }

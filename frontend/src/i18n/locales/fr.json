@@ -1649,6 +1649,8 @@
     "channel_stable_desc": "Uniquement des versions testées — les mises à jour arrivent après validation par la communauté.",
     "channel_preview_desc": "Builds continues du dernier main — nouveaux moteurs et correctifs en premier, quelques aspérités possibles.",
     "installing_title": "Installation",
-    "activity_title": "Activité"
+    "activity_title": "Activité",
+    "stage_setup": "Configuration",
+    "stage_models": "Modèles et moteurs"
   }
 }

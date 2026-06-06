@@ -292,7 +292,21 @@
   white-space: nowrap;
 }
 
-.frs-opt__desc { font-size: 0.7rem; line-height: 1.45; opacity: 0.6; }
+/* Verbosity diet: the description unfolds (smoothly) only on the selected
+   card — collapsed cards keep it as a tooltip. */
+.frs-opt__desc {
+  font-size: 0.7rem;
+  line-height: 1.45;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms ease;
+}
+
+.frs-opt.is-active .frs-opt__desc {
+  max-height: 4.5em;
+  opacity: 0.6;
+}
 
 /* ── Detected hardware readout (Compute panel) ─────────────────────────── */
 
@@ -366,7 +380,6 @@
 }
 
 .frs-row__label { font-size: 0.8rem; font-weight: 620; }
-.frs-row__desc { font-size: 0.68rem; opacity: 0.55; line-height: 1.4; }
 
 .frs-row__path {
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -848,6 +861,15 @@
   background: var(--frs-ok);
   box-shadow: 0 0 5px 1px color-mix(in srgb, var(--frs-ok) 50%, transparent);
 }
+
+/* Journey rail on setup/install acts: a quiet breadcrumb of the three
+   stages, between the waveform and the headline. Non-interactive spans. */
+.frs-wsteps--journey {
+  margin-top: 0.8rem;
+  gap: 1.2rem;
+}
+
+.frs-wsteps--journey .frs-wstep { cursor: default; }
 
 /* Embedded app panels (Model Store / Engines) keep their own internals;
    this shell just gives them breathing room inside the act. */

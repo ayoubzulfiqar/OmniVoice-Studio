@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "Solo release testate — gli aggiornamenti arrivano dopo la convalida della community.",
     "channel_preview_desc": "Build continue dall'ultimo main — nuovi motori e fix per primi, con qualche spigolo occasionale.",
     "installing_title": "Installazione",
-    "activity_title": "Attività"
+    "activity_title": "Attività",
+    "stage_setup": "Configurazione",
+    "stage_models": "Modelli e motori"
   }
 }

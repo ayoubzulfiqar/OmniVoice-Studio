@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "Yalnızca test edilmiş sürümler — güncellemeler topluluk doğrulamasından sonra gelir.",
     "channel_preview_desc": "En yeni main'den sürekli derlemeler — yeni motorlar ve düzeltmeler önce gelir, ara sıra pürüz olabilir.",
     "installing_title": "Kuruluyor",
-    "activity_title": "Etkinlik"
+    "activity_title": "Etkinlik",
+    "stage_setup": "Kurulum",
+    "stage_models": "Modeller ve motorlar"
   }
 }

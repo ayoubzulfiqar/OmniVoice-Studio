@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "僅推送經過測試的正式版本——經社群驗證後才更新。",
     "channel_preview_desc": "來自最新 main 分支的滾動建置——最先獲得新引擎與修復，偶有小問題。",
     "installing_title": "正在安裝",
-    "activity_title": "活動日誌"
+    "activity_title": "活動日誌",
+    "stage_setup": "設定",
+    "stage_models": "模型與引擎"
   }
 }

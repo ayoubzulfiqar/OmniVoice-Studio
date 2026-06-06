@@ -113,9 +113,8 @@ function StorageRow({ label, desc, path, need, check, onPick }) {
   const tight = check?.freeBytes != null && need / check.freeBytes > 0.35;
   return (
     <div className={`frs-row ${blocked ? 'frs-row--blocked' : ''}`}>
-      <div className="frs-row__text">
+      <div className="frs-row__text" title={desc}>
         <span className="frs-row__label">{label}</span>
-        <span className="frs-row__desc">{desc}</span>
         <code className="frs-row__path" title={path}>{path}</code>
       </div>
       <div className="frs-row__gauge">
@@ -153,7 +152,10 @@ function Panel({ title, delay, className = '', children }) {
   );
 }
 
-/** LED radio option — used for install mode, compute and update channel. */
+/** LED radio option — used for install mode, compute and update channel.
+ *  Verbosity diet: the description unfolds only on the selected card; the
+ *  rest expose it as a tooltip. One expanded card per group keeps the page
+ *  calm without hiding information. */
 function OptionCard({ active, disabled, onSelect, name, desc, badge, compact }) {
   return (
     <button
@@ -162,6 +164,7 @@ function OptionCard({ active, disabled, onSelect, name, desc, badge, compact }) 
       aria-checked={active}
       className={`frs-opt ${compact ? 'frs-opt--compact' : ''} ${active ? 'is-active' : ''}`}
       disabled={disabled}
+      title={active ? undefined : desc}
       onClick={() => !disabled && onSelect()}
     >
       <span className="frs-opt__led" aria-hidden="true" />
@@ -329,6 +332,21 @@ export default function FirstRunSetup() {
         {/* ── Masthead: waveform + serif headline + serial plate ────────── */}
         <header className="frs__mast frs-rise" style={{ '--rise': 0 }} data-tauri-drag-region>
           <Waveform />
+          {/* Journey rail: this page is stage 1 of the install flow. */}
+          <nav className="frs-wsteps frs-wsteps--journey" aria-label={t('firstrun.title', 'Set up OmniVoice Studio')}>
+            <span className="frs-wstep is-active">
+              <span className="frs-wstep__led" aria-hidden="true" />
+              {t('firstrun.stage_setup', 'Setup')}
+            </span>
+            <span className="frs-wstep">
+              <span className="frs-wstep__led" aria-hidden="true" />
+              {t('firstrun.installing_title', 'Installing')}
+            </span>
+            <span className="frs-wstep">
+              <span className="frs-wstep__led" aria-hidden="true" />
+              {t('firstrun.stage_models', 'Models & engines')}
+            </span>
+          </nav>
           <div className="frs__mast-row">
             <div className="frs__mast-text">
               <h1 className="frs__title">{t('firstrun.title', 'Set up OmniVoice Studio')}</h1>

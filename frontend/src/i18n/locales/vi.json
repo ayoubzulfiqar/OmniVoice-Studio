@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "Chỉ các bản phát hành đã kiểm thử — cập nhật đến sau khi cộng đồng xác nhận.",
     "channel_preview_desc": "Bản dựng liên tục từ main mới nhất — engine và bản sửa mới nhất trước tiên, đôi khi còn thô.",
     "installing_title": "Đang cài đặt",
-    "activity_title": "Hoạt động"
+    "activity_title": "Hoạt động",
+    "stage_setup": "Thiết lập",
+    "stage_models": "Mô hình & engine"
   }
 }

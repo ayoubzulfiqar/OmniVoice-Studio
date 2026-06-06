@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "केवल परीक्षित रिलीज़ — सामुदायिक सत्यापन के बाद अपडेट आते हैं।",
     "channel_preview_desc": "नवीनतम main की रोलिंग बिल्ड — नए इंजन और फ़िक्स सबसे पहले, कभी-कभी छोटी खामियाँ।",
     "installing_title": "इंस्टॉल हो रहा है",
-    "activity_title": "गतिविधि"
+    "activity_title": "गतिविधि",
+    "stage_setup": "सेटअप",
+    "stage_models": "मॉडल और इंजन"
   }
 }

@@ -1643,6 +1643,8 @@
     "channel_stable_desc": "Tested releases only — updates arrive after community validation.",
     "channel_preview_desc": "Rolling builds from the latest main — new engines and fixes first, occasional rough edges.",
     "installing_title": "Installing",
-    "activity_title": "Activity"
+    "activity_title": "Activity",
+    "stage_setup": "Setup",
+    "stage_models": "Models & engines"
   }
 }

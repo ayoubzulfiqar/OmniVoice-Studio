@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "Alleen geteste releases — updates komen na validatie door de community.",
     "channel_preview_desc": "Doorlopende builds van de nieuwste main — nieuwe engines en fixes eerst, af en toe een ruw randje.",
     "installing_title": "Installeren",
-    "activity_title": "Activiteit"
+    "activity_title": "Activiteit",
+    "stage_setup": "Installatie",
+    "stage_models": "Modellen & engines"
   }
 }

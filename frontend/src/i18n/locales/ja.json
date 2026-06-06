@@ -1649,6 +1649,8 @@
     "channel_stable_desc": "テスト済みリリースのみ。コミュニティ検証後に更新が届きます。",
     "channel_preview_desc": "最新 main のローリングビルド。新エンジンや修正をいち早く入手できますが、粗削りな場合があります。",
     "installing_title": "インストール中",
-    "activity_title": "アクティビティ"
+    "activity_title": "アクティビティ",
+    "stage_setup": "セットアップ",
+    "stage_models": "モデルとエンジン"
   }
 }

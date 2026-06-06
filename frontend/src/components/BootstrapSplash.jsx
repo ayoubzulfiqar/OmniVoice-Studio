@@ -301,6 +301,21 @@ export function BootstrapSplash({ stage, message }) {
         {/* ── Masthead: same identity as the setup screen ───────────────── */}
         <header className="frs__mast frs-rise" style={{ '--rise': 0 }} data-tauri-drag-region>
           <Waveform />
+          {/* Journey rail: act 2 of the install flow (setup already done). */}
+          <nav className="frs-wsteps frs-wsteps--journey" aria-label={t('bootstrap.title', 'OmniVoice Studio')}>
+            <span className="frs-wstep is-done">
+              <span className="frs-wstep__led" aria-hidden="true" />
+              {t('firstrun.stage_setup', 'Setup')}
+            </span>
+            <span className="frs-wstep is-active">
+              <span className="frs-wstep__led" aria-hidden="true" />
+              {t('firstrun.installing_title', 'Installing')}
+            </span>
+            <span className="frs-wstep">
+              <span className="frs-wstep__led" aria-hidden="true" />
+              {t('firstrun.stage_models', 'Models & engines')}
+            </span>
+          </nav>
           <div className="frs__mast-row">
             <div className="frs__mast-text">
               <h1 className="frs__title">{t('bootstrap.title', 'OmniVoice Studio')}</h1>

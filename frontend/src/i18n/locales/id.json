@@ -1648,6 +1648,8 @@
     "channel_stable_desc": "Hanya rilis teruji — pembaruan tiba setelah validasi komunitas.",
     "channel_preview_desc": "Build bergulir dari main terbaru — mesin dan perbaikan baru lebih dulu, sesekali ada sisi kasar.",
     "installing_title": "Memasang",
-    "activity_title": "Aktivitas"
+    "activity_title": "Aktivitas",
+    "stage_setup": "Penyiapan",
+    "stage_models": "Model & mesin"
   }
 }
