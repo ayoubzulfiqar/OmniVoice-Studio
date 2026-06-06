@@ -123,7 +123,13 @@
   align-items: center;
   gap: 0.6rem;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
+
+/* Mirrors disclosure tucked under the masthead row, beside the selects'
+   column — quiet until opened, then the three fields span the full width. */
+.frs__advanced--mast { margin-top: 0.6rem; }
 
 /* Serial plate: engraved model/version badge, pure hardware flavor. */
 .frs__plate {
@@ -550,15 +556,6 @@
 
 .frs-input::placeholder { opacity: 0.32; }
 
-/* ── Network panel: region + mirrors side by side on wide windows ──────── */
-
-.frs__net {
-  display: grid;
-  grid-template-columns: minmax(180px, 240px) 1fr;
-  gap: 1rem;
-  align-items: start;
-}
-
 /* ── Advanced mirrors disclosure ───────────────────────────────────────── */
 
 .frs__advanced { min-width: 0; }
@@ -726,7 +723,6 @@
 @media (max-width: 980px) {
   .frs { padding: 1.5rem; }
   .frs__grid { grid-template-columns: 1fr; }
-  .frs__net { grid-template-columns: 1fr; }
   .frs__mirror-fields { grid-template-columns: 1fr; }
 }
 

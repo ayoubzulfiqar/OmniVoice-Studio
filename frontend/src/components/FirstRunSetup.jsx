@@ -326,6 +326,8 @@ export default function FirstRunSetup() {
             </div>
             <div className="frs__mast-meta">
               <span className="frs__plate">OVS&thinsp;·&thinsp;v{APP_VERSION}</span>
+              {/* Language + download region live together: the two "where am
+                  I" choices, settled before anything else. */}
               <select
                 className="frs-select frs-select--lang"
                 value={locale}
@@ -334,8 +336,41 @@ export default function FirstRunSetup() {
               >
                 {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
               </select>
+              <select
+                className="frs-select frs-select--lang"
+                value={plan.region}
+                onChange={(e) => set({ region: e.target.value })}
+                aria-label={t('firstrun.region_label', 'Download region')}
+              >
+                <option value="auto">🌐 {t('bootstrap.auto_detect', 'Auto-detect')}</option>
+                <option value="global">🌐 {t('bootstrap.region_global', 'Global (direct)')}</option>
+                <option value="china">🇨🇳 {t('bootstrap.region_china', 'China (mirror)')}</option>
+                <option value="russia">🇷🇺 {t('bootstrap.region_russia', 'Russia (mirror)')}</option>
+                <option value="restricted">🌍 {t('bootstrap.region_restricted', 'Restricted (mirror)')}</option>
+              </select>
             </div>
           </div>
+          <details className="frs__advanced frs__advanced--mast">
+            <summary>{t('firstrun.mirrors_title', 'Custom mirrors (advanced)')}</summary>
+            <div className="frs__mirror-fields">
+              {[
+                ['pypiIndex', t('firstrun.mirror_pypi', 'PyPI index URL'), 'https://mirrors.aliyun.com/pypi/simple/'],
+                ['hfEndpoint', t('firstrun.mirror_hf', 'Hugging Face endpoint'), 'https://hf-mirror.com'],
+                ['pythonDownloads', t('firstrun.mirror_python', 'Python downloads mirror'), 'https://gh-proxy.com/…'],
+              ].map(([field, label, ph]) => (
+                <label key={field} className="frs-field">
+                  <span>{label}</span>
+                  <input
+                    className="frs-input"
+                    type="url"
+                    placeholder={ph}
+                    value={plan.mirrors[field]}
+                    onChange={(e) => set({ mirrors: { ...plan.mirrors, [field]: e.target.value } })}
+                  />
+                </label>
+              ))}
+            </div>
+          </details>
         </header>
 
         {/* ── Wide deck: storage rail (left) + decision rail (right) ────── */}
@@ -401,45 +436,6 @@ export default function FirstRunSetup() {
               )}
             </Panel>
 
-            <Panel title={t('firstrun.network_title', 'Network')} delay={3}>
-              <div className="frs__net">
-                <label className="frs-field frs__net-region">
-                  <span>{t('firstrun.region_label', 'Download region')}</span>
-                  <select
-                    className="frs-select"
-                    value={plan.region}
-                    onChange={(e) => set({ region: e.target.value })}
-                  >
-                    <option value="auto">🌐 {t('bootstrap.auto_detect', 'Auto-detect')}</option>
-                    <option value="global">🌐 {t('bootstrap.region_global', 'Global (direct)')}</option>
-                    <option value="china">🇨🇳 {t('bootstrap.region_china', 'China (mirror)')}</option>
-                    <option value="russia">🇷🇺 {t('bootstrap.region_russia', 'Russia (mirror)')}</option>
-                    <option value="restricted">🌍 {t('bootstrap.region_restricted', 'Restricted (mirror)')}</option>
-                  </select>
-                </label>
-                <details className="frs__advanced">
-                  <summary>{t('firstrun.mirrors_title', 'Custom mirrors (advanced)')}</summary>
-                  <div className="frs__mirror-fields">
-                    {[
-                      ['pypiIndex', t('firstrun.mirror_pypi', 'PyPI index URL'), 'https://mirrors.aliyun.com/pypi/simple/'],
-                      ['hfEndpoint', t('firstrun.mirror_hf', 'Hugging Face endpoint'), 'https://hf-mirror.com'],
-                      ['pythonDownloads', t('firstrun.mirror_python', 'Python downloads mirror'), 'https://gh-proxy.com/…'],
-                    ].map(([field, label, ph]) => (
-                      <label key={field} className="frs-field">
-                        <span>{label}</span>
-                        <input
-                          className="frs-input"
-                          type="url"
-                          placeholder={ph}
-                          value={plan.mirrors[field]}
-                          onChange={(e) => set({ mirrors: { ...plan.mirrors, [field]: e.target.value } })}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </details>
-              </div>
-            </Panel>
           </div>
 
           <div className="frs__col frs__col--side">
