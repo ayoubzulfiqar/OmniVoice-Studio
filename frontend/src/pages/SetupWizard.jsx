@@ -99,7 +99,9 @@ function PreflightPanel({ report, loading, onRecheck }) {
 
 function StepperNav({ step, onStep }) {
   const { t } = useTranslation();
-  const stepLabels = [t('setup.welcome'), t('setup.system_check'), t('setup.install_models'), t('setup.pick_engines'), t('setup.try_dictation')];
+  // Models + engines share one act: models are the required gate, engines
+  // the optional extras — two panels, one decision moment, fewer steps.
+  const stepLabels = [t('setup.welcome'), t('setup.system_check'), t('firstrun.stage_models', 'Models & engines'), t('setup.try_dictation')];
   return (
     <nav className="frs-wsteps" data-tauri-drag-region>
       {stepLabels.map((label, i) => (
@@ -132,11 +134,11 @@ function StepperNav({ step, onStep }) {
  * seamless.
  *
  * Flow:
- *   0. Welcome    — what's left to do
- *   1. System     — /setup/preflight results
- *   2. Models     — ModelStoreTab, unlocks on models_ready
- *   3. Engines    — EnginesTab
- *   4. Dictation  — guided demo, then "Enter studio"
+ *   0. Welcome           — what's left to do
+ *   1. System            — /setup/preflight results
+ *   2. Models & engines  — ModelStoreTab (required, gates continue) +
+ *                          EnginesTab (optional) in one act
+ *   3. Dictation         — guided demo, then "Enter studio"
  */
 export default function SetupWizard({ onReady }) {
   const { t } = useTranslation();
@@ -167,14 +169,13 @@ export default function SetupWizard({ onReady }) {
     t('setup.hero_desc'),
     t('setup.system_check_desc'),
     t('setup.install_models_desc'),
-    t('setup.pick_engines_desc'),
     t('setup.try_dictation'),
   ];
 
   const WELCOME_CARDS = [
     { title: t('setup.system_check'), desc: t('setup.system_check_desc') },
-    { title: t('setup.install_models'), desc: t('setup.install_models_desc') },
-    { title: t('setup.pick_engines'), desc: t('setup.pick_engines_desc') },
+    { title: t('firstrun.stage_models', 'Models & engines'), desc: t('setup.install_models_desc') },
+    { title: t('setup.try_dictation'), desc: null },
   ];
 
   return (
@@ -212,7 +213,7 @@ export default function SetupWizard({ onReady }) {
                     <span className="frs-opt__head">
                       <span className="frs-opt__name">{i + 1}. {card.title}</span>
                     </span>
-                    <span className="frs-opt__desc">{card.desc}</span>
+                    {card.desc && <span className="frs-opt__desc">{card.desc}</span>}
                   </div>
                 ))}
               </div>
@@ -258,7 +259,8 @@ export default function SetupWizard({ onReady }) {
           </div>
         )}
 
-        {/* 2. Models */}
+        {/* 2. Models & engines — one act: models are the required gate,
+            engines the optional extras right beneath. */}
         {step === 2 && (
           <div className="swiz-slide" key="step-2">
             <section className="frs-panel frs-rise" style={{ '--rise': 1 }}>
@@ -273,7 +275,13 @@ export default function SetupWizard({ onReady }) {
                 </p>
               )}
             </section>
-            <div className="frs-wnav frs-rise" style={{ '--rise': 2 }}>
+            <section className="frs-panel frs-rise" style={{ '--rise': 2 }}>
+              <h2 className="frs-panel__title">{t('setup.pick_engines')}</h2>
+              <div className="frs-embed">
+                <EnginesTab />
+              </div>
+            </section>
+            <div className="frs-wnav frs-rise" style={{ '--rise': 3 }}>
               <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(1)}>
                 ← {t('setup.back')}
               </button>
@@ -291,35 +299,10 @@ export default function SetupWizard({ onReady }) {
           </div>
         )}
 
-        {/* 3. Engines */}
+        {/* 3. Dictation — guided walkthrough. Skippable (per cross-platform
+            parity rule: some users genuinely don't want dictation). */}
         {step === 3 && (
           <div className="swiz-slide" key="step-3">
-            <section className="frs-panel frs-rise" style={{ '--rise': 1 }}>
-              <h2 className="frs-panel__title">{t('setup.pick_engines')}</h2>
-              <div className="frs-embed">
-                <EnginesTab />
-              </div>
-            </section>
-            <div className="frs-wnav frs-rise" style={{ '--rise': 2 }}>
-              <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(2)}>
-                ← {t('setup.back')}
-              </button>
-              <button
-                type="button"
-                className="frs-btn frs-btn--primary is-armed"
-                onClick={() => setStep(4)}
-              >
-                <span className="frs-btn__led" aria-hidden="true" />
-                {t('setup.next_try_dictation')}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 4. Dictation — guided walkthrough. Skippable (per cross-platform
-            parity rule: some users genuinely don't want dictation). */}
-        {step === 4 && (
-          <div className="swiz-slide" key="step-4">
             <section className="frs-panel frs-rise" style={{ '--rise': 1 }}>
               <h2 className="frs-panel__title">{t('setup.try_dictation')}</h2>
               <div className="frs-embed">
@@ -327,7 +310,7 @@ export default function SetupWizard({ onReady }) {
               </div>
             </section>
             <div className="frs-wnav frs-rise" style={{ '--rise': 2 }}>
-              <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(3)}>
+              <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(2)}>
                 ← {t('setup.back')}
               </button>
               <div className="frs-wnav__group">
