@@ -1651,6 +1651,15 @@
     "installing_title": "インストール中",
     "activity_title": "アクティビティ",
     "stage_setup": "セットアップ",
-    "stage_models": "モデルとエンジン"
+    "stage_models": "モデルとエンジン",
+    "chip_required": "必須",
+    "chip_optional": "任意",
+    "chip_engine": "エンジン",
+    "lib_download": "ダウンロード",
+    "lib_downloading": "ダウンロード中…",
+    "lib_use": "使用",
+    "lib_active": "使用中",
+    "lib_in_settings": "後で設定からインストール",
+    "lib_show_all": "任意モデル {{count}} 件を表示"
   }
 }

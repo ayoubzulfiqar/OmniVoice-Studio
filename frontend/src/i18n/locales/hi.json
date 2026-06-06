@@ -1650,6 +1650,15 @@
     "installing_title": "इंस्टॉल हो रहा है",
     "activity_title": "गतिविधि",
     "stage_setup": "सेटअप",
-    "stage_models": "मॉडल और इंजन"
+    "stage_models": "मॉडल और इंजन",
+    "chip_required": "आवश्यक",
+    "chip_optional": "वैकल्पिक",
+    "chip_engine": "इंजन",
+    "lib_download": "डाउनलोड",
+    "lib_downloading": "डाउनलोड हो रहा है…",
+    "lib_use": "उपयोग करें",
+    "lib_active": "सक्रिय",
+    "lib_in_settings": "बाद में सेटिंग्स में इंस्टॉल करें",
+    "lib_show_all": "{{count}} वैकल्पिक मॉडल दिखाएँ"
   }
 }

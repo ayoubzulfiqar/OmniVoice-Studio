@@ -1650,6 +1650,15 @@
     "installing_title": "جارٍ التثبيت",
     "activity_title": "النشاط",
     "stage_setup": "الإعداد",
-    "stage_models": "النماذج والمحركات"
+    "stage_models": "النماذج والمحركات",
+    "chip_required": "مطلوب",
+    "chip_optional": "اختياري",
+    "chip_engine": "محرك",
+    "lib_download": "تنزيل",
+    "lib_downloading": "جارٍ التنزيل…",
+    "lib_use": "استخدام",
+    "lib_active": "نشط",
+    "lib_in_settings": "ثبّته لاحقًا من الإعدادات",
+    "lib_show_all": "عرض {{count}} نموذجًا اختياريًا"
   }
 }

@@ -1650,6 +1650,15 @@
     "installing_title": "Memasang",
     "activity_title": "Aktivitas",
     "stage_setup": "Penyiapan",
-    "stage_models": "Model & mesin"
+    "stage_models": "Model & mesin",
+    "chip_required": "wajib",
+    "chip_optional": "opsional",
+    "chip_engine": "mesin",
+    "lib_download": "Unduh",
+    "lib_downloading": "mengunduh…",
+    "lib_use": "Pakai",
+    "lib_active": "aktif",
+    "lib_in_settings": "pasang nanti di Pengaturan",
+    "lib_show_all": "Tampilkan {{count}} model opsional"
   }
 }

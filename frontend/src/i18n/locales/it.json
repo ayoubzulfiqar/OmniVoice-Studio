@@ -1650,6 +1650,15 @@
     "installing_title": "Installazione",
     "activity_title": "Attività",
     "stage_setup": "Configurazione",
-    "stage_models": "Modelli e motori"
+    "stage_models": "Modelli e motori",
+    "chip_required": "richiesto",
+    "chip_optional": "opzionale",
+    "chip_engine": "motore",
+    "lib_download": "Scarica",
+    "lib_downloading": "download…",
+    "lib_use": "Usa",
+    "lib_active": "attivo",
+    "lib_in_settings": "installa dopo nelle Impostazioni",
+    "lib_show_all": "Mostra {{count}} modelli opzionali"
   }
 }

@@ -1650,6 +1650,15 @@
     "installing_title": "Kuruluyor",
     "activity_title": "Etkinlik",
     "stage_setup": "Kurulum",
-    "stage_models": "Modeller ve motorlar"
+    "stage_models": "Modeller ve motorlar",
+    "chip_required": "gerekli",
+    "chip_optional": "isteğe bağlı",
+    "chip_engine": "motor",
+    "lib_download": "İndir",
+    "lib_downloading": "indiriliyor…",
+    "lib_use": "Kullan",
+    "lib_active": "etkin",
+    "lib_in_settings": "daha sonra Ayarlar’dan kur",
+    "lib_show_all": "{{count}} isteğe bağlı modeli göster"
   }
 }

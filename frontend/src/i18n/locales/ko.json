@@ -1650,6 +1650,15 @@
     "installing_title": "설치 중",
     "activity_title": "활동",
     "stage_setup": "설정",
-    "stage_models": "모델 및 엔진"
+    "stage_models": "모델 및 엔진",
+    "chip_required": "필수",
+    "chip_optional": "선택",
+    "chip_engine": "엔진",
+    "lib_download": "다운로드",
+    "lib_downloading": "다운로드 중…",
+    "lib_use": "사용",
+    "lib_active": "사용 중",
+    "lib_in_settings": "나중에 설정에서 설치",
+    "lib_show_all": "선택 모델 {{count}}개 표시"
   }
 }

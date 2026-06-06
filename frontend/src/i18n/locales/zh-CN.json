@@ -1650,6 +1650,15 @@
     "installing_title": "正在安装",
     "activity_title": "活动日志",
     "stage_setup": "设置",
-    "stage_models": "模型与引擎"
+    "stage_models": "模型与引擎",
+    "chip_required": "必需",
+    "chip_optional": "可选",
+    "chip_engine": "引擎",
+    "lib_download": "下载",
+    "lib_downloading": "下载中…",
+    "lib_use": "使用",
+    "lib_active": "当前",
+    "lib_in_settings": "稍后在设置中安装",
+    "lib_show_all": "显示 {{count}} 个可选模型"
   }
 }

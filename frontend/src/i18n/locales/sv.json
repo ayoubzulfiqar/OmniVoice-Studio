@@ -1650,6 +1650,15 @@
     "installing_title": "Installerar",
     "activity_title": "Aktivitet",
     "stage_setup": "Installation",
-    "stage_models": "Modeller & motorer"
+    "stage_models": "Modeller & motorer",
+    "chip_required": "krävs",
+    "chip_optional": "valfri",
+    "chip_engine": "motor",
+    "lib_download": "Ladda ner",
+    "lib_downloading": "laddar ner…",
+    "lib_use": "Använd",
+    "lib_active": "aktiv",
+    "lib_in_settings": "installera senare i Inställningar",
+    "lib_show_all": "Visa {{count}} valfria modeller"
   }
 }

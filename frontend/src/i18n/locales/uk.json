@@ -1650,6 +1650,15 @@
     "installing_title": "Встановлення",
     "activity_title": "Журнал",
     "stage_setup": "Налаштування",
-    "stage_models": "Моделі та рушії"
+    "stage_models": "Моделі та рушії",
+    "chip_required": "обов’язково",
+    "chip_optional": "опційно",
+    "chip_engine": "рушій",
+    "lib_download": "Завантажити",
+    "lib_downloading": "завантаження…",
+    "lib_use": "Використати",
+    "lib_active": "активний",
+    "lib_in_settings": "встановити пізніше в налаштуваннях",
+    "lib_show_all": "Показати опційні моделі: {{count}}"
   }
 }

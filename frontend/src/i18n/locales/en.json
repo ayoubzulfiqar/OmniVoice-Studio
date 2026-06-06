@@ -1645,6 +1645,15 @@
     "installing_title": "Installing",
     "activity_title": "Activity",
     "stage_setup": "Setup",
-    "stage_models": "Models & engines"
+    "stage_models": "Models & engines",
+    "chip_required": "required",
+    "chip_optional": "optional",
+    "chip_engine": "engine",
+    "lib_download": "Download",
+    "lib_downloading": "downloading…",
+    "lib_use": "Use",
+    "lib_active": "active",
+    "lib_in_settings": "install later in Settings",
+    "lib_show_all": "Show {{count}} optional models"
   }
 }

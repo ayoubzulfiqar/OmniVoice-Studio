@@ -1650,6 +1650,15 @@
     "installing_title": "Đang cài đặt",
     "activity_title": "Hoạt động",
     "stage_setup": "Thiết lập",
-    "stage_models": "Mô hình & engine"
+    "stage_models": "Mô hình & engine",
+    "chip_required": "bắt buộc",
+    "chip_optional": "tùy chọn",
+    "chip_engine": "engine",
+    "lib_download": "Tải xuống",
+    "lib_downloading": "đang tải…",
+    "lib_use": "Dùng",
+    "lib_active": "đang dùng",
+    "lib_in_settings": "cài sau trong Cài đặt",
+    "lib_show_all": "Hiện {{count}} mô hình tùy chọn"
   }
 }

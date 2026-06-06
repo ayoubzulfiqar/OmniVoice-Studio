@@ -1650,6 +1650,15 @@
     "installing_title": "Установка",
     "activity_title": "Журнал",
     "stage_setup": "Настройка",
-    "stage_models": "Модели и движки"
+    "stage_models": "Модели и движки",
+    "chip_required": "обязательно",
+    "chip_optional": "опционально",
+    "chip_engine": "движок",
+    "lib_download": "Скачать",
+    "lib_downloading": "загрузка…",
+    "lib_use": "Использовать",
+    "lib_active": "активен",
+    "lib_in_settings": "установить позже в настройках",
+    "lib_show_all": "Показать опциональные модели: {{count}}"
   }
 }

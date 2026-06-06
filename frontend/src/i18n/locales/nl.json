@@ -1650,6 +1650,15 @@
     "installing_title": "Installeren",
     "activity_title": "Activiteit",
     "stage_setup": "Installatie",
-    "stage_models": "Modellen & engines"
+    "stage_models": "Modellen & engines",
+    "chip_required": "vereist",
+    "chip_optional": "optioneel",
+    "chip_engine": "engine",
+    "lib_download": "Downloaden",
+    "lib_downloading": "downloaden…",
+    "lib_use": "Gebruik",
+    "lib_active": "actief",
+    "lib_in_settings": "later installeren in Instellingen",
+    "lib_show_all": "Toon {{count}} optionele modellen"
   }
 }

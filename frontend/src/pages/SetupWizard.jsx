@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader } from 'lucide-react';
 import { useSetupStatus, usePreflight } from '../api/hooks';
-import { ModelStoreTab, EnginesTab } from './Settings';
+import WizardLibrary from '../components/WizardLibrary';
 import DictationDemo from '../components/DictationDemo';
 import '../components/FirstRunSetup.css';
 import './SetupWizard.css';
@@ -222,15 +222,15 @@ export default function SetupWizard({ onReady }) {
           </div>
         )}
 
-        {/* 1. Models & engines — one act: models are the required gate,
-            engines the optional extras right beneath. */}
+        {/* 1. Models & engines — ONE unified list: every installable is a
+            row of the same grammar (LED · name · chip · size · action).
+            Required models gate continue; engines and the optional tail
+            ride in the same inventory. */}
         {step === 1 && (
           <div className="swiz-slide" key="step-1">
             <section className="frs-panel frs-rise" style={{ '--rise': 1 }}>
-              <h2 className="frs-panel__title">{t('setup.install_models')}</h2>
-              <div className="frs-embed">
-                <ModelStoreTab info={null} modelBadge={null} />
-              </div>
+              <h2 className="frs-panel__title">{t('firstrun.stage_models', 'Models & engines')}</h2>
+              <WizardLibrary />
               {!modelsReady && status?.missing?.length > 0 && (
                 <p className="swiz-note swiz-note--warn">
                   {t('setup.still_needed')}{' '}
@@ -238,13 +238,7 @@ export default function SetupWizard({ onReady }) {
                 </p>
               )}
             </section>
-            <section className="frs-panel frs-rise" style={{ '--rise': 2 }}>
-              <h2 className="frs-panel__title">{t('setup.pick_engines')}</h2>
-              <div className="frs-embed">
-                <EnginesTab />
-              </div>
-            </section>
-            <div className="frs-wnav frs-rise" style={{ '--rise': 3 }}>
+            <div className="frs-wnav frs-rise" style={{ '--rise': 2 }}>
               <button type="button" className="frs-btn frs-btn--quiet" onClick={() => setStep(0)}>
                 ← {t('setup.back')}
               </button>

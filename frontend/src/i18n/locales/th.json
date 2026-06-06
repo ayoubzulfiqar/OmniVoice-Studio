@@ -1650,6 +1650,15 @@
     "installing_title": "กำลังติดตั้ง",
     "activity_title": "กิจกรรม",
     "stage_setup": "ตั้งค่า",
-    "stage_models": "โมเดลและเอนจิน"
+    "stage_models": "โมเดลและเอนจิน",
+    "chip_required": "จำเป็น",
+    "chip_optional": "ตัวเลือก",
+    "chip_engine": "เอนจิน",
+    "lib_download": "ดาวน์โหลด",
+    "lib_downloading": "กำลังดาวน์โหลด…",
+    "lib_use": "ใช้",
+    "lib_active": "ใช้งานอยู่",
+    "lib_in_settings": "ติดตั้งภายหลังในการตั้งค่า",
+    "lib_show_all": "แสดงโมเดลตัวเลือก {{count}} รายการ"
   }
 }
