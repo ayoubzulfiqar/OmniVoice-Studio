@@ -697,3 +697,240 @@
   .frs__foot-row { flex-direction: column; align-items: stretch; }
   .frs-btn--primary { justify-content: center; }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Shared first-run journey pieces — used by the installing screen
+   (BootstrapSplash) and the model wizard (SetupWizard) so the whole
+   setup → install → models flow speaks one visual language.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Focused acts (installing) read better narrow. */
+.frs__deck--focus { max-width: 760px; }
+
+/* ── LED step rail ─────────────────────────────────────────────────────── */
+
+.frs-steps {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.frs-step {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.78rem;
+  min-width: 0;
+}
+
+.frs-step__led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--frs-ink) 14%, transparent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+  transition: background 200ms ease, box-shadow 200ms ease;
+}
+
+.frs-step.is-done .frs-step__led {
+  background: var(--frs-ok);
+  box-shadow: 0 0 5px 1px color-mix(in srgb, var(--frs-ok) 50%, transparent);
+}
+
+.frs-step.is-active .frs-step__led {
+  background: var(--frs-accent);
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--frs-accent) 70%, transparent);
+  animation: frs-hw-pulse 1.6s ease-in-out infinite;
+}
+
+.frs-step.is-done .frs-step__label { opacity: 0.55; }
+.frs-step.is-active .frs-step__label { font-weight: 650; }
+.frs-step.is-pending { opacity: 0.45; }
+
+.frs-step__bytes {
+  margin-left: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.64rem;
+  opacity: 0.6;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Progress variant of the LED meter — taller, journey-wide. */
+.frs-meter--progress { height: 8px; }
+
+/* ── Live log panel ────────────────────────────────────────────────────── */
+
+.frs-log__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.frs-log__meta {
+  margin-left: auto;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  opacity: 0.8;
+}
+
+.frs-log {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.64rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: color-mix(in srgb, var(--frs-ink) 70%, transparent);
+  background: color-mix(in srgb, var(--frs-bg) 55%, transparent);
+  border-radius: 8px;
+}
+
+/* ── Inline banner (e.g. language suggestion) ──────────────────────────── */
+
+.frs-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.5rem 0.8rem;
+  border-radius: 9px;
+  font-size: 0.76rem;
+  background: color-mix(in srgb, var(--frs-accent) 8%, transparent);
+}
+
+.frs-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.frs-banner__actions--end { justify-content: flex-end; margin-top: 0.3rem; }
+
+/* ── Failure hints ─────────────────────────────────────────────────────── */
+
+.frs-hints { font-size: 0.74rem; line-height: 1.5; }
+
+.frs-hints__label { font-weight: 650; }
+
+.frs-hints ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  opacity: 0.8;
+}
+
+/* ── Wizard chrome (model/engine selection act) ────────────────────────── */
+
+.frs-wsteps {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.frs-wstep {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font: inherit;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: inherit;
+  opacity: 0.45;
+  background: transparent;
+  border: none;
+  padding: 0.25rem 0.1rem;
+  cursor: pointer;
+  transition: opacity 140ms ease;
+}
+
+.frs-wstep:hover { opacity: 0.8; }
+.frs-wstep.is-active { opacity: 1; }
+.frs-wstep.is-done { opacity: 0.7; }
+
+.frs-wstep__led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--frs-ink) 14%, transparent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.frs-wstep.is-active .frs-wstep__led {
+  background: var(--frs-accent);
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--frs-accent) 70%, transparent);
+}
+
+.frs-wstep.is-done .frs-wstep__led {
+  background: var(--frs-ok);
+  box-shadow: 0 0 5px 1px color-mix(in srgb, var(--frs-ok) 50%, transparent);
+}
+
+/* Embedded app panels (Model Store / Engines) keep their own internals;
+   this shell just gives them breathing room inside the act. */
+.frs-embed { min-width: 0; }
+
+.frs-wnav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 0.6rem;
+}
+
+.frs-wnav__group { display: flex; align-items: center; gap: 0.5rem; }
+
+/* Status check rows (preflight) — same row language as storage. */
+.frs-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 9px;
+}
+
+.frs-check:hover { background: color-mix(in srgb, var(--frs-ink) 4%, transparent); }
+
+.frs-check__led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 0.35rem;
+  background: color-mix(in srgb, var(--frs-ink) 14%, transparent);
+}
+
+.frs-check--pass .frs-check__led {
+  background: var(--frs-ok);
+  box-shadow: 0 0 5px 1px color-mix(in srgb, var(--frs-ok) 50%, transparent);
+}
+
+.frs-check--warn .frs-check__led {
+  background: var(--chrome-severity-warn, #d79921);
+  box-shadow: 0 0 5px 1px color-mix(in srgb, var(--chrome-severity-warn, #d79921) 50%, transparent);
+}
+
+.frs-check--fail .frs-check__led {
+  background: var(--frs-err);
+  box-shadow: 0 0 5px 1px color-mix(in srgb, var(--frs-err) 50%, transparent);
+}
+
+.frs-check__body { display: flex; flex-direction: column; gap: 0.12rem; min-width: 0; }
+.frs-check__title { font-size: 0.78rem; font-weight: 620; }
+.frs-check__detail { font-size: 0.7rem; opacity: 0.6; line-height: 1.45; }
+.frs-check__fix { font-size: 0.7rem; line-height: 1.45; }
+.frs-check--fail .frs-check__fix { color: var(--frs-err); }
+.frs-check--warn .frs-check__fix { color: var(--chrome-severity-warn, #d79921); }

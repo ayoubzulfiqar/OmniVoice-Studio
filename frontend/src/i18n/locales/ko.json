@@ -1646,6 +1646,8 @@
     "compute_auto_desc": "실행 시 이 컴퓨터에 가장 적합한 백엔드를 선택합니다. NVIDIA는 CUDA, Apple Silicon은 MPS, 그 외에는 CPU.",
     "compute_rocm_desc": "Linux의 AMD 그래픽 카드용 PyTorch ROCm 휠을 설치합니다. 잘 모르면 자동으로 두세요.",
     "channel_stable_desc": "테스트된 릴리스만 — 커뮤니티 검증 후 업데이트가 도착합니다.",
-    "channel_preview_desc": "최신 main의 롤링 빌드 — 새 엔진과 수정 사항을 가장 먼저 받지만 가끔 거친 부분이 있습니다."
+    "channel_preview_desc": "최신 main의 롤링 빌드 — 새 엔진과 수정 사항을 가장 먼저 받지만 가끔 거친 부분이 있습니다.",
+    "installing_title": "설치 중",
+    "activity_title": "활동"
   }
 }

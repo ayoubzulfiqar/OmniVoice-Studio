@@ -1646,6 +1646,8 @@
     "compute_auto_desc": "Chọn backend tốt nhất của máy này khi chạy — CUDA trên NVIDIA, MPS trên Apple Silicon, còn lại dùng CPU.",
     "compute_rocm_desc": "Cài wheel PyTorch ROCm cho card đồ họa AMD trên Linux. Nếu không chắc, hãy để Tự động.",
     "channel_stable_desc": "Chỉ các bản phát hành đã kiểm thử — cập nhật đến sau khi cộng đồng xác nhận.",
-    "channel_preview_desc": "Bản dựng liên tục từ main mới nhất — engine và bản sửa mới nhất trước tiên, đôi khi còn thô."
+    "channel_preview_desc": "Bản dựng liên tục từ main mới nhất — engine và bản sửa mới nhất trước tiên, đôi khi còn thô.",
+    "installing_title": "Đang cài đặt",
+    "activity_title": "Hoạt động"
   }
 }
