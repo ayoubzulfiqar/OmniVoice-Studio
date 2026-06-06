@@ -307,11 +307,19 @@ export default function FirstRunSetup() {
 
   const blocked = blockers.length > 0;
   const spaceBlocker = blockers.find((b) => b.key === 'space');
+  // The full machine identity — OS/distro · arch · GPU · CPU · RAM — the
+  // exact matrix cell this install is for (and what bug reports cite).
   const hwLine = hw
-    ? [hw.gpu, hw.cpuCores ? `${hw.cpuCores}×CPU` : null, hw.ramGb ? `${hw.ramGb} GB RAM` : null]
-        .filter(Boolean)
-        .join(' · ')
+    ? [
+        [hw.osName, hw.arch].filter(Boolean).join(' '),
+        hw.gpu,
+        hw.cpuCores ? `${hw.cpuCores}×CPU` : null,
+        hw.ramGb ? `${hw.ramGb} GB RAM` : null,
+      ].filter(Boolean).join(' · ')
     : null;
+  // ROCm wheels are Linux-only — never offer a choice that can't work on
+  // this platform (Rust clamps it server-side too).
+  const rocmAvailable = setup.os === 'linux';
 
   return (
     <div className="frs">
@@ -467,16 +475,18 @@ export default function FirstRunSetup() {
                     ? t('firstrun.compute_match', { defaultValue: 'matches this machine' })
                     : null}
                 />
-                <OptionCard
-                  compact
-                  active={plan.torchVariant === 'rocm'}
-                  onSelect={() => set({ torchVariant: 'rocm' })}
-                  name={t('firstrun.compute_rocm', 'AMD GPU (ROCm, Linux)')}
-                  desc={t('firstrun.compute_rocm_desc', 'Installs PyTorch ROCm wheels for AMD graphics cards on Linux. Leave on Auto if unsure.')}
-                  badge={hw?.kind === 'rocm'
-                    ? t('firstrun.compute_match', { defaultValue: 'matches this machine' })
-                    : null}
-                />
+                {rocmAvailable && (
+                  <OptionCard
+                    compact
+                    active={plan.torchVariant === 'rocm'}
+                    onSelect={() => set({ torchVariant: 'rocm' })}
+                    name={t('firstrun.compute_rocm', 'AMD GPU (ROCm, Linux)')}
+                    desc={t('firstrun.compute_rocm_desc', 'Installs PyTorch ROCm wheels for AMD graphics cards on Linux. Leave on Auto if unsure.')}
+                    badge={hw?.kind === 'rocm'
+                      ? t('firstrun.compute_match', { defaultValue: 'matches this machine' })
+                      : null}
+                  />
+                )}
               </div>
             </Panel>
 

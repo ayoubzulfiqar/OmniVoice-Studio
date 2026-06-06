@@ -234,6 +234,11 @@ pub fn is_first_run<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct SetupState {
     pub first_run: bool,
+    /// "linux" | "macos" | "windows" — lets the UI hide platform-specific
+    /// opt-ins (e.g. the Linux-only ROCm torch variant) per the
+    /// cross-platform parity rule: identical defaults everywhere,
+    /// platform-only choices never shown where they can't work.
+    pub os: &'static str,
     pub defaults: SetupDefaults,
     pub portable: PortableSupport,
     pub requirements: Requirements,
@@ -250,8 +255,46 @@ pub struct HardwareInfo {
     pub gpu: Option<String>,
     /// "cuda" | "rocm" | "mps" | "cpu" — which torch path this maps to.
     pub kind: String,
+    /// Human OS name: distro PRETTY_NAME on Linux ("CachyOS", "Ubuntu 24.04"),
+    /// "macOS" / "Windows" elsewhere. The install matrix (OS family × distro
+    /// × arch × GPU vendor) is what users file bug reports with — show it.
+    pub os_name: String,
+    /// "x86_64" | "aarch64" | … — Apple Silicon vs Intel mac, ARM Linux
+    /// (Asahi/Jetson) vs x64 all behave differently for wheels.
+    pub arch: &'static str,
     pub cpu_cores: usize,
     pub ram_gb: f64,
+}
+
+/// Distro-aware OS label. Linux reads /etc/os-release PRETTY_NAME (falls
+/// back to NAME, then "Linux"); macOS/Windows are just themselves.
+fn os_pretty_name() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(body) = fs::read_to_string("/etc/os-release") {
+            for key in ["PRETTY_NAME=", "NAME="] {
+                if let Some(line) = body.lines().find(|l| l.starts_with(key)) {
+                    let v = line[key.len()..].trim().trim_matches('"');
+                    if !v.is_empty() {
+                        return v.to_string();
+                    }
+                }
+            }
+        }
+        "Linux".to_string()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macOS".to_string()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "Windows".to_string()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        std::env::consts::OS.to_string()
+    }
 }
 
 fn detect_hardware() -> HardwareInfo {
@@ -262,22 +305,33 @@ fn detect_hardware() -> HardwareInfo {
         sys.refresh_memory();
         (sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0
     };
+    let os_name = os_pretty_name();
+    let arch = std::env::consts::ARCH;
+    let base = move |gpu: Option<String>, kind: &str| HardwareInfo {
+        gpu,
+        kind: kind.into(),
+        os_name: os_name.clone(),
+        arch,
+        cpu_cores: cores,
+        ram_gb,
+    };
 
     // NVIDIA: nvidia-smi ships with the driver on Linux + Windows.
-    if let Ok(out) = Command::new("nvidia-smi")
-        .args(["--query-gpu=name", "--format=csv,noheader"])
-        .output()
+    let mut smi = Command::new("nvidia-smi");
+    smi.args(["--query-gpu=name", "--format=csv,noheader"]);
+    // Windows: a GUI app spawning a console binary flashes a cmd window —
+    // on the very first screen a user ever sees. CREATE_NO_WINDOW stops it.
+    #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        smi.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    if let Ok(out) = smi.output() {
         if out.status.success() {
             if let Some(name) = String::from_utf8_lossy(&out.stdout).lines().next() {
                 let name = name.trim();
                 if !name.is_empty() {
-                    return HardwareInfo {
-                        gpu: Some(name.to_string()),
-                        kind: "cuda".into(),
-                        cpu_cores: cores,
-                        ram_gb,
-                    };
+                    return base(Some(name.to_string()), "cuda");
                 }
             }
         }
@@ -286,12 +340,7 @@ fn detect_hardware() -> HardwareInfo {
     // Apple Silicon → MPS.
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        return HardwareInfo {
-            gpu: Some("Apple Silicon".into()),
-            kind: "mps".into(),
-            cpu_cores: cores,
-            ram_gb,
-        };
+        return base(Some("Apple Silicon".into()), "mps");
     }
 
     // AMD on Linux: a DRM card with vendor 0x1002 → ROCm candidate. No
@@ -303,19 +352,14 @@ fn detect_hardware() -> HardwareInfo {
                 let vendor = e.path().join("device").join("vendor");
                 if let Ok(v) = fs::read_to_string(&vendor) {
                     if v.trim() == "0x1002" {
-                        return HardwareInfo {
-                            gpu: Some("AMD GPU".into()),
-                            kind: "rocm".into(),
-                            cpu_cores: cores,
-                            ram_gb,
-                        };
+                        return base(Some("AMD GPU".into()), "rocm");
                     }
                 }
             }
         }
     }
 
-    HardwareInfo { gpu: None, kind: "cpu".into(), cpu_cores: cores, ram_gb }
+    base(None, "cpu")
 }
 
 #[derive(Serialize)]
@@ -478,6 +522,7 @@ pub fn get_setup_state(app: tauri::AppHandle) -> SetupState {
 
     SetupState {
         first_run: is_first_run(&app),
+        os: std::env::consts::OS,
         defaults: SetupDefaults {
             install_mode: cfg.install_mode,
             env_dir: env_default.to_string_lossy().into_owned(),
@@ -553,7 +598,13 @@ pub fn complete_setup(
         cfg.update_channel = channel.to_string();
     }
     if let Some(variant) = plan.torch_variant.as_deref().filter(|v| ["auto", "rocm"].contains(v)) {
-        cfg.torch_variant = variant.to_string();
+        // ROCm wheels exist for Linux only — clamp anywhere else so a stray
+        // payload can't configure an install that has no wheels to pull.
+        cfg.torch_variant = if variant == "rocm" && !cfg!(target_os = "linux") {
+            "auto".to_string()
+        } else {
+            variant.to_string()
+        };
     }
     cfg.locale = plan.locale.clone().filter(|l| !l.is_empty());
 
@@ -694,10 +745,14 @@ mod tests {
     }
 
     #[test]
-    fn detect_hardware_never_panics_and_reports_a_known_kind() {
+    fn detect_hardware_never_panics_and_reports_the_full_matrix() {
         let hw = detect_hardware();
         assert!(["cuda", "rocm", "mps", "cpu"].contains(&hw.kind.as_str()), "kind: {}", hw.kind);
         assert!(hw.ram_gb >= 0.0);
+        assert!(!hw.os_name.is_empty(), "os_name must always resolve (distro or OS family)");
+        assert!(!hw.arch.is_empty(), "arch must always resolve");
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(hw.arch, "x86_64");
     }
 
     #[test]
