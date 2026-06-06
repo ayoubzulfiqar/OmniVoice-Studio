@@ -138,11 +138,10 @@ function StorageRow({ label, desc, path, need, check, onPick }) {
   );
 }
 
-/** Rack panel: engraved title strip + corner screws. */
+/** Section: engraved mono title + rule — structure by line, not by box. */
 function Panel({ title, delay, className = '', children }) {
   return (
     <section className={`frs-panel frs-rise ${className}`} style={{ '--rise': delay }}>
-      <span className="frs-panel__screws" aria-hidden="true" />
       <h2 className="frs-panel__title">{title}</h2>
       {children}
     </section>

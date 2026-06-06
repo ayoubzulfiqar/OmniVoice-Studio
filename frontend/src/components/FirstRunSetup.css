@@ -131,17 +131,12 @@
    column — quiet until opened, then the three fields span the full width. */
 .frs__advanced--mast { margin-top: 0.6rem; }
 
-/* Serial plate: engraved model/version badge, pure hardware flavor. */
+/* Serial: quiet engraved model/version text, no badge box. */
 .frs__plate {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.62rem;
   letter-spacing: 0.14em;
-  padding: 0.24rem 0.55rem;
-  border: 1px solid var(--frs-line-strong);
-  border-radius: 4px;
-  opacity: 0.6;
-  background: color-mix(in srgb, var(--frs-bg) 60%, transparent);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  opacity: 0.45;
   font-variant-numeric: tabular-nums;
   user-select: none;
   white-space: nowrap;
@@ -195,48 +190,14 @@
   min-width: 0;
 }
 
-/* ── Rack panels ───────────────────────────────────────────────────────── */
+/* ── Sections: no boxes — an engraved title rule and whitespace carry the
+   structure. Borders appear only where state demands them. ─────────────── */
 
 .frs-panel {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-  padding: 0.95rem 1.1rem 1.1rem;
-  border: 1px solid var(--frs-line);
-  border-top-color: color-mix(in srgb, var(--frs-ink) 16%, transparent);
-  border-radius: 12px;
-  background:
-    linear-gradient(178deg,
-      color-mix(in srgb, var(--frs-ink) 5%, transparent),
-      color-mix(in srgb, var(--frs-ink) 2.5%, transparent));
-  box-shadow:
-    0 22px 44px -26px rgba(0, 0, 0, 0.65),
-    inset 0 1px 0 color-mix(in srgb, var(--frs-ink) 5%, transparent);
-  transition: border-color 160ms ease;
-}
-
-.frs-panel:hover { border-color: var(--frs-line-strong); }
-
-/* Top corner screws from one element + its ::after. */
-.frs-panel__screws,
-.frs-panel__screws::after {
-  position: absolute;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--frs-ink) 22%, transparent);
-  box-shadow: inset 0 -1px 1px rgba(0, 0, 0, 0.7);
-  pointer-events: none;
-}
-
-.frs-panel__screws { top: 8px; left: 8px; right: 8px; }
-
-.frs-panel__screws::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
 }
 
 .frs-panel__title {
@@ -278,26 +239,25 @@
   text-align: left;
   font: inherit;
   color: inherit;
-  background: color-mix(in srgb, var(--frs-ink) 3.5%, transparent);
-  border: 1px solid var(--frs-line);
+  background: color-mix(in srgb, var(--frs-ink) 4%, transparent);
+  border: none;
   border-radius: 9px;
   cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+  transition: background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
 
 .frs-opt--compact { padding-top: 0.6rem; padding-bottom: 0.65rem; }
 
 .frs-opt:hover:not(:disabled) {
-  border-color: var(--frs-line-strong);
+  background: color-mix(in srgb, var(--frs-ink) 7%, transparent);
   transform: translateY(-1px);
 }
 
 .frs-opt.is-active {
-  border-color: color-mix(in srgb, var(--frs-accent) 55%, transparent);
   background:
     linear-gradient(180deg,
-      color-mix(in srgb, var(--frs-accent) 12%, transparent),
-      color-mix(in srgb, var(--frs-accent) 5%, transparent));
+      color-mix(in srgb, var(--frs-accent) 14%, transparent),
+      color-mix(in srgb, var(--frs-accent) 6%, transparent));
   box-shadow: 0 6px 20px -10px color-mix(in srgb, var(--frs-accent) 45%, transparent);
 }
 
@@ -339,8 +299,7 @@
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
   color: color-mix(in srgb, var(--frs-ok) 85%, var(--frs-ink));
-  border: 1px solid color-mix(in srgb, var(--frs-ok) 45%, transparent);
-  background: color-mix(in srgb, var(--frs-ok) 10%, transparent);
+  background: color-mix(in srgb, var(--frs-ok) 14%, transparent);
   white-space: nowrap;
 }
 
@@ -352,10 +311,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.6rem;
-  border: 1px dashed var(--frs-line-strong);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--frs-bg) 45%, transparent);
+  padding: 0.1rem 0.1rem 0.3rem;
   min-width: 0;
 }
 
@@ -399,18 +355,17 @@
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding: 0.65rem 0.8rem;
-  border: 1px solid var(--frs-line);
+  padding: 0.6rem 0.8rem;
   border-radius: 9px;
-  background: color-mix(in srgb, var(--frs-bg) 30%, transparent);
-  transition: border-color 160ms ease;
+  transition: background 160ms ease;
 }
 
-.frs-row:hover { border-color: var(--frs-line-strong); }
+.frs-row:hover { background: color-mix(in srgb, var(--frs-ink) 4%, transparent); }
 
+/* Blocked: a red tint + edge bar — state, not another box. */
 .frs-row--blocked {
-  border-color: color-mix(in srgb, var(--frs-err) 55%, transparent);
-  background: color-mix(in srgb, var(--frs-err) 5%, transparent);
+  background: color-mix(in srgb, var(--frs-err) 6%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--frs-err) 70%, transparent);
 }
 
 .frs-row__text {
@@ -522,20 +477,20 @@
 
 .frs-select,
 .frs-input {
-  background: color-mix(in srgb, var(--frs-ink) 7%, transparent);
-  border: 1px solid var(--frs-line-strong);
+  background: color-mix(in srgb, var(--frs-ink) 8%, transparent);
+  border: none;
   color: inherit;
   color-scheme: dark;
   font: inherit;
   font-size: 0.76rem;
-  padding: 0.4rem 0.55rem;
+  padding: 0.45rem 0.6rem;
   border-radius: 7px;
   min-width: 0;
-  transition: border-color 140ms ease;
+  transition: background 140ms ease;
 }
 
 .frs-select:hover,
-.frs-input:hover { border-color: color-mix(in srgb, var(--frs-ink) 30%, transparent); }
+.frs-input:hover { background: color-mix(in srgb, var(--frs-ink) 12%, transparent); }
 
 .frs-select:focus-visible,
 .frs-input:focus-visible,
@@ -600,8 +555,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
-  border-top: 1px solid var(--frs-line);
-  padding-top: 1rem;
+  padding-top: 0.6rem;
 }
 
 .frs__foot-row {
@@ -633,8 +587,8 @@
   word-break: break-word;
   color: var(--frs-err);
   background: color-mix(in srgb, var(--frs-err) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--frs-err) 30%, transparent);
   border-radius: 8px;
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--frs-err) 70%, transparent);
 }
 
 /* ── Buttons ───────────────────────────────────────────────────────────── */
@@ -693,18 +647,16 @@
 }
 
 .frs-btn--ghost {
-  background: transparent;
-  border-color: var(--frs-line-strong);
+  background: color-mix(in srgb, var(--frs-ink) 7%, transparent);
   color: inherit;
   font-weight: 500;
-  padding: 0.32rem 0.7rem;
+  padding: 0.34rem 0.7rem;
   font-size: 0.68rem;
   flex-shrink: 0;
 }
 
 .frs-btn--ghost:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--frs-ink) 8%, transparent);
-  border-color: color-mix(in srgb, var(--frs-ink) 30%, transparent);
+  background: color-mix(in srgb, var(--frs-ink) 13%, transparent);
 }
 
 /* ── Reduced motion: hold every frame still ────────────────────────────── */
