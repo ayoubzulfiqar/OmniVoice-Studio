@@ -365,6 +365,13 @@ function App() {
   const [setupNeeded, setSetupNeeded] = useState(false);
   const [setupChecked, setSetupChecked] = useState(false);
   useEffect(() => {
+    // Gate the probe on the bootstrap being 'ready' — before that there is
+    // no backend to answer. Probing from mount burned the 30-attempt ceiling
+    // during the setup/installing acts (minutes long on a first run), so the
+    // wizard was silently skipped straight into the studio once the install
+    // finished. Keyed on bootstrapStage: the probe (re)runs the moment the
+    // backend becomes reachable.
+    if (bootstrapStage !== 'ready') return undefined;
     let cancelled = false;
     (async () => {
       const { setupStatus } = await import('./api/setup');
@@ -383,7 +390,7 @@ function App() {
       if (!cancelled) setSetupChecked(true);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [bootstrapStage]);
 
   // ── Tauri auto-updater ──
   // On boot, ask GitHub Releases if a newer build is available. If yes,
