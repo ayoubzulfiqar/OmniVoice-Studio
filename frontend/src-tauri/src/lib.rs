@@ -515,6 +515,14 @@ pub fn run() {
                     set_stage(&stage_handle, BootstrapStage::Ready);
                     return;
                 }
+                // `--setup` re-opens the install-plan screen on demand — it
+                // must win over the attach-to-healthy-backend shortcut, or a
+                // running backend would skip straight past it.
+                if std::env::args().any(|a| a == "--setup") {
+                    log::info!("--setup flag — opening the setup screen");
+                    set_stage(&stage_handle, BootstrapStage::AwaitingSetup);
+                    return;
+                }
                 if backend::backend_healthy(backend_port()) {
                     log::info!(
                         "Port {} already serving OmniVoice backend — attaching",

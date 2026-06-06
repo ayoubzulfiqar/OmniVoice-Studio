@@ -299,7 +299,7 @@ export function BootstrapSplash({ stage, message }) {
       <div className="frs__deck frs__deck--focus">
 
         {/* ── Masthead: same identity as the setup screen ───────────────── */}
-        <header className="frs__mast frs-rise" style={{ '--rise': 0 }}>
+        <header className="frs__mast frs-rise" style={{ '--rise': 0 }} data-tauri-drag-region>
           <Waveform />
           <div className="frs__mast-row">
             <div className="frs__mast-text">
@@ -459,6 +459,7 @@ export function useBootstrapStage(pollMs = 1000) {
 
     let cancelled = false;
     let timer = null;
+    let misses = 0;
     const invoke = async () => {
       try {
         const { invoke: tauriInvoke } = await import('@tauri-apps/api/core');
@@ -475,13 +476,24 @@ export function useBootstrapStage(pollMs = 1000) {
         try {
           const res = await tauriInvoke('bootstrap_status');
           if (cancelled) return;
+          misses = 0;
           // Rust returns { stage: 'ready' } or { stage: 'failed', message: '…' } etc.
           setState({ stage: res.stage || 'ready', message: res.message || null });
           if (res.stage !== 'ready' && res.stage !== 'failed') {
             timer = setTimeout(tick, pollMs);
           }
         } catch {
-          setState({ stage: 'ready', message: null });
+          // A transient IPC hiccup (e.g. the very first poll racing webview
+          // init) must NOT permanently declare 'ready' — that kills the poll
+          // loop and silently skips the awaiting_setup / progress screens.
+          // Retry a few times before conceding.
+          misses += 1;
+          if (cancelled) return;
+          if (misses < 5) {
+            timer = setTimeout(tick, pollMs);
+          } else {
+            setState({ stage: 'ready', message: null });
+          }
         }
       };
       tick();

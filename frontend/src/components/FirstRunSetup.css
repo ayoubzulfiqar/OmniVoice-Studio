@@ -28,7 +28,10 @@
   color: var(--frs-ink);
   font-family: var(--font-sans, 'Inter Variable', system-ui, sans-serif);
   z-index: 9999;
-  padding: 2rem 2.5rem;
+  /* Extra top clearance: the native titlebar (GTK headerbar / macOS
+     traffic lights / Windows controls) overlays the top of the window —
+     content must start below it, never under it. */
+  padding: 3.4rem 2.5rem 2rem;
   overflow-y: auto;
 }
 

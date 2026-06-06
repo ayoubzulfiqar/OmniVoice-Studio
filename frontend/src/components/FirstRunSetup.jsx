@@ -327,7 +327,7 @@ export default function FirstRunSetup() {
       <div className="frs__deck">
 
         {/* ── Masthead: waveform + serif headline + serial plate ────────── */}
-        <header className="frs__mast frs-rise" style={{ '--rise': 0 }}>
+        <header className="frs__mast frs-rise" style={{ '--rise': 0 }} data-tauri-drag-region>
           <Waveform />
           <div className="frs__mast-row">
             <div className="frs__mast-text">
