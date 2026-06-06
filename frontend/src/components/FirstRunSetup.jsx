@@ -1,5 +1,5 @@
 /**
- * First-run install setup screen.
+ * First-run install setup screen — "studio console" treatment.
  *
  * Rendered by BootstrapSplash while the Rust side is parked in the
  * `awaiting_setup` stage — nothing has been downloaded or installed yet.
@@ -9,6 +9,12 @@
  * needs (Rust re-validates on submit — the UI gate is a mirror, not the
  * authority). "Start installation" is the only thing that kicks off the
  * bootstrap.
+ *
+ * Design language: powering on a piece of studio hardware. Serif masthead
+ * (Source Serif 4), engraved mono panel labels (IBM Plex Mono), a breathing
+ * waveform, and disk space rendered as LED capacity meters. All motion is
+ * CSS-only (transform/opacity) and honors prefers-reduced-motion; every
+ * asset is bundled — a first run may be on a restricted network.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -44,34 +50,100 @@ function useTargetCheck(path) {
   return check;
 }
 
-/** One storage location row: label, path, Change… picker, space status. */
-function StorageRow({ label, desc, path, need, check, onPick, disabled }) {
+/** Breathing waveform masthead — bar heights are stable per mount. */
+function Waveform({ bars = 56 }) {
+  const heights = useMemo(
+    () => Array.from({ length: bars }, (_, i) => {
+      // Deterministic pseudo-random silhouette: layered sines read as speech
+      // cadence (syllables + phrase envelope) rather than white noise.
+      const t = i / bars;
+      const v = Math.abs(
+        Math.sin(t * Math.PI * 7.3) * 0.55 +
+        Math.sin(t * Math.PI * 2.1 + 1.2) * 0.3 +
+        Math.sin(t * Math.PI * 17.0 + 0.4) * 0.15
+      );
+      return 0.18 + v * 0.82;
+    }),
+    [bars],
+  );
+  return (
+    <div className="frs-wave" aria-hidden="true">
+      {heights.map((h, i) => (
+        <span
+          key={i}
+          className="frs-wave__bar"
+          style={{ '--h': h, '--d': `${(i * 73) % 1400}ms` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * LED capacity meter: how much of the volume's free space this install
+ * consumes. Lit = consumed by the install, dim = remaining headroom.
+ * Overflows (need > free) clamp to full and switch to the alarm color.
+ */
+function CapacityMeter({ need, free }) {
+  if (free == null) return <div className="frs-meter frs-meter--idle" aria-hidden="true" />;
+  const ratio = free > 0 ? need / free : 1;
+  const pct = Math.min(100, Math.max(3, ratio * 100));
+  return (
+    <div
+      className={`frs-meter ${ratio > 1 ? 'frs-meter--over' : ''}`}
+      role="img"
+      aria-label={`${fmtGB(need)} / ${fmtGB(free)}`}
+    >
+      <span className="frs-meter__fill" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+/** One storage location row: label, path, meter, Change… picker, status. */
+function StorageRow({ label, desc, path, need, check, onPick, delay }) {
   const { t } = useTranslation();
   const lowSpace = check?.freeBytes != null && check.freeBytes < need;
   const notWritable = check && !check.writable;
+  const blocked = lowSpace || notWritable;
   return (
-    <div className={`frs-row ${lowSpace || notWritable ? 'frs-row--blocked' : ''}`}>
+    <div className={`frs-row frs-rise ${blocked ? 'frs-row--blocked' : ''}`} style={{ '--rise': delay }}>
       <div className="frs-row__text">
         <span className="frs-row__label">{label}</span>
         <span className="frs-row__desc">{desc}</span>
         <code className="frs-row__path" title={path}>{path}</code>
       </div>
-      <div className="frs-row__meta">
-        <span className="frs-row__need">{t('firstrun.needs', { size: fmtGB(need), defaultValue: 'needs ~{{size}}' })}</span>
-        <span className={`frs-row__free ${lowSpace ? 'is-low' : ''}`}>
-          {check == null
-            ? t('firstrun.checking', 'checking…')
-            : notWritable
-              ? t('firstrun.not_writable', 'not writable')
-              : t('firstrun.free', { size: fmtGB(check.freeBytes), defaultValue: '{{size}} free' })}
-        </span>
-        {onPick && (
-          <button type="button" className="frs-btn frs-btn--ghost" onClick={onPick} disabled={disabled}>
-            {t('firstrun.change', 'Change…')}
-          </button>
-        )}
+      <div className="frs-row__gauge">
+        <CapacityMeter need={need} free={check?.freeBytes} />
+        <div className="frs-row__readout">
+          <span className="frs-row__need">
+            {t('firstrun.needs', { size: fmtGB(need), defaultValue: 'needs ~{{size}}' })}
+          </span>
+          <span className={`frs-row__free ${lowSpace ? 'is-low' : ''}`}>
+            {check == null
+              ? t('firstrun.checking', 'checking…')
+              : notWritable
+                ? t('firstrun.not_writable', 'not writable')
+                : t('firstrun.free', { size: fmtGB(check.freeBytes), defaultValue: '{{size}} free' })}
+          </span>
+        </div>
       </div>
+      {onPick && (
+        <button type="button" className="frs-btn frs-btn--ghost" onClick={onPick}>
+          {t('firstrun.change', 'Change…')}
+        </button>
+      )}
     </div>
+  );
+}
+
+/** Rack panel: engraved title strip + corner screws. */
+function Panel({ title, delay, children }) {
+  return (
+    <section className="frs-panel frs-rise" style={{ '--rise': delay }}>
+      <span className="frs-panel__screws" aria-hidden="true" />
+      <h2 className="frs-panel__title">{title}</h2>
+      {children}
+    </section>
   );
 }
 
@@ -82,7 +154,6 @@ export default function FirstRunSetup() {
 
   const [setup, setSetup] = useState(null);   // get_setup_state payload
   const [plan, setPlan] = useState(null);     // user's editable choices
-  const [mirrorsOpen, setMirrorsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState(null);
   const mounted = useRef(true);
@@ -194,6 +265,7 @@ export default function FirstRunSetup() {
   if (!setup || !plan) {
     return (
       <div className="frs">
+        <div className="frs__atmo" aria-hidden="true" />
         <div className="frs__card frs__card--loading">
           {serverError
             ? <pre className="frs__error">{serverError}</pre>
@@ -208,31 +280,35 @@ export default function FirstRunSetup() {
 
   return (
     <div className="frs">
+      <div className="frs__atmo" aria-hidden="true" />
       <div className="frs__card">
-        {/* Header: identity + language first so the rest re-renders translated */}
-        <header className="frs__head">
-          <div>
-            <h1 className="frs__title">{t('firstrun.title', 'Set up OmniVoice Studio')}</h1>
-            <p className="frs__subtitle">
-              {t('firstrun.subtitle', 'Nothing is installed yet — review where everything goes, then start. You can change these later in Settings.')}
-            </p>
-          </div>
-          <div className="frs__head-meta">
-            <span className="frs__version">v{APP_VERSION}</span>
-            <select
-              className="frs-select"
-              value={locale}
-              onChange={(e) => { setLocale(e.target.value); i18n.changeLanguage(e.target.value); }}
-              aria-label={t('firstrun.language', 'Language')}
-            >
-              {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-            </select>
+
+        {/* ── Masthead: waveform + serif headline + serial plate ────────── */}
+        <header className="frs__mast frs-rise" style={{ '--rise': 0 }}>
+          <Waveform />
+          <div className="frs__mast-row">
+            <div className="frs__mast-text">
+              <h1 className="frs__title">{t('firstrun.title', 'Set up OmniVoice Studio')}</h1>
+              <p className="frs__subtitle">
+                {t('firstrun.subtitle', 'Nothing is installed yet — review where everything goes, then start. You can change these later in Settings.')}
+              </p>
+            </div>
+            <div className="frs__mast-meta">
+              <span className="frs__plate">OVS&thinsp;·&thinsp;v{APP_VERSION}</span>
+              <select
+                className="frs-select frs-select--lang"
+                value={locale}
+                onChange={(e) => { setLocale(e.target.value); i18n.changeLanguage(e.target.value); }}
+                aria-label={t('firstrun.language', 'Language')}
+              >
+                {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+              </select>
+            </div>
           </div>
         </header>
 
-        {/* Install mode */}
-        <section className="frs__section">
-          <h2 className="frs__section-title">{t('firstrun.mode_title', 'Install mode')}</h2>
+        {/* ── Install mode ──────────────────────────────────────────────── */}
+        <Panel title={t('firstrun.mode_title', 'Install mode')} delay={1}>
           <div className="frs__modes" role="radiogroup">
             <button
               type="button"
@@ -241,6 +317,7 @@ export default function FirstRunSetup() {
               className={`frs-mode ${!portable ? 'is-active' : ''}`}
               onClick={() => set({ installMode: 'installed' })}
             >
+              <span className="frs-mode__led" aria-hidden="true" />
               <span className="frs-mode__name">{t('firstrun.mode_installed', 'Installed')}</span>
               <span className="frs-mode__desc">{t('firstrun.mode_installed_desc', 'Uses standard system folders. Recommended for most users.')}</span>
             </button>
@@ -252,6 +329,7 @@ export default function FirstRunSetup() {
               disabled={!setup.portable.available}
               onClick={() => setup.portable.available && set({ installMode: 'portable' })}
             >
+              <span className="frs-mode__led" aria-hidden="true" />
               <span className="frs-mode__name">{t('firstrun.mode_portable', 'Portable')}</span>
               <span className="frs-mode__desc">
                 {setup.portable.available
@@ -260,11 +338,10 @@ export default function FirstRunSetup() {
               </span>
             </button>
           </div>
-        </section>
+        </Panel>
 
-        {/* Storage + space gate */}
-        <section className="frs__section">
-          <h2 className="frs__section-title">{t('firstrun.storage_title', 'Storage')}</h2>
+        {/* ── Storage + space gate ──────────────────────────────────────── */}
+        <Panel title={t('firstrun.storage_title', 'Storage')} delay={2}>
           {portable ? (
             <StorageRow
               label={t('firstrun.portable_folder', 'Portable folder')}
@@ -272,6 +349,7 @@ export default function FirstRunSetup() {
               path={portableBase}
               need={combinedNeed}
               check={portableCheck}
+              delay={3}
             />
           ) : (
             <>
@@ -282,6 +360,7 @@ export default function FirstRunSetup() {
                 need={req.envBytes}
                 check={envCheck}
                 onPick={() => pickDir('envDir')}
+                delay={3}
               />
               <StorageRow
                 label={t('firstrun.data_dir', 'Voice data & projects')}
@@ -290,6 +369,7 @@ export default function FirstRunSetup() {
                 need={req.dataBytes}
                 check={dataCheck}
                 onPick={() => pickDir('dataDir')}
+                delay={4}
               />
               <StorageRow
                 label={t('firstrun.models_dir', 'Model cache')}
@@ -298,15 +378,15 @@ export default function FirstRunSetup() {
                 need={req.modelsBytes}
                 check={modelsCheck}
                 onPick={() => pickDir('modelsDir')}
+                delay={5}
               />
             </>
           )}
-        </section>
+        </Panel>
 
-        {/* Compute */}
-        <section className="frs__section">
-          <h2 className="frs__section-title">{t('firstrun.compute_title', 'Compute')}</h2>
-          <div className="frs__inline-fields">
+        {/* ── Compute + channel ─────────────────────────────────────────── */}
+        <div className="frs__duo">
+          <Panel title={t('firstrun.compute_title', 'Compute')} delay={6}>
             <label className="frs-field">
               <span>{t('firstrun.compute_label', 'GPU / accelerator')}</span>
               <select
@@ -329,13 +409,9 @@ export default function FirstRunSetup() {
                 <option value="preview">{t('firstrun.channel_preview', 'Preview (latest main)')}</option>
               </select>
             </label>
-          </div>
-        </section>
+          </Panel>
 
-        {/* Network */}
-        <section className="frs__section">
-          <h2 className="frs__section-title">{t('firstrun.network_title', 'Network')}</h2>
-          <div className="frs__inline-fields">
+          <Panel title={t('firstrun.network_title', 'Network')} delay={7}>
             <label className="frs-field">
               <span>{t('firstrun.region_label', 'Download region')}</span>
               <select
@@ -350,36 +426,36 @@ export default function FirstRunSetup() {
                 <option value="restricted">🌍 {t('bootstrap.region_restricted', 'Restricted (mirror)')}</option>
               </select>
             </label>
-          </div>
-          <details className="frs__advanced" open={mirrorsOpen} onToggle={(e) => setMirrorsOpen(e.target.open)}>
-            <summary>{t('firstrun.mirrors_title', 'Custom mirrors (advanced)')}</summary>
-            <div className="frs__mirror-fields">
-              {[
-                ['pypiIndex', t('firstrun.mirror_pypi', 'PyPI index URL'), 'https://mirrors.aliyun.com/pypi/simple/'],
-                ['hfEndpoint', t('firstrun.mirror_hf', 'Hugging Face endpoint'), 'https://hf-mirror.com'],
-                ['pythonDownloads', t('firstrun.mirror_python', 'Python downloads mirror'), 'https://gh-proxy.com/…'],
-              ].map(([field, label, ph]) => (
-                <label key={field} className="frs-field">
-                  <span>{label}</span>
-                  <input
-                    className="frs-input"
-                    type="url"
-                    placeholder={ph}
-                    value={plan.mirrors[field]}
-                    onChange={(e) => set({ mirrors: { ...plan.mirrors, [field]: e.target.value } })}
-                  />
-                </label>
-              ))}
-            </div>
-          </details>
-        </section>
+            <details className="frs__advanced">
+              <summary>{t('firstrun.mirrors_title', 'Custom mirrors (advanced)')}</summary>
+              <div className="frs__mirror-fields">
+                {[
+                  ['pypiIndex', t('firstrun.mirror_pypi', 'PyPI index URL'), 'https://mirrors.aliyun.com/pypi/simple/'],
+                  ['hfEndpoint', t('firstrun.mirror_hf', 'Hugging Face endpoint'), 'https://hf-mirror.com'],
+                  ['pythonDownloads', t('firstrun.mirror_python', 'Python downloads mirror'), 'https://gh-proxy.com/…'],
+                ].map(([field, label, ph]) => (
+                  <label key={field} className="frs-field">
+                    <span>{label}</span>
+                    <input
+                      className="frs-input"
+                      type="url"
+                      placeholder={ph}
+                      value={plan.mirrors[field]}
+                      onChange={(e) => set({ mirrors: { ...plan.mirrors, [field]: e.target.value } })}
+                    />
+                  </label>
+                ))}
+              </div>
+            </details>
+          </Panel>
+        </div>
 
-        {/* Footer: gate + start */}
-        <footer className="frs__foot">
+        {/* ── Footer: gate + arm ────────────────────────────────────────── */}
+        <footer className="frs__foot frs-rise" style={{ '--rise': 8 }}>
           {serverError && <pre className="frs__error">{serverError}</pre>}
           {spaceBlocker && (
             <p className="frs__blocker">
-              ⚠ {t('firstrun.insufficient_space', {
+              {t('firstrun.insufficient_space', {
                 need: fmtGB(spaceBlocker.need),
                 free: fmtGB(spaceBlocker.free),
                 defaultValue: 'Not enough free space: this layout needs ~{{need}} on one disk, only {{free}} available. Pick a different location.',
@@ -388,7 +464,7 @@ export default function FirstRunSetup() {
           )}
           {blockers.some((b) => b.key === 'not_writable') && (
             <p className="frs__blocker">
-              ⚠ {t('firstrun.blocked_not_writable', 'A chosen folder is not writable — pick a different location.')}
+              {t('firstrun.blocked_not_writable', 'A chosen folder is not writable — pick a different location.')}
             </p>
           )}
           <div className="frs__foot-row">
@@ -400,10 +476,11 @@ export default function FirstRunSetup() {
             </span>
             <button
               type="button"
-              className="frs-btn frs-btn--primary"
+              className={`frs-btn frs-btn--primary ${!blocked && !submitting ? 'is-armed' : ''}`}
               disabled={blocked || submitting}
               onClick={start}
             >
+              <span className="frs-btn__led" aria-hidden="true" />
               {submitting
                 ? t('firstrun.starting', 'Starting…')
                 : t('firstrun.start', 'Start installation')}
