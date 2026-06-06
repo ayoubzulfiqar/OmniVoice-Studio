@@ -87,7 +87,6 @@ function Waveform({ bars = 96 }) {
  * Overflows (need > free) clamp to full and switch to the alarm color.
  */
 function CapacityMeter({ need, free }) {
-  if (free == null) return <div className="frs-meter frs-meter--idle" aria-hidden="true" />;
   const ratio = free > 0 ? need / free : 1;
   const pct = Math.min(100, Math.max(3, ratio * 100));
   return (
@@ -101,12 +100,17 @@ function CapacityMeter({ need, free }) {
   );
 }
 
-/** One storage location row: label, path, meter, Change… picker, status. */
+/** One storage location row: label, path, space readout, Change… picker.
+ *  The LED meter only appears when it carries information — the disk is
+ *  getting tight (install would consume >35% of free space) or blocked.
+ *  At 449 GB free vs 9 GB needed a bar is a meaningless sliver; a quiet
+ *  one-line readout is cleaner. */
 function StorageRow({ label, desc, path, need, check, onPick }) {
   const { t } = useTranslation();
   const lowSpace = check?.freeBytes != null && check.freeBytes < need;
   const notWritable = check && !check.writable;
   const blocked = lowSpace || notWritable;
+  const tight = check?.freeBytes != null && need / check.freeBytes > 0.35;
   return (
     <div className={`frs-row ${blocked ? 'frs-row--blocked' : ''}`}>
       <div className="frs-row__text">
@@ -115,22 +119,23 @@ function StorageRow({ label, desc, path, need, check, onPick }) {
         <code className="frs-row__path" title={path}>{path}</code>
       </div>
       <div className="frs-row__gauge">
-        <CapacityMeter need={need} free={check?.freeBytes} />
-        <div className="frs-row__readout">
-          <span className="frs-row__need">
-            {t('firstrun.needs', { size: fmtGB(need), defaultValue: 'needs ~{{size}}' })}
-          </span>
-          <span className={`frs-row__free ${lowSpace ? 'is-low' : ''}`}>
-            {check == null
-              ? t('firstrun.checking', 'checking…')
-              : notWritable
-                ? t('firstrun.not_writable', 'not writable')
-                : t('firstrun.free', { size: fmtGB(check.freeBytes), defaultValue: '{{size}} free' })}
-          </span>
-        </div>
+        {(blocked || tight) && check?.freeBytes != null && (
+          <CapacityMeter need={need} free={check.freeBytes} />
+        )}
+        <span className={`frs-row__readout ${lowSpace ? 'is-low' : ''}`}>
+          {check == null
+            ? t('firstrun.checking', 'checking…')
+            : notWritable
+              ? t('firstrun.not_writable', 'not writable')
+              : <>
+                  {t('firstrun.needs', { size: fmtGB(need), defaultValue: 'needs ~{{size}}' })}
+                  {' · '}
+                  {t('firstrun.free', { size: fmtGB(check.freeBytes), defaultValue: '{{size}} free' })}
+                </>}
+        </span>
       </div>
       {onPick && (
-        <button type="button" className="frs-btn frs-btn--ghost" onClick={onPick}>
+        <button type="button" className="frs-btn frs-btn--quiet" onClick={onPick}>
           {t('firstrun.change', 'Change…')}
         </button>
       )}
@@ -324,52 +329,54 @@ export default function FirstRunSetup() {
               </p>
             </div>
             <div className="frs__mast-meta">
-              <span className="frs__plate">OVS&thinsp;·&thinsp;v{APP_VERSION}</span>
               {/* Language + download region live together: the two "where am
-                  I" choices, settled before anything else. */}
-              <select
-                className="frs-select frs-select--lang"
-                value={locale}
-                onChange={(e) => { setLocale(e.target.value); i18n.changeLanguage(e.target.value); }}
-                aria-label={t('firstrun.language', 'Language')}
-              >
-                {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-              </select>
-              <select
-                className="frs-select frs-select--lang"
-                value={plan.region}
-                onChange={(e) => set({ region: e.target.value })}
-                aria-label={t('firstrun.region_label', 'Download region')}
-              >
-                <option value="auto">🌐 {t('bootstrap.auto_detect', 'Auto-detect')}</option>
-                <option value="global">🌐 {t('bootstrap.region_global', 'Global (direct)')}</option>
-                <option value="china">🇨🇳 {t('bootstrap.region_china', 'China (mirror)')}</option>
-                <option value="russia">🇷🇺 {t('bootstrap.region_russia', 'Russia (mirror)')}</option>
-                <option value="restricted">🌍 {t('bootstrap.region_restricted', 'Restricted (mirror)')}</option>
-              </select>
+                  I" choices, settled before anything else. Custom mirrors
+                  hang quietly beneath them, where they belong. */}
+              <div className="frs__mast-selects">
+                <select
+                  className="frs-select frs-select--lang"
+                  value={locale}
+                  onChange={(e) => { setLocale(e.target.value); i18n.changeLanguage(e.target.value); }}
+                  aria-label={t('firstrun.language', 'Language')}
+                >
+                  {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+                </select>
+                <select
+                  className="frs-select frs-select--lang"
+                  value={plan.region}
+                  onChange={(e) => set({ region: e.target.value })}
+                  aria-label={t('firstrun.region_label', 'Download region')}
+                >
+                  <option value="auto">🌐 {t('bootstrap.auto_detect', 'Auto-detect')}</option>
+                  <option value="global">🌐 {t('bootstrap.region_global', 'Global (direct)')}</option>
+                  <option value="china">🇨🇳 {t('bootstrap.region_china', 'China (mirror)')}</option>
+                  <option value="russia">🇷🇺 {t('bootstrap.region_russia', 'Russia (mirror)')}</option>
+                  <option value="restricted">🌍 {t('bootstrap.region_restricted', 'Restricted (mirror)')}</option>
+                </select>
+              </div>
+              <details className="frs__advanced frs__advanced--mast">
+                <summary>{t('firstrun.mirrors_title', 'Custom mirrors (advanced)')}</summary>
+                <div className="frs__mirror-fields">
+                  {[
+                    ['pypiIndex', t('firstrun.mirror_pypi', 'PyPI index URL'), 'https://mirrors.aliyun.com/pypi/simple/'],
+                    ['hfEndpoint', t('firstrun.mirror_hf', 'Hugging Face endpoint'), 'https://hf-mirror.com'],
+                    ['pythonDownloads', t('firstrun.mirror_python', 'Python downloads mirror'), 'https://gh-proxy.com/…'],
+                  ].map(([field, label, ph]) => (
+                    <label key={field} className="frs-field">
+                      <span>{label}</span>
+                      <input
+                        className="frs-input"
+                        type="url"
+                        placeholder={ph}
+                        value={plan.mirrors[field]}
+                        onChange={(e) => set({ mirrors: { ...plan.mirrors, [field]: e.target.value } })}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </details>
             </div>
           </div>
-          <details className="frs__advanced frs__advanced--mast">
-            <summary>{t('firstrun.mirrors_title', 'Custom mirrors (advanced)')}</summary>
-            <div className="frs__mirror-fields">
-              {[
-                ['pypiIndex', t('firstrun.mirror_pypi', 'PyPI index URL'), 'https://mirrors.aliyun.com/pypi/simple/'],
-                ['hfEndpoint', t('firstrun.mirror_hf', 'Hugging Face endpoint'), 'https://hf-mirror.com'],
-                ['pythonDownloads', t('firstrun.mirror_python', 'Python downloads mirror'), 'https://gh-proxy.com/…'],
-              ].map(([field, label, ph]) => (
-                <label key={field} className="frs-field">
-                  <span>{label}</span>
-                  <input
-                    className="frs-input"
-                    type="url"
-                    placeholder={ph}
-                    value={plan.mirrors[field]}
-                    onChange={(e) => set({ mirrors: { ...plan.mirrors, [field]: e.target.value } })}
-                  />
-                </label>
-              ))}
-            </div>
-          </details>
         </header>
 
         {/* ── Wide deck: storage rail (left) + decision rail (right) ────── */}
@@ -513,6 +520,8 @@ export default function FirstRunSetup() {
           )}
           <div className="frs__foot-row">
             <span className="frs__totals">
+              <span className="frs__plate">OVS&thinsp;·&thinsp;v{APP_VERSION}</span>
+              <span className="frs__totals-sep" aria-hidden="true">—</span>
               {t('firstrun.total_required', {
                 size: fmtGB(combinedNeed),
                 defaultValue: 'Total disk needed: ~{{size}} (one-time download on first use)',

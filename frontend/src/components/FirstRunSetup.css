@@ -120,16 +120,26 @@
 
 .frs__mast-meta {
   display: flex;
-  align-items: center;
-  gap: 0.6rem;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.45rem;
   flex-shrink: 0;
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
-/* Mirrors disclosure tucked under the masthead row, beside the selects'
-   column — quiet until opened, then the three fields span the full width. */
-.frs__advanced--mast { margin-top: 0.6rem; }
+.frs__mast-selects {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Mirrors hang under the region select they extend; the fields open as a
+   right-aligned column so the masthead stays balanced. */
+.frs__advanced--mast { text-align: right; }
+.frs__advanced--mast .frs__mirror-fields {
+  grid-template-columns: 1fr;
+  min-width: 320px;
+  text-align: left;
+}
 
 /* Serial: quiet engraved model/version text, no badge box. */
 .frs__plate {
@@ -144,11 +154,12 @@
 
 /* ── Waveform: a voice, breathing across the full width ────────────────── */
 
+/* Whisper-quiet: a thin breathing trace, not a billboard. */
 .frs-wave {
   display: flex;
   align-items: center;
-  gap: 3px;
-  height: 40px;
+  gap: 4px;
+  height: 22px;
   overflow: hidden;
   mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
@@ -156,22 +167,20 @@
 
 .frs-wave__bar {
   flex: 1 0 auto;
-  width: 3px;
+  width: 2px;
   height: 100%;
-  border-radius: 2px;
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--frs-accent) 85%, var(--frs-ink)),
-    color-mix(in srgb, var(--frs-accent) 45%, transparent));
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--frs-accent) 70%, transparent);
   transform: scaleY(var(--h, 0.4));
   transform-origin: center;
-  opacity: 0.85;
+  opacity: 0.45;
   animation: frs-breathe 2.8s ease-in-out infinite alternate;
   animation-delay: var(--d, 0ms);
 }
 
 @keyframes frs-breathe {
-  from { transform: scaleY(calc(var(--h, 0.4) * 0.55)); opacity: 0.45; }
-  to   { transform: scaleY(var(--h, 0.4)); opacity: 0.9; }
+  from { transform: scaleY(calc(var(--h, 0.4) * 0.55)); opacity: 0.22; }
+  to   { transform: scaleY(var(--h, 0.4)); opacity: 0.5; }
 }
 
 /* ── Wide grid: storage rail (left, 7fr) + decision rail (right, 5fr) ──── */
@@ -395,33 +404,28 @@
 .frs-row__gauge {
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 0.3rem;
-  width: 190px;
+  min-width: 170px;
   flex-shrink: 0;
 }
 
+.frs-row__gauge .frs-meter { width: 100%; }
+
+/* One quiet line: "needs ~9 GB · 449 GB free". */
 .frs-row__readout {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.64rem;
+  opacity: 0.55;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
-.frs-row__need {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.6rem;
-  opacity: 0.5;
-  white-space: nowrap;
+.frs-row__readout.is-low {
+  color: var(--frs-err);
+  opacity: 1;
+  font-weight: 700;
 }
-
-.frs-row__free {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.62rem;
-  white-space: nowrap;
-  color: var(--frs-ok);
-}
-
-.frs-row__free.is-low { color: var(--frs-err); font-weight: 700; }
 
 /* The meter: segmented LEDs. Lit = consumed by the install, dim = headroom. */
 .frs-meter {
@@ -454,8 +458,6 @@
 @keyframes frs-alarm {
   to { opacity: 0.45; }
 }
-
-.frs-meter--idle { opacity: 0.4; }
 
 /* ── Fields ────────────────────────────────────────────────────────────── */
 
@@ -566,10 +568,15 @@
 }
 
 .frs__totals {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
   font-size: 0.72rem;
   opacity: 0.55;
   font-variant-numeric: tabular-nums;
 }
+
+.frs__totals-sep { opacity: 0.5; }
 
 .frs__blocker {
   margin: 0;
@@ -646,17 +653,20 @@
   50%      { box-shadow: 0 0 22px 2px color-mix(in srgb, var(--frs-accent) 30%, transparent); }
 }
 
-.frs-btn--ghost {
-  background: color-mix(in srgb, var(--frs-ink) 7%, transparent);
+/* Quiet picker: reads as a text action until pointed at. */
+.frs-btn--quiet {
+  background: transparent;
   color: inherit;
+  opacity: 0.5;
   font-weight: 500;
-  padding: 0.34rem 0.7rem;
+  padding: 0.34rem 0.6rem;
   font-size: 0.68rem;
   flex-shrink: 0;
 }
 
-.frs-btn--ghost:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--frs-ink) 13%, transparent);
+.frs-btn--quiet:hover:not(:disabled) {
+  opacity: 1;
+  background: color-mix(in srgb, var(--frs-ink) 9%, transparent);
 }
 
 /* ── Reduced motion: hold every frame still ────────────────────────────── */
