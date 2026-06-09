@@ -328,6 +328,7 @@ export default function FirstRunSetup() {
     <div className="frs">
       <div className="frs__atmo" aria-hidden="true" />
       <div className="frs__deck">
+        <div className="frs__scroll">
 
         {/* ── Masthead: waveform + serif headline + serial plate ────────── */}
         <header className="frs__mast frs-rise" style={{ '--rise': 0 }} data-tauri-drag-region>
@@ -527,6 +528,7 @@ export default function FirstRunSetup() {
               </div>
             </Panel>
           </div>
+        </div>
         </div>
 
         {/* ── Footer: gate + arm ────────────────────────────────────────── */}
