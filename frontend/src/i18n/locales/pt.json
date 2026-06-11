@@ -337,7 +337,17 @@
     "channel_stable": "Estável",
     "channel_preview": "Prévia",
     "channel_set": "Canal de atualização definido como {{channel}}",
-    "channel_preview_hint": "A prévia acompanha a compilação mais recente da main — recursos mais novos, menos testados. Volta para a estável se uma versão estável estiver à frente."
+    "channel_preview_hint": "A prévia acompanha a compilação mais recente da main — recursos mais novos, menos testados. Volta para a estável se uma versão estável estiver à frente.",
+    "self_check": "Run self-check",
+    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Warning",
+    "self_check_fail": "Failed",
+    "self_check_healthy": "All checks passed — this install looks healthy.",
+    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
+    "save_bundle": "Save diagnostic bundle",
+    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
+    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
   },
   "privacy": {
     "desc": "Tudo roda em <1>esta máquina</1>. Seu áudio, vídeo e transcrições nunca saem do seu computador, a menos que você use explicitamente um tradutor online (Google, DeepL, etc.) ou envie para o HuggingFace.",
@@ -654,7 +664,10 @@
     "diagnostic_copied": "Diagnóstico copiado",
     "copy_failed": "Falha na cópia",
     "open_docs": "Abrir documentos",
-    "copy_diagnostic": "Copiar diagnóstico"
+    "copy_diagnostic": "Copiar diagnóstico",
+    "num_speakers_label": "Speakers",
+    "num_speakers_auto": "Auto",
+    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
   },
   "glossary": {
     "title": "Glossário",
@@ -977,7 +990,7 @@
     "back": "De volta ao estúdio",
     "badge": "Licença Comercial",
     "hero_title": "Envie vozes de IA em produção",
-    "hero_desc": "OmniVoice Studio está disponível sob a Licença de Fonte Funcional (FSL). A maioria dos usuários pode avaliar, criar protótipos e até implantar internamente sem um acordo comercial. Você só precisa de uma licença comercial se estiver construindo um produto ou serviço concorrente ou se seu caso de uso estiver fora dos limites do FSL.",
+    "hero_desc": "O OmniVoice Studio é um software livre e de código aberto sob a GNU Affero General Public License v3 (AGPL-3.0) — gratuito para qualquer uso, incluindo uso comercial e empresarial interno. Uma licença comercial só é necessária se você quiser incorporar o OmniVoice Studio em um produto ou serviço proprietário ou de código fechado sem as obrigações copyleft da AGPL-3.0.",
     "why_title": "Por que as empresas escolhem OmniVoice",
     "pricing_title": "Preços",
     "faq_title": "Perguntas comuns",
@@ -998,7 +1011,7 @@
     "benefit_source_desc": "Visibilidade total da pilha. Audite, bifurque e adapte-se aos termos da licença.",
     "benefit_lang": "646 idiomas",
     "benefit_lang_desc": "Transcreva, traduza e duble em 646 idiomas com qualidade de nível humano.",
-    "hero_note": "O uso interno – mesmo em grande escala – é gratuito sob o FSL; uma licença comercial só é necessária para oferecer o OmniVoice a terceiros como um produto ou serviço concorrente (uma API hospedada ou paga por uso, um aplicativo revendido ou com etiqueta branca). Os níveis de preços estarão disponíveis em breve. Entre em contato enquanto isso."
+    "hero_note": "Uso, auto-hospedagem e uso comercial são gratuitos sob a AGPL-3.0 — inclusive em grande escala. A AGPL é uma licença copyleft de rede: se você modificar o OmniVoice e oferecer essa versão modificada a terceiros pela rede, deverá compartilhar seu código-fonte modificado sob os mesmos termos. Uma licença comercial remove essas obrigações copyleft para implantações proprietárias de código fechado. Os planos de preços chegam em breve — entre em contato enquanto isso."
   },
   "exportModal": {
     "export": "Exportar",
@@ -1097,7 +1110,8 @@
     "script_french": "Não Inglês (Francês)",
     "aria_pause": "Pausa {{label}}",
     "aria_hear": "Ouça {{label}}",
-    "aria_replay": "Reproduzir {{label}} através do transcritor"
+    "aria_replay": "Reproduzir {{label}} através do transcritor",
+    "dictation_lede_hotkey_only": "Segure o atalho acima em qualquer lugar da área de trabalho, fale e solte — o texto cai no app em foco. Pressione agora para verificar."
   },
   "direction": {
     "title": "Direção para o segmento #{{id}}",
@@ -1122,7 +1136,10 @@
     "title": "Esta guia encontrou um obstáculo.",
     "desc": "Não se preocupe – o resto do aplicativo ainda funciona. Você pode alternar as guias ou tentar novamente abaixo.",
     "tryAgain": "Tente novamente",
-    "openDocs": "Abra documentos para este erro"
+    "openDocs": "Abra documentos para este erro",
+    "report": "Report this bug",
+    "searchIssues": "Search similar issues",
+    "unexpected": "Unexpected error: {{message}}"
   },
   "keyboard": {
     "title": "Atalhos de teclado",
@@ -1411,13 +1428,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Preciso de uma licença para ferramentas internas?",
-    "a_internal_tools": "O uso interno por seus funcionários e contratados é uma Finalidade Permitida pela FSL — não é necessária licença. Uma licença comercial é necessária quando você disponibiliza o OmniVoice para terceiros como parte de um produto ou serviço concorrente (revenda, SaaS hospedado, marca branca).",
+    "a_internal_tools": "Não. O uso por seus funcionários e contratados — incluindo modificação e auto-hospedagem internas — é gratuito sob a AGPL-3.0. Uma licença comercial só é necessária se você incorporar o OmniVoice em um produto ou serviço proprietário ou de código fechado e não quiser cumprir as obrigações de compartilhamento de código-fonte da AGPL.",
     "q_try_before": "Posso tentar antes de me comprometer?",
-    "a_try_before": "Sim. O aplicativo completo pode ser baixado gratuitamente e executado localmente para avaliação no FSL. Quando você estiver pronto para discutir uma implantação comercial, envie-nos um e-mail e trabalharemos juntos nos detalhes.",
+    "a_try_before": "Sim. O aplicativo completo é gratuito para baixar, executar e auto-hospedar sob a AGPL-3.0 — nenhum acordo necessário. Quando quiser discutir uma licença comercial (uso proprietário), envie um e-mail e resolveremos os detalhes juntos.",
     "q_watermark": "E a marca d’água?",
-    "a_watermark": "A marca d’água invisível AudioSeal é incorporada por padrão. Licenciados comerciais podem desativá-lo em Configurações → Privacidade. O uso gratuito/pessoal sempre inclui a marca d'água.",
-    "q_apache": "A fonte alguma vez se torna Apache 2.0?",
-    "a_apache": "Sim. Cada versão é convertida automaticamente para a Licença Apache, Versão 2.0, no segundo aniversário de sua publicação. Isso significa que o lançamento de hoje será o Apache 2.0 em dois anos, nenhuma ação será necessária de nossa parte — a FSL garante isso de forma irrevogável."
+    "a_watermark": "A marca d'água invisível AudioSeal é incorporada por padrão para todos. Licenciados comerciais podem desativá-la em Configurações → Privacidade."
   },
   "gallery_extra": {
     "save_prompt": "Digite um nome para este perfil de voz:",
@@ -1659,6 +1674,17 @@
     "lib_use": "Usar",
     "lib_active": "ativo",
     "lib_in_settings": "instalar depois em Configurações",
-    "lib_show_all": "Mostrar {{count}} modelos opcionais"
+    "lib_show_all": "Mostrar {{count}} modelos opcionais",
+    "trust_line": "Tudo roda e permanece nesta máquina — sem conta, sem nuvem, sem telemetria.",
+    "resume_note": "Downloads interrompidos retomam sozinhos — fechar o app é seguro.",
+    "eta_left": "faltam ~{{eta}}",
+    "first_sound_text": "Bem-vindo ao seu estúdio. Cada palavra que você ouve foi gerada nesta máquina, agora mesmo.",
+    "first_sound_done": "Essa voz? Gerada há segundos, localmente. Bem-vindo.",
+    "hf_token_title": "Token do Hugging Face (opcional)",
+    "hf_token_hint": "Desbloqueia modelos restritos — ex.: diarização de falantes para dublagem multivoz (pyannote). Token de conta gratuita; fica nesta máquina.",
+    "hf_token_save": "Salvar",
+    "hf_token_saving": "salvando…",
+    "hf_token_saved": "Token do Hugging Face salvo",
+    "hf_token_error": "Não foi possível salvar o token — tente de novo ou configure depois em Configurações → Credenciais."
   }
 }

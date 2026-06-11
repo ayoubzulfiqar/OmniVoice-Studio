@@ -3,7 +3,7 @@ name = "omnivoice-studio"
 version = "0.3.5"
 description = "OmniVoice Studio – AI voice cloning & dubbing desktop app"
 authors = ["Debpalash"]
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
@@ -51,6 +51,10 @@ walkdir = "2"
 fs4 = "0.13"
 # Cross-platform home/config directories for pill autostart registration
 dirs-next = "2"
+# Native (OS-side) clipboard write for dictation auto-paste: the widget window
+# is unfocused on macOS so the simulated ⌘V reaches the target app, which makes
+# the WebView clipboard APIs fail silently there (#287)
+arboard = "3"
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "2", default-features = false, features = ["deflate"] }

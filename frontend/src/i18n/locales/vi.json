@@ -337,7 +337,17 @@
     "channel_stable": "Ổn định",
     "channel_preview": "Xem trước",
     "channel_set": "Đã đặt kênh cập nhật thành {{channel}}",
-    "channel_preview_hint": "Bản xem trước theo dõi bản dựng main mới nhất — tính năng mới hơn, ít được kiểm thử hơn. Quay lại bản ổn định nếu có bản phát hành ổn định mới hơn."
+    "channel_preview_hint": "Bản xem trước theo dõi bản dựng main mới nhất — tính năng mới hơn, ít được kiểm thử hơn. Quay lại bản ổn định nếu có bản phát hành ổn định mới hơn.",
+    "self_check": "Run self-check",
+    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Warning",
+    "self_check_fail": "Failed",
+    "self_check_healthy": "All checks passed — this install looks healthy.",
+    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
+    "save_bundle": "Save diagnostic bundle",
+    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
+    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
   },
   "privacy": {
     "desc": "Mọi thứ đều chạy trên <1>máy này</1>. Âm thanh, video và bản ghi của bạn không bao giờ rời khỏi máy tính của bạn trừ khi bạn sử dụng một cách rõ ràng một trình dịch trực tuyến (Google, DeepL, v.v.) hoặc đẩy tới HuggingFace.",
@@ -654,7 +664,10 @@
     "diagnostic_copied": "Đã sao chép chẩn đoán",
     "copy_failed": "Sao chép không thành công",
     "open_docs": "Mở tài liệu",
-    "copy_diagnostic": "Sao chép chẩn đoán"
+    "copy_diagnostic": "Sao chép chẩn đoán",
+    "num_speakers_label": "Speakers",
+    "num_speakers_auto": "Auto",
+    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
   },
   "glossary": {
     "title": "Thuật ngữ",
@@ -977,7 +990,7 @@
     "back": "Quay lại Studio",
     "badge": "Giấy phép thương mại",
     "hero_title": "Vận chuyển giọng nói AI trong quá trình sản xuất",
-    "hero_desc": "OmniVoice Studio có sẵn nguồn theo Giấy phép Nguồn Chức năng (FSL). Hầu hết người dùng có thể đánh giá, tạo nguyên mẫu và thậm chí triển khai nội bộ mà không cần thỏa thuận thương mại. Bạn chỉ cần giấy phép thương mại nếu bạn đang xây dựng một sản phẩm hoặc dịch vụ cạnh tranh hoặc nếu trường hợp sử dụng của bạn nằm ngoài ranh giới của FSL.",
+    "hero_desc": "OmniVoice Studio là phần mềm tự do, mã nguồn mở theo giấy phép GNU Affero General Public License v3 (AGPL-3.0) — miễn phí sử dụng, bao gồm cả mục đích thương mại và sử dụng nội bộ doanh nghiệp. Bạn chỉ cần giấy phép thương mại nếu muốn nhúng OmniVoice Studio vào sản phẩm hoặc dịch vụ mã nguồn đóng hay độc quyền mà không chịu các nghĩa vụ copyleft của AGPL-3.0.",
     "why_title": "Tại sao doanh nghiệp chọn OmniVoice",
     "pricing_title": "Định giá",
     "faq_title": "Câu hỏi thường gặp",
@@ -998,7 +1011,7 @@
     "benefit_source_desc": "Hiển thị đầy đủ vào ngăn xếp. Kiểm tra, phân nhánh và điều chỉnh theo các điều khoản cấp phép.",
     "benefit_lang": "646 ngôn ngữ",
     "benefit_lang_desc": "Phiên âm, dịch và lồng tiếng trên 646 ngôn ngữ với chất lượng ngang tầm con người.",
-    "hero_note": "Việc sử dụng nội bộ — ngay cả ở quy mô lớn — đều miễn phí theo FSL; giấy phép thương mại chỉ được yêu cầu để cung cấp OmniVoice cho người khác dưới dạng sản phẩm hoặc dịch vụ cạnh tranh (API được lưu trữ hoặc trả tiền cho mỗi lần sử dụng, ứng dụng được bán lại hoặc được gắn nhãn trắng). Sắp có mức giá - hãy liên hệ trong thời gian chờ đợi."
+    "hero_note": "Sử dụng, tự lưu trữ và dùng cho mục đích thương mại đều miễn phí theo AGPL-3.0 — kể cả ở quy mô lớn. AGPL là giấy phép copyleft qua mạng: nếu bạn chỉnh sửa OmniVoice và cung cấp phiên bản chỉnh sửa đó cho người khác qua mạng, bạn phải chia sẻ mã nguồn đã chỉnh sửa theo cùng điều khoản. Giấy phép thương mại sẽ gỡ bỏ các nghĩa vụ copyleft này cho các triển khai độc quyền, mã nguồn đóng. Các gói giá sẽ sớm ra mắt — trong lúc đó hãy liên hệ với chúng tôi."
   },
   "exportModal": {
     "export": "Xuất khẩu",
@@ -1097,7 +1110,8 @@
     "script_french": "Không phải tiếng Anh (tiếng Pháp)",
     "aria_pause": "Tạm dừng {{label}}",
     "aria_hear": "Nghe _V_0__",
-    "aria_replay": "Phát lại {{label}} thông qua người ghi âm"
+    "aria_replay": "Phát lại {{label}} thông qua người ghi âm",
+    "dictation_lede_hotkey_only": "Giữ phím tắt ở trên tại bất kỳ đâu trên màn hình, nói rồi thả — văn bản sẽ vào ứng dụng đang được chọn. Nhấn ngay để kiểm tra."
   },
   "direction": {
     "title": "Hướng cho đoạn #{{id}}",
@@ -1122,7 +1136,10 @@
     "title": "Tab này gặp trở ngại.",
     "desc": "Đừng lo lắng — phần còn lại của ứng dụng vẫn hoạt động. Bạn có thể chuyển đổi tab hoặc thử lại bên dưới.",
     "tryAgain": "Thử lại",
-    "openDocs": "Mở tài liệu cho lỗi này"
+    "openDocs": "Mở tài liệu cho lỗi này",
+    "report": "Report this bug",
+    "searchIssues": "Search similar issues",
+    "unexpected": "Unexpected error: {{message}}"
   },
   "keyboard": {
     "title": "Phím tắt",
@@ -1411,13 +1428,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Tôi có cần giấy phép cho các công cụ nội bộ không?",
-    "a_internal_tools": "Việc sử dụng nội bộ của nhân viên và nhà thầu của bạn là Mục đích được phép theo FSL — không cần giấy phép. Cần có giấy phép thương mại khi bạn cung cấp OmniVoice cho người khác như một phần của sản phẩm hoặc dịch vụ cạnh tranh (bán lại, SaaS được lưu trữ, nhãn trắng).",
+    "a_internal_tools": "Không. Việc sử dụng bởi nhân viên và nhà thầu của bạn — bao gồm chỉnh sửa và tự lưu trữ nội bộ — là miễn phí theo AGPL-3.0. Giấy phép thương mại chỉ cần thiết nếu bạn nhúng OmniVoice vào sản phẩm hoặc dịch vụ mã nguồn đóng hay độc quyền và không muốn tuân thủ nghĩa vụ chia sẻ mã nguồn của AGPL.",
     "q_try_before": "Tôi có thể thử trước khi cam kết không?",
-    "a_try_before": "Vâng. Ứng dụng đầy đủ được tải xuống và chạy cục bộ miễn phí để đánh giá theo FSL. Khi bạn sẵn sàng thảo luận về việc triển khai thương mại, hãy gửi email cho chúng tôi và chúng ta sẽ cùng nhau giải quyết các chi tiết.",
+    "a_try_before": "Có. Toàn bộ ứng dụng có thể tải xuống, chạy và tự lưu trữ miễn phí theo AGPL-3.0 — không cần bất kỳ thỏa thuận nào. Khi bạn sẵn sàng trao đổi về giấy phép thương mại (sử dụng độc quyền), hãy gửi email cho chúng tôi và chúng ta sẽ cùng thống nhất chi tiết.",
     "q_watermark": "Còn hình mờ thì sao?",
-    "a_watermark": "Hình mờ AudioSeal vô hình được nhúng theo mặc định. Người được cấp phép thương mại có thể tắt nó trong Cài đặt → Quyền riêng tư. Sử dụng miễn phí/cá nhân luôn bao gồm hình mờ.",
-    "q_apache": "Nguồn có bao giờ trở thành Apache 2.0 không?",
-    "a_apache": "Vâng. Mỗi bản phát hành sẽ tự động chuyển đổi sang Giấy phép Apache, Phiên bản 2.0 vào ngày kỷ niệm thứ hai ngày xuất bản. Điều đó có nghĩa là bản phát hành hôm nay là Apache 2.0 sau hai năm nữa, chúng tôi không cần thực hiện hành động nào — FSL đảm bảo điều đó không thể hủy bỏ."
+    "a_watermark": "Hình mờ AudioSeal vô hình được nhúng theo mặc định cho tất cả mọi người. Người được cấp phép thương mại có thể tắt nó trong Cài đặt → Quyền riêng tư."
   },
   "gallery_extra": {
     "save_prompt": "Nhập tên cho cấu hình giọng nói này:",
@@ -1659,6 +1674,17 @@
     "lib_use": "Dùng",
     "lib_active": "đang dùng",
     "lib_in_settings": "cài sau trong Cài đặt",
-    "lib_show_all": "Hiện {{count}} mô hình tùy chọn"
+    "lib_show_all": "Hiện {{count}} mô hình tùy chọn",
+    "trust_line": "Mọi thứ chạy và lưu trên máy này — không tài khoản, không đám mây, không telemetry.",
+    "resume_note": "Tải xuống bị gián đoạn sẽ tự tiếp tục — đóng ứng dụng vẫn an toàn.",
+    "eta_left": "còn ~{{eta}}",
+    "first_sound_text": "Chào mừng đến với studio của bạn. Mỗi từ bạn đang nghe vừa được tạo trên chính máy này.",
+    "first_sound_done": "Giọng nói đó? Vừa được tạo vài giây trước, ngay trên máy. Chào mừng.",
+    "hf_token_title": "Token Hugging Face (tùy chọn)",
+    "hf_token_hint": "Mở khóa các mô hình bị giới hạn — ví dụ tách người nói cho lồng tiếng nhiều giọng (pyannote). Token tài khoản miễn phí; chỉ lưu trên máy này.",
+    "hf_token_save": "Lưu",
+    "hf_token_saving": "đang lưu…",
+    "hf_token_saved": "Đã lưu token Hugging Face",
+    "hf_token_error": "Không thể lưu token — thử lại hoặc đặt sau trong Cài đặt → Thông tin xác thực."
   }
 }

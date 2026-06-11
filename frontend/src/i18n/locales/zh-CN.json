@@ -307,7 +307,17 @@
     "channel_stable": "稳定版",
     "channel_preview": "预览版",
     "channel_set": "更新通道已设置为 {{channel}}",
-    "channel_preview_hint": "预览版跟踪最新的 main 构建——功能更新，但测试较少。若稳定版更新，则回退到稳定版。"
+    "channel_preview_hint": "预览版跟踪最新的 main 构建——功能更新，但测试较少。若稳定版更新，则回退到稳定版。",
+    "self_check": "Run self-check",
+    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Warning",
+    "self_check_fail": "Failed",
+    "self_check_healthy": "All checks passed — this install looks healthy.",
+    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
+    "save_bundle": "Save diagnostic bundle",
+    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
+    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
   },
   "privacy": {
     "desc": "所有数据都在<1>本机</1>运行。您的音频、视频和转录内容不会离开您的电脑，除非您显式使用在线翻译器（Google、DeepL 等）或推送到 HuggingFace。",
@@ -624,7 +634,10 @@
     "diagnostic_copied": "诊断复制",
     "copy_failed": "复制失败",
     "open_docs": "打开文档",
-    "copy_diagnostic": "复制诊断"
+    "copy_diagnostic": "复制诊断",
+    "num_speakers_label": "Speakers",
+    "num_speakers_auto": "Auto",
+    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
   },
   "glossary": {
     "title": "术语表",
@@ -947,7 +960,7 @@
     "back": "返回工作室",
     "badge": "商业许可",
     "hero_title": "在生产环境中部署 AI 语音",
-    "hero_desc": "OmniVoice Studio 采用功能性源代码许可（FSL）。大多数用户可以在无需商业协议的情况下评估、原型开发甚至内部部署。只有在构建竞争产品或服务，或您的使用场景超出 FSL 范围时，才需要商业许可。",
+    "hero_desc": "OmniVoice Studio 是基于 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）的自由开源软件——可免费使用，包括商业用途和企业内部用途。只有当您希望在不承担 AGPL-3.0 著佐权（copyleft）义务的情况下，将 OmniVoice Studio 嵌入闭源或专有产品/服务时，才需要商业许可证。",
     "why_title": "为什么企业选择 OmniVoice",
     "pricing_title": "定价",
     "faq_title": "常见问题",
@@ -968,7 +981,7 @@
     "benefit_source_desc": "完全可见的技术栈。在许可条款内审计、分叉和适配。",
     "benefit_lang": "646 种语言",
     "benefit_lang_desc": "以人类级质量转录、翻译和配音 646 种语言。",
-    "hero_note": "根据 FSL，内部使用（即使是大规模使用）也是免费的；仅需要商业许可证才能将 OmniVoice 作为竞争产品或服务（托管或按使用付费的 API、转售或白标应用程序）提供给其他人。定价等级即将推出 - 请同时联系我们。"
+    "hero_note": "使用、自托管和商业用途在 AGPL-3.0 下均免费——包括大规模使用。AGPL 是网络著佐权许可证：如果您修改 OmniVoice 并通过网络向他人提供该修改版本，则必须以相同条款公开您修改后的源代码。商业许可证可为专有闭源部署免除这些著佐权义务。定价方案即将推出——在此期间欢迎与我们联系。"
   },
   "exportModal": {
     "export": "导出",
@@ -1067,7 +1080,8 @@
     "script_french": "非英语（法语）",
     "aria_pause": "暂停{{label}}",
     "aria_hear": "听到{{label}}",
-    "aria_replay": "通过转录器重播 {{label}}"
+    "aria_replay": "通过转录器重播 {{label}}",
+    "dictation_lede_hotkey_only": "在桌面任意位置按住上方快捷键说话，松开后文字会输入到当前聚焦的应用中。现在按一下即可验证是否生效。"
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -1122,7 +1136,10 @@
     "title": "这个选项卡遇到了障碍。",
     "desc": "别担心——应用程序的其余部分仍然有效。您可以切换选项卡，或在下面重试。",
     "tryAgain": "再试一次",
-    "openDocs": "打开此错误的文档"
+    "openDocs": "打开此错误的文档",
+    "report": "Report this bug",
+    "searchIssues": "Search similar issues",
+    "unexpected": "Unexpected error: {{message}}"
   },
   "keyboard": {
     "title": "键盘快捷键",
@@ -1411,13 +1428,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "我需要内部工具的许可证吗？",
-    "a_internal_tools": "您的员工和承包商的内部使用是 FSL 允许的目的 — 无需许可。当您将 OmniVoice 作为竞争产品或服务（转售、托管 SaaS、白标）的一部分提供给其他人时，需要商业许可证。",
+    "a_internal_tools": "不需要。您的员工和承包商的使用——包括内部修改和自托管——在 AGPL-3.0 下是免费的。只有当您将 OmniVoice 嵌入闭源或专有产品/服务、且不愿遵守 AGPL 的源代码公开义务时，才需要商业许可证。",
     "q_try_before": "我可以在提交之前尝试一下吗？",
-    "a_try_before": "是的。完整的应用程序可免费下载并在本地运行，以便在 FSL 下进行评估。当您准备好讨论商业部署时，请给我们发送电子邮件，我们将共同解决细节问题。",
+    "a_try_before": "可以。完整应用可在 AGPL-3.0 下免费下载、运行和自托管——无需任何协议。当您准备讨论商业（专有用途）许可证时，请发邮件联系我们，我们将一起敲定细节。",
     "q_watermark": "水印呢？",
-    "a_watermark": "默认情况下嵌入不可见的 AudioSeal 水印。商业许可持有者可以在“设置”→“隐私”中禁用它。免费/个人使用始终包含水印。",
-    "q_apache": "源代码会变成 Apache 2.0 吗？",
-    "a_apache": "是的。每个版本都会在其发布两周年时自动转换为 Apache 许可证 2.0 版。这意味着今天发布的版本是两年后的 Apache 2.0，我们不需要采取任何行动 - FSL 保证它不可撤销。"
+    "a_watermark": "默认情况下为所有人嵌入不可见的 AudioSeal 水印。商业许可持有者可以在“设置”→“隐私”中禁用它。"
   },
   "gallery_extra": {
     "save_prompt": "输入此语音配置文件的名称：",
@@ -1659,6 +1674,17 @@
     "lib_use": "使用",
     "lib_active": "当前",
     "lib_in_settings": "稍后在设置中安装",
-    "lib_show_all": "显示 {{count}} 个可选模型"
+    "lib_show_all": "显示 {{count}} 个可选模型",
+    "trust_line": "一切都在这台设备上运行和保存——无需账号、无云端、无遥测。",
+    "resume_note": "下载中断后会自动续传——关闭应用也没关系。",
+    "eta_left": "剩余约 {{eta}}",
+    "first_sound_text": "欢迎来到你的工作室。你听到的每一个字，都是刚刚在这台设备上生成的。",
+    "first_sound_done": "刚才的声音？几秒前在本地生成。欢迎入驻。",
+    "hf_token_title": "Hugging Face 令牌（可选）",
+    "hf_token_hint": "解锁受限模型——例如多说话人配音的说话人分离（pyannote）。免费账号令牌，仅保存在本机。",
+    "hf_token_save": "保存",
+    "hf_token_saving": "保存中…",
+    "hf_token_saved": "Hugging Face 令牌已保存",
+    "hf_token_error": "令牌保存失败——请重试，或稍后在设置 → 凭据中设置。"
   }
 }

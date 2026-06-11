@@ -337,7 +337,17 @@
     "channel_stable": "Kararlı",
     "channel_preview": "Önizleme",
     "channel_set": "Güncelleme kanalı {{channel}} olarak ayarlandı",
-    "channel_preview_hint": "Önizleme en son main yapısını izler — daha yeni özellikler, daha az test. Daha yeni bir kararlı sürüm varsa kararlıya geri döner."
+    "channel_preview_hint": "Önizleme en son main yapısını izler — daha yeni özellikler, daha az test. Daha yeni bir kararlı sürüm varsa kararlıya geri döner.",
+    "self_check": "Run self-check",
+    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Warning",
+    "self_check_fail": "Failed",
+    "self_check_healthy": "All checks passed — this install looks healthy.",
+    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
+    "save_bundle": "Save diagnostic bundle",
+    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
+    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
   },
   "privacy": {
     "desc": "Her şey <1>bu makine</1> üzerinde çalışıyor. Açıkça bir çevrimiçi çevirmen (Google, DeepL vb.) kullanmadığınız veya HuggingFace'e aktarmadığınız sürece ses, video ve transkriptleriniz asla bilgisayarınızdan ayrılmaz.",
@@ -654,7 +664,10 @@
     "diagnostic_copied": "Teşhis kopyalandı",
     "copy_failed": "Kopyalama başarısız oldu",
     "open_docs": "Dokümanları aç",
-    "copy_diagnostic": "Teşhisi kopyala"
+    "copy_diagnostic": "Teşhisi kopyala",
+    "num_speakers_label": "Speakers",
+    "num_speakers_auto": "Auto",
+    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
   },
   "glossary": {
     "title": "Sözlük",
@@ -977,7 +990,7 @@
     "back": "Studio'ya geri dön",
     "badge": "Ticari Lisans",
     "hero_title": "Üretimde yapay zeka seslerini gönderin",
-    "hero_desc": "OmniVoice Studio, İşlevsel Kaynak Lisansı (FSL) kapsamında kaynak olarak mevcuttur. Çoğu kullanıcı ticari bir anlaşma olmadan dahili olarak değerlendirebilir, prototip oluşturabilir ve hatta dağıtabilir. Ticari lisansa yalnızca rakip bir ürün veya hizmet geliştiriyorsanız ya da kullanım alanınız FSL sınırlarının dışında kalıyorsa ihtiyacınız vardır.",
+    "hero_desc": "OmniVoice Studio, GNU Affero Genel Kamu Lisansı v3 (AGPL-3.0) kapsamında özgür ve açık kaynaklı bir yazılımdır — ticari ve kurum içi iş kullanımı dahil, kullanımı ücretsizdir. Ticari lisans yalnızca OmniVoice Studio'yu AGPL-3.0'ın copyleft yükümlülükleri olmadan kapalı kaynaklı veya tescilli bir ürün ya da hizmete gömmek istediğinizde gereklidir.",
     "why_title": "İşletmeler neden OmniVoice'u seçiyor?",
     "pricing_title": "Fiyatlandırma",
     "faq_title": "Sık sorulan sorular",
@@ -998,7 +1011,7 @@
     "benefit_source_desc": "Yığına tam görünürlük. Lisans koşulları dahilinde denetleyin, çatallayın ve uyarlayın.",
     "benefit_lang": "646 dil",
     "benefit_lang_desc": "646 dilde insan düzeyinde kaliteyle metne dönüştürün, tercüme edin ve dublaj yapın.",
-    "hero_note": "FSL kapsamında dahili kullanım - geniş ölçekte bile - ücretsizdir; ticari lisans yalnızca OmniVoice'u başkalarına rakip bir ürün veya hizmet (barındırılan veya kullanım başına ödemeli API, yeniden satılan veya beyaz etiketli bir uygulama) olarak sunmak için gereklidir. Fiyatlandırma katmanları yakında gelecek; bu arada bizimle iletişime geçin."
+    "hero_note": "Kullanım, kendi sunucunuzda barındırma ve ticari kullanım AGPL-3.0 kapsamında tamamen ücretsizdir — büyük ölçekte bile. AGPL bir ağ copyleft lisansıdır: OmniVoice'u değiştirir ve bu değiştirilmiş sürümü ağ üzerinden başkalarına sunarsanız, değiştirilmiş kaynak kodunuzu aynı koşullarla paylaşmanız gerekir. Ticari lisans, tescilli ve kapalı kaynaklı dağıtımlar için bu copyleft yükümlülüklerini kaldırır. Fiyatlandırma planları yakında — bu arada bizimle iletişime geçin."
   },
   "exportModal": {
     "export": "İhracat",
@@ -1097,7 +1110,8 @@
     "script_french": "İngilizce olmayan (Fransızca)",
     "aria_pause": "Duraklat {{label}}",
     "aria_hear": "{{label}} sesini duyun",
-    "aria_replay": "{{label}} metnini aktarıcı aracılığıyla tekrar oynat"
+    "aria_replay": "{{label}} metnini aktarıcı aracılığıyla tekrar oynat",
+    "dictation_lede_hotkey_only": "Yukarıdaki kısayolu masaüstünde herhangi bir yerde basılı tutun, konuşun, bırakın — metin odaktaki uygulamaya düşer. Şimdi basıp doğrulayın."
   },
   "direction": {
     "title": "#{{id}} segmentinin yönü",
@@ -1122,7 +1136,10 @@
     "title": "Bu sekme bir engele çarptı.",
     "desc": "Endişelenmeyin; uygulamanın geri kalanı hala çalışıyor. Sekmeleri değiştirebilir veya aşağıda tekrar deneyebilirsiniz.",
     "tryAgain": "Tekrar dene",
-    "openDocs": "Bu hata için dokümanları açın"
+    "openDocs": "Bu hata için dokümanları açın",
+    "report": "Report this bug",
+    "searchIssues": "Search similar issues",
+    "unexpected": "Unexpected error: {{message}}"
   },
   "keyboard": {
     "title": "Klavye kısayolları",
@@ -1411,13 +1428,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Dahili araçlar için lisansa ihtiyacım var mı?",
-    "a_internal_tools": "Çalışanlarınızın ve yüklenicilerinizin şirket içi kullanımı, FSL kapsamında İzin Verilen Amaçlardan biridir; lisans gerekmez. OmniVoice'u rakip bir ürün veya hizmetin (yeniden satış, barındırılan SaaS, beyaz etiket) parçası olarak başkalarının kullanımına sunduğunuzda ticari bir lisans gerekir.",
+    "a_internal_tools": "Hayır. Çalışanlarınızın ve yüklenicilerinizin kullanımı — kurum içi değişiklik ve kendi sunucunuzda barındırma dahil — AGPL-3.0 kapsamında ücretsizdir. Ticari lisans yalnızca OmniVoice'u kapalı kaynaklı veya tescilli bir ürün ya da hizmete gömüp AGPL'nin kaynak paylaşım yükümlülüklerine uymak istemediğinizde gereklidir.",
     "q_try_before": "Taahhüt etmeden önce deneyebilir miyim?",
-    "a_try_before": "Evet. Uygulamanın tamamını FSL kapsamında değerlendirme için yerel olarak indirmek ve çalıştırmak ücretsizdir. Ticari bir dağıtımı tartışmaya hazır olduğunuzda bize e-posta gönderin; ayrıntılar üzerinde birlikte çalışalım.",
+    "a_try_before": "Evet. Uygulamanın tamamı AGPL-3.0 kapsamında ücretsiz indirilebilir, çalıştırılabilir ve kendi sunucunuzda barındırılabilir — hiçbir sözleşme gerekmez. Ticari (tescilli kullanım) lisansını görüşmeye hazır olduğunuzda bize e-posta gönderin; ayrıntıları birlikte netleştirelim.",
     "q_watermark": "Filigran ne olacak?",
-    "a_watermark": "Görünmez AudioSeal filigranı varsayılan olarak gömülüdür. Ticari lisans sahipleri bunu Ayarlar → Gizlilik bölümünden devre dışı bırakabilir. Ücretsiz/kişisel kullanım her zaman filigranı da içerir.",
-    "q_apache": "Kaynak hiç Apache 2.0 olur mu?",
-    "a_apache": "Evet. Her sürüm, yayınlanmasının ikinci yıldönümünde otomatik olarak Apache Lisansı Sürüm 2.0'a dönüştürülür. Bu, bugünkü sürümün iki yıl içinde Apache 2.0 olacağı anlamına gelir; bizden herhangi bir işlem yapılmasına gerek yoktur - FSL bunu geri dönülmez bir şekilde garanti eder."
+    "a_watermark": "Görünmez AudioSeal filigranı varsayılan olarak herkes için gömülüdür. Ticari lisans sahipleri bunu Ayarlar → Gizlilik bölümünden devre dışı bırakabilir."
   },
   "gallery_extra": {
     "save_prompt": "Bu ses profili için bir ad girin:",
@@ -1659,6 +1674,17 @@
     "lib_use": "Kullan",
     "lib_active": "etkin",
     "lib_in_settings": "daha sonra Ayarlar’dan kur",
-    "lib_show_all": "{{count}} isteğe bağlı modeli göster"
+    "lib_show_all": "{{count}} isteğe bağlı modeli göster",
+    "trust_line": "Her şey bu makinede çalışır ve kalır — hesap yok, bulut yok, telemetri yok.",
+    "resume_note": "Yarıda kalan indirmeler otomatik devam eder — uygulamayı kapatmak güvenlidir.",
+    "eta_left": "~{{eta}} kaldı",
+    "first_sound_text": "Stüdyona hoş geldin. Duyduğun her kelime az önce bu makinede üretildi.",
+    "first_sound_done": "O ses mi? Saniyeler önce, yerelde üretildi. Hoş geldin.",
+    "hf_token_title": "Hugging Face belirteci (isteğe bağlı)",
+    "hf_token_hint": "Kısıtlı modellerin kilidini açar — ör. çok konuşmacılı dublaj için konuşmacı ayrıştırma (pyannote). Ücretsiz hesap belirteci; bu makinede kalır.",
+    "hf_token_save": "Kaydet",
+    "hf_token_saving": "kaydediliyor…",
+    "hf_token_saved": "Hugging Face belirteci kaydedildi",
+    "hf_token_error": "Belirteç kaydedilemedi — yeniden deneyin veya sonra Ayarlar → Kimlik bilgileri bölümünden ayarlayın."
   }
 }

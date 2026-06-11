@@ -22,8 +22,8 @@
 
   position: fixed;
   inset: 0;
-  /* Flex column so the deck fills the height and the action bar can pin flush
-     to the bottom edge (a centered deck made the sticky foot float). */
+  /* Flex column: the deck fills the height and the action bar pins flush to the
+     bottom edge; only the inner .frs__scroll region scrolls. */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -34,8 +34,7 @@
   /* Extra top clearance: the native titlebar (GTK headerbar / macOS
      traffic lights / Windows controls) overlays the top of the window —
      content must start below it, never under it. */
-  /* No bottom padding: the sticky action bar sits flush to the window's
-     bottom edge (its own padding provides the inner clearance). */
+  /* No bottom padding: the action bar sits flush to the window's bottom edge. */
   padding: 3.4rem 2.5rem 0;
   overflow: hidden;            /* the inner .frs__scroll region scrolls, not this */
 }
@@ -51,7 +50,8 @@
   position: relative;
   width: 100%;
   max-width: 1240px;
-  flex: 1 1 auto;            /* fill the column height; the inner region scrolls */
+  margin: 0;
+  flex: 1 1 auto;           /* fill the column height; the inner region scrolls */
   min-height: 0;            /* let the inner scroll region shrink + scroll */
   display: flex;
   flex-direction: column;
@@ -115,8 +115,9 @@
   margin: 0.5rem 0 0;
   font-size: 0.8rem;
   line-height: 1.5;
-  opacity: 0.62;
+  opacity: 0.72;
   max-width: 62ch;
+  min-height: 3em;            /* two lines reserved — stage swaps don't shift */
 }
 
 .frs__mast-meta {
@@ -147,7 +148,7 @@
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.62rem;
   letter-spacing: 0.14em;
-  opacity: 0.45;
+  opacity: 0.6;
   font-variant-numeric: tabular-nums;
   user-select: none;
   white-space: nowrap;
@@ -181,7 +182,7 @@
 
 @keyframes frs-breathe {
   from { transform: scaleY(calc(var(--h, 0.4) * 0.55)); opacity: 0.22; }
-  to   { transform: scaleY(var(--h, 0.4)); opacity: 0.5; }
+  to   { transform: scaleY(var(--h, 0.4)); opacity: 0.65; }
 }
 
 /* ── Wide grid: storage rail (left, 7fr) + decision rail (right, 5fr) ──── */
@@ -217,7 +218,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.22em;
-  opacity: 0.55;
+  opacity: 0.68;
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -311,18 +312,17 @@
 
 /* Verbosity diet: the description unfolds (smoothly) only on the selected
    card — collapsed cards keep it as a tooltip. */
-.frs-opt__desc {
+/* Descriptions live in a fixed per-group caption slot (two reserved lines)
+   so selecting an option NEVER shifts the layout — text swaps in place.
+   .frs-opt__desc remains visible only for legacy embeds (wizard cards). */
+.frs-opt__desc { font-size: 0.7rem; line-height: 1.45; opacity: 0.7; }
+
+.frs__opt-caption {
+  margin: 0;
   font-size: 0.7rem;
   line-height: 1.45;
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-  transition: max-height 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms ease;
-}
-
-.frs-opt.is-active .frs-opt__desc {
-  max-height: 4.5em;
-  opacity: 0.6;
+  opacity: 0.68;
+  min-height: 2.9em;          /* exactly two lines reserved */
 }
 
 /* ── Detected hardware readout (Compute panel) ─────────────────────────── */
@@ -355,7 +355,7 @@
   font-size: 0.58rem;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  opacity: 0.5;
+  opacity: 0.65;
   flex-shrink: 0;
 }
 
@@ -401,7 +401,7 @@
 .frs-row__path {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.66rem;
-  opacity: 0.5;
+  opacity: 0.65;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -426,7 +426,7 @@
 .frs-row__readout {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.64rem;
-  opacity: 0.55;
+  opacity: 0.68;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -484,7 +484,7 @@
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  opacity: 0.5;
+  opacity: 0.65;
 }
 
 .frs-select,
@@ -532,7 +532,7 @@
   font-size: 0.62rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  opacity: 0.5;
+  opacity: 0.65;
   cursor: pointer;
   user-select: none;
   padding: 0.15rem 0;
@@ -564,14 +564,15 @@
 /* ── Footer: gate + armed button ───────────────────────────────────────── */
 
 .frs__foot {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
   /* Pinned action bar: the last flex item below the scroll region, so it sits
      flush at the window's bottom edge while only the content above scrolls —
      nothing renders beneath it. */
   flex-shrink: 0;
-  padding: 0.7rem 0 1.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding-top: 0.7rem;
+  padding-bottom: 1.6rem;
   background: var(--frs-bg);
   border-top: 1px solid var(--frs-line);
 }
@@ -588,11 +589,11 @@
   align-items: baseline;
   gap: 0.5rem;
   font-size: 0.72rem;
-  opacity: 0.55;
+  opacity: 0.68;
   font-variant-numeric: tabular-nums;
 }
 
-.frs__totals-sep { opacity: 0.5; }
+.frs__totals-sep { opacity: 0.65; }
 
 .frs__blocker {
   margin: 0;
@@ -664,7 +665,7 @@
 .frs-btn--quiet {
   background: transparent;
   color: inherit;
-  opacity: 0.5;
+  opacity: 0.65;
   font-weight: 500;
   padding: 0.34rem 0.6rem;
   font-size: 0.68rem;
@@ -753,7 +754,7 @@
   animation: frs-hw-pulse 1.6s ease-in-out infinite;
 }
 
-.frs-step.is-done .frs-step__label { opacity: 0.55; }
+.frs-step.is-done .frs-step__label { opacity: 0.68; }
 .frs-step.is-active .frs-step__label { font-weight: 650; }
 .frs-step.is-pending { opacity: 0.45; }
 
@@ -949,3 +950,11 @@
 .frs-check__fix { font-size: 0.7rem; line-height: 1.45; }
 .frs-check--fail .frs-check__fix { color: var(--frs-err); }
 .frs-check--warn .frs-check__fix { color: var(--chrome-severity-warn, #d79921); }
+
+/* Quiet reassurance lines (trust statement, resume note) — present, never loud. */
+.frs__trust {
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.5;
+  opacity: 0.45;
+}

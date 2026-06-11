@@ -337,7 +337,17 @@
     "channel_stable": "穩定版",
     "channel_preview": "預覽版",
     "channel_set": "更新通道已設定為 {{channel}}",
-    "channel_preview_hint": "預覽版追蹤最新的 main 組建——功能較新，但測試較少。若穩定版較新，則回退至穩定版。"
+    "channel_preview_hint": "預覽版追蹤最新的 main 組建——功能較新，但測試較少。若穩定版較新，則回退至穩定版。",
+    "self_check": "Run self-check",
+    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Warning",
+    "self_check_fail": "Failed",
+    "self_check_healthy": "All checks passed — this install looks healthy.",
+    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
+    "save_bundle": "Save diagnostic bundle",
+    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
+    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
   },
   "privacy": {
     "desc": "一切都在<1>這台機器</1>上運作。除非您明確使用線上翻譯器（Google、DeepL 等）或推送到 HuggingFace，否則您的音訊、視訊和文字記錄永遠不會離開您的電腦。",
@@ -654,7 +664,10 @@
     "diagnostic_copied": "診斷複製",
     "copy_failed": "複製失敗",
     "open_docs": "開啟文件",
-    "copy_diagnostic": "複製診斷"
+    "copy_diagnostic": "複製診斷",
+    "num_speakers_label": "Speakers",
+    "num_speakers_auto": "Auto",
+    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
   },
   "glossary": {
     "title": "詞彙表",
@@ -977,7 +990,7 @@
     "back": "返回工作室",
     "badge": "商業許可",
     "hero_title": "在生產中傳送人工智慧聲音",
-    "hero_desc": "OmniVoice Studio 可根據功能來源許可證 (FSL) 取得原始碼。大多數用戶可以在沒有商業協議的情況下進行評估、原型設計甚至內部部署。只有當您正在建立競爭產品或服務，或您的用例超出 FSL 範圍時，您才需要商業許可證。",
+    "hero_desc": "OmniVoice Studio 是基於 GNU Affero 通用公眾授權條款第 3 版（AGPL-3.0）的自由開源軟體——可免費使用，包括商業用途與企業內部用途。只有當您想在不承擔 AGPL-3.0 著佐權（copyleft）義務的情況下，將 OmniVoice Studio 嵌入閉源或專有產品/服務時，才需要商業授權。",
     "why_title": "為什麼企業選擇 OmniVoice",
     "pricing_title": "定價",
     "faq_title": "常見問題",
@@ -998,7 +1011,7 @@
     "benefit_source_desc": "對堆疊的完全可見性。在許可條款範圍內進行審核、分叉和調整。",
     "benefit_lang": "646 種語言",
     "benefit_lang_desc": "以人類層次的品質轉錄、翻譯和配音 646 種語言。",
-    "hero_note": "根據 FSL，內部使用（即使是大規模使用）也是免費的；僅需要商業許可證才能將 OmniVoice 作為競爭產品或服務（託管或按使用付費的 API、轉售或白標應用程式）提供給其他人。定價等級即將推出 - 請同時聯絡我們。"
+    "hero_note": "使用、自行架設與商業用途在 AGPL-3.0 下皆免費——包括大規模使用。AGPL 是網路著佐權授權條款：如果您修改 OmniVoice 並透過網路向他人提供該修改版本，就必須以相同條款公開您修改後的原始碼。商業授權可為專有閉源部署免除這些著佐權義務。定價方案即將推出——在此期間歡迎與我們聯繫。"
   },
   "exportModal": {
     "export": "出口",
@@ -1097,7 +1110,8 @@
     "script_french": "非英語（法語）",
     "aria_pause": "暫停{{label}}",
     "aria_hear": "聽到{{label}}",
-    "aria_replay": "透過轉錄器重播 {{label}}"
+    "aria_replay": "透過轉錄器重播 {{label}}",
+    "dictation_lede_hotkey_only": "在桌面任意位置按住上方快速鍵說話，放開後文字會輸入到目前聚焦的應用程式。現在按一下即可驗證是否生效。"
   },
   "direction": {
     "title": "段 #{{id}} 的方向",
@@ -1122,7 +1136,10 @@
     "title": "這個選項卡遇到了障礙。",
     "desc": "別擔心——應用程式的其餘部分仍然有效。您可以切換選項卡，或在下面重試。",
     "tryAgain": "再試一次",
-    "openDocs": "開啟此錯誤的文檔"
+    "openDocs": "開啟此錯誤的文檔",
+    "report": "Report this bug",
+    "searchIssues": "Search similar issues",
+    "unexpected": "Unexpected error: {{message}}"
   },
   "keyboard": {
     "title": "鍵盤快速鍵",
@@ -1411,13 +1428,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "我需要內部工具的授權嗎？",
-    "a_internal_tools": "您的員工和承包商的內部使用是 FSL 允許的目的 — 無需許可。當您將 OmniVoice 作為競爭產品或服務（轉售、託管 SaaS、白標）的一部分提供給其他人時，需要商業許可證。",
+    "a_internal_tools": "不需要。您的員工與承包商的使用——包括內部修改與自行架設——在 AGPL-3.0 下是免費的。只有當您將 OmniVoice 嵌入閉源或專有產品/服務，且不願遵守 AGPL 的原始碼公開義務時，才需要商業授權。",
     "q_try_before": "我可以在提交之前嘗試一下嗎？",
-    "a_try_before": "是的。完整的應用程式可免費下載並在本地運行，以便在 FSL 下進行評估。當您準備好討論商業部署時，請給我們發送電子郵件，我們將共同解決細節問題。",
+    "a_try_before": "可以。完整應用程式可在 AGPL-3.0 下免費下載、執行與自行架設——無需任何協議。當您準備討論商業（專有用途）授權時，請寄信給我們，我們會一起確認細節。",
     "q_watermark": "水印呢？",
-    "a_watermark": "預設嵌入不可見的 AudioSeal 水印。商業許可持有者可以在「設定」→「隱私權」中停用它。免費/個人使用始終包含浮水印。",
-    "q_apache": "原始碼會變成 Apache 2.0 嗎？",
-    "a_apache": "是的。每個版本都會在其發布兩週年時自動轉換為 Apache 授權 2.0 版。這意味著今天發布的版本是兩年後的 Apache 2.0，我們不需要採取任何行動 - FSL 保證它不可撤銷。"
+    "a_watermark": "預設為所有人嵌入不可見的 AudioSeal 浮水印。商業授權持有者可以在「設定」→「隱私權」中停用它。"
   },
   "gallery_extra": {
     "save_prompt": "輸入此語音設定檔的名稱：",
@@ -1659,6 +1674,17 @@
     "lib_use": "使用",
     "lib_active": "目前",
     "lib_in_settings": "稍後在設定中安裝",
-    "lib_show_all": "顯示 {{count}} 個可選模型"
+    "lib_show_all": "顯示 {{count}} 個可選模型",
+    "trust_line": "一切都在這台裝置上執行與保存——無需帳號、無雲端、無遙測。",
+    "resume_note": "下載中斷後會自動續傳——關閉應用程式也沒關係。",
+    "eta_left": "剩餘約 {{eta}}",
+    "first_sound_text": "歡迎來到你的工作室。你聽到的每一個字，都是剛剛在這台裝置上生成的。",
+    "first_sound_done": "剛才的聲音？幾秒前在本機生成。歡迎加入。",
+    "hf_token_title": "Hugging Face 權杖（可選）",
+    "hf_token_hint": "解鎖受限模型——例如多語者配音的語者分離（pyannote）。免費帳號權杖，僅保存在本機。",
+    "hf_token_save": "儲存",
+    "hf_token_saving": "儲存中…",
+    "hf_token_saved": "Hugging Face 權杖已儲存",
+    "hf_token_error": "權杖儲存失敗——請重試，或稍後在設定 → 憑證中設定。"
   }
 }

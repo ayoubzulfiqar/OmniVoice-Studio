@@ -19,6 +19,22 @@ if sys.platform == "win32":
     os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
     os.environ.setdefault("TORCHINDUCTOR_DISABLE", "1")
 
+# The backend's stdout/stderr are pipes owned by the desktop shell that
+# spawned it. If that shell exits while the backend survives (crash,
+# relaunch, orphan), the pipes close — and the next write raises
+# BrokenPipeError. transformers' tqdm weight-loading bar writes constantly,
+# so an orphaned backend couldn't load the model at all (caught in the wild
+# by the in-app diagnostic report). Wrap stdio so EPIPE is swallowed
+# process-wide: logs are best-effort for a server, model loading is not.
+# (utils.hf_progress.SafeFileWrapper — same wrapper the patched hub tqdm
+# already uses for its own fp.)
+from utils.hf_progress import SafeFileWrapper as _SafeStdio  # noqa: E402
+
+if not getattr(sys.stdout, "_is_safe_wrapper", False):
+    sys.stdout = _SafeStdio(sys.stdout)
+if not getattr(sys.stderr, "_is_safe_wrapper", False):
+    sys.stderr = _SafeStdio(sys.stderr)
+
 try:
     import dotenv
 
@@ -268,7 +284,12 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import MutableHeaders
-from scalar_fastapi import get_scalar_api_reference
+# Docs-only dependency: a venv created before scalar-fastapi entered the
+# dependency set must still boot the backend (#307) — /docs degrades instead.
+try:
+    from scalar_fastapi import get_scalar_api_reference
+except ImportError:
+    get_scalar_api_reference = None
 import traceback
 
 _crash_log_lock = threading.Lock()
@@ -455,6 +476,14 @@ app = FastAPI(
 @app.get("/docs", include_in_schema=False)
 async def scalar_docs():
     """Interactive API documentation powered by Scalar."""
+    if get_scalar_api_reference is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "API docs unavailable: scalar-fastapi is not installed "
+                          "in the backend environment (#307)."
+            },
+        )
     return get_scalar_api_reference(
         openapi_url=app.openapi_url,
         title=app.title,

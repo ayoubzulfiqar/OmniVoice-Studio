@@ -8,7 +8,7 @@ import {
   ExternalLink, Copy,
 } from 'lucide-react';
 // lucide-react exports DownloadIcon as "Download"; alias here to match App.jsx naming.
-import { Download as Download } from 'lucide-react';
+import { Download as Download, RotateCcw } from 'lucide-react';
 import SearchableSelect from '../components/SearchableSelect';
 import WaveformTimeline from '../components/WaveformTimeline';
 import CheckpointBanner from '../components/CheckpointBanner';
@@ -298,8 +298,8 @@ export default function DubTab(props) {
               )}
             </div>
             <div className="dub-head__actions">
-              <Button variant="subtle" size="sm" disabled leading={<Save size={9} />}>{t('dub.save')}</Button>
-              <Button variant="ghost"  size="sm" disabled>{t('dub.reset')}</Button>
+              <Button variant="subtle" size="sm" disabled title={t('dub.save')} aria-label={t('dub.save')}><Save size={12} /></Button>
+              <Button variant="ghost" size="sm" disabled title={t('dub.reset')} aria-label={t('dub.reset')}><RotateCcw size={12} /></Button>
             </div>
           </div>
 
@@ -607,8 +607,12 @@ export default function DubTab(props) {
               )}
             </div>
             <div className="dub-head__actions">
-              <Button variant="subtle" size="sm" onClick={saveProject} leading={<Save size={9} />}>{t('dub.save')}</Button>
-              <Button variant="danger" size="sm" onClick={resetDub}>{t('dub.reset')}</Button>
+              {/* Icon-only secondary actions (tooltips carry the labels);
+                  Generate Dub keeps its label as the primary verb. */}
+              <Button variant="subtle" size="sm" onClick={saveProject}
+                title={t('dub.save')} aria-label={t('dub.save')}><Save size={12} /></Button>
+              <Button variant="danger" size="sm" onClick={resetDub}
+                title={t('dub.reset')} aria-label={t('dub.reset')}><RotateCcw size={12} /></Button>
               {/* Primary actions live on the header bar (compact) — moved up from the footer. */}
               <div className="dub-head__primary">
                 {dubStep === 'stopping' ? (
@@ -631,7 +635,8 @@ export default function DubTab(props) {
                 <FooterBtn sm tone={dubStep === 'done' ? 'green' : 'idle'}
                   disabled={dubStep !== 'done' && !dubSegments.length}
                   onClick={() => setExportOpen(true)}
-                  icon={<Download size={11} />} label={t('dub.export_btn')} />
+                  icon={<Download size={12} />}
+                  title={t('dub.export_btn')} aria-label={t('dub.export_btn')} />
               </div>
             </div>
           </div>
@@ -939,7 +944,7 @@ export default function DubTab(props) {
                   <Segmented
                     value={timingStrategy}
                     onChange={setTimingStrategy}
-                    options={[
+                    items={[
                       { value: 'concise',       label: 'Concise',        title: 'Translator trims text to fit at natural rate. Overflows surface in the row badge so you can shorten the segment.' },
                       { value: 'stretch_video', label: 'Stretch Video',  title: 'Audio plays at natural rate; each segment of the video is stretched (per-segment ffmpeg setpts) to fit. Total video duration grows. Requires a re-encode pass.' },
                       { value: 'strict_slot',   label: 'Strict slot',    title: 'Legacy: compress audio to fit the original timing. Can sound rushed/chipmunky on high-density target languages.' },

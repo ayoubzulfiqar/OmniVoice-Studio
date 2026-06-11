@@ -123,6 +123,9 @@ def _run_inference(
             # Raw: skip all DSP — return raw model output
             return audio_out
 
+        # TODO(#312): this route runs the OmniVoice model directly (not the active
+        # backend), so VoxCPM2 never reaches it. When these routes become
+        # engine-aware, guard with `if not getattr(backend, "applies_own_mastering", False)`.
         mastered_audio = apply_mastering(audio_out, sample_rate=sr)
         _chain = get_effect_chain(_effect_preset)
         if _chain:
@@ -212,6 +215,17 @@ async def generate_speech(
                 cleanup_ref = True
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    # #308: a transcript-less reference is transcribed with the active ASR
+    # backend (whisperx / faster-whisper / mlx-whisper) instead of the model's
+    # built-in transformers pipeline, which cannot load whisper-large-v3-turbo
+    # on transformers 5.3. On failure ref_text stays None and the model's
+    # fallback behaves exactly as before.
+    if ref_audio_path and not ref_text:
+        from services.asr_backend import transcribe_reference
+        ref_text = await asyncio.get_running_loop().run_in_executor(
+            _gpu_pool, transcribe_reference, ref_audio_path
+        )
 
     start_time = time.time()
     try:

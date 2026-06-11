@@ -271,16 +271,6 @@
   },
   "about": {
     "app": "App",
-    "self_check": "Run self-check",
-    "self_check_failed": "Self-check failed: {{message}}",
-    "self_check_ok": "OK",
-    "self_check_warn": "Warning",
-    "self_check_fail": "Failed",
-    "self_check_healthy": "All checks passed — this install looks healthy.",
-    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
-    "save_bundle": "Save diagnostic bundle",
-    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
-    "bundle_failed": "Could not build the diagnostic bundle: {{message}}",
     "version": "Version",
     "tauri_runtime": "Tauri runtime",
     "platform": "Platform",
@@ -312,7 +302,17 @@
     "copy_diagnostics": "Copy diagnostics",
     "github": "OmniVoice on GitHub",
     "model_card": "Model card",
-    "commercial_license": "Commercial License"
+    "commercial_license": "Commercial License",
+    "self_check": "Run self-check",
+    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Warning",
+    "self_check_fail": "Failed",
+    "self_check_healthy": "All checks passed — this install looks healthy.",
+    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
+    "save_bundle": "Save diagnostic bundle",
+    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
+    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
   },
   "privacy": {
     "desc": "Everything runs on <1>this machine</1>. Your audio, video, and transcripts never leave your computer unless you explicitly use an online translator (Google, DeepL, etc.) or push to HuggingFace.",
@@ -890,8 +890,8 @@
     "back": "Back to Studio",
     "badge": "Commercial License",
     "hero_title": "Ship AI voices in production",
-    "hero_desc": "OmniVoice Studio is source-available under the Functional Source License (FSL). Most users can evaluate, prototype, and even deploy internally without a commercial agreement. You need a commercial license only if you are building a competing product or service, or if your use case falls outside the FSL’s boundaries.",
-    "hero_note": "Internal use — even at scale — is free under the FSL; a commercial license is only required to offer OmniVoice to others as a competing product or service (a hosted or pay-per-use API, a resold or white-labelled app). Pricing tiers are coming soon — get in touch in the meantime.",
+    "hero_desc": "OmniVoice Studio is free and open-source software under the GNU Affero General Public License v3 (AGPL-3.0) — free to use, including for commercial and internal business use. A commercial license is needed only if you want to embed OmniVoice Studio in a closed-source or proprietary product or service without AGPL-3.0's copyleft obligations.",
+    "hero_note": "Use, self-hosting, and commercial use are all free under the AGPL-3.0 — including at scale. AGPL is a network-copyleft license: if you modify OmniVoice and offer that modified version to others over a network, you must share your modified source under the same terms. A commercial license lifts those copyleft obligations for proprietary, closed-source deployments. Pricing tiers are coming soon — get in touch in the meantime.",
     "why_title": "Why businesses choose OmniVoice",
     "pricing_title": "Pricing",
     "faq_title": "Common questions",
@@ -1010,7 +1010,8 @@
     "script_french": "Non-English (French)",
     "aria_pause": "Pause {{label}}",
     "aria_hear": "Hear {{label}}",
-    "aria_replay": "Replay {{label}} through transcriber"
+    "aria_replay": "Replay {{label}} through transcriber",
+    "dictation_lede_hotkey_only": "Hold the shortcut above anywhere on your desktop, speak, release — the text lands in whatever app has focus. Press it now to verify it works."
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -1460,13 +1461,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Do I need a license for internal tools?",
-    "a_internal_tools": "Internal use by your employees and contractors is a Permitted Purpose under the FSL — no license required. A commercial license is needed when you make OmniVoice available to others as part of a competing product or service (resale, hosted SaaS, white-label).",
+    "a_internal_tools": "No. Use by your employees and contractors — including modifying and self-hosting internally — is free under the AGPL-3.0. A commercial license is only needed if you embed OmniVoice in a closed-source or proprietary product or service and don't want to comply with AGPL's source-sharing obligations.",
     "q_try_before": "Can I try before committing?",
-    "a_try_before": "Yes. The full app is free to download and run locally for evaluation under the FSL. When you're ready to discuss a commercial deployment, email us and we'll work through the details together.",
+    "a_try_before": "Yes. The full app is free to download, run, and self-host under the AGPL-3.0 — no agreement required. When you're ready to discuss a commercial (proprietary-use) license, email us and we'll work through the details together.",
     "q_watermark": "What about the watermark?",
-    "a_watermark": "The invisible AudioSeal watermark is embedded by default. Commercial licensees can disable it in Settings → Privacy. Free/personal use always includes the watermark.",
-    "q_apache": "Does the source ever become Apache 2.0?",
-    "a_apache": "Yes. Each release converts automatically to the Apache License, Version 2.0 on the second anniversary of its publication. That means today's release is Apache 2.0 in two years, no action required from us — the FSL guarantees it irrevocably."
+    "a_watermark": "The invisible AudioSeal watermark is embedded by default for everyone. Commercial licensees can disable it in Settings → Privacy."
   },
   "gallery_extra": {
     "save_prompt": "Enter a name for this voice profile:",
@@ -1667,6 +1666,17 @@
     "lib_use": "Use",
     "lib_active": "active",
     "lib_in_settings": "install later in Settings",
-    "lib_show_all": "Show {{count}} optional models"
+    "lib_show_all": "Show {{count}} optional models",
+    "trust_line": "Everything runs and stays on this machine — no account, no cloud, no telemetry.",
+    "resume_note": "Interrupted downloads resume automatically — closing the app is safe.",
+    "eta_left": "~{{eta}} left",
+    "first_sound_text": "Welcome to your studio. Every word you hear was generated on this machine, just now.",
+    "first_sound_done": "That voice? Generated seconds ago, locally. Welcome in.",
+    "hf_token_title": "Hugging Face token (optional)",
+    "hf_token_hint": "Unlocks gated models — e.g. speaker diarization for multi-speaker dubbing (pyannote). Free account token; stays on this machine.",
+    "hf_token_save": "Save",
+    "hf_token_saving": "saving…",
+    "hf_token_saved": "Hugging Face token saved",
+    "hf_token_error": "Could not save the token — try again or set it later in Settings → Credentials."
   }
 }

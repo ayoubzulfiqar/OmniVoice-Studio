@@ -337,7 +337,17 @@
     "channel_stable": "Stabiel",
     "channel_preview": "Voorbeeld",
     "channel_set": "Updatekanaal ingesteld op {{channel}}",
-    "channel_preview_hint": "Voorbeeld volgt de nieuwste main-build — nieuwere functies, minder getest. Valt terug op stabiel als er een nieuwere stabiele release is."
+    "channel_preview_hint": "Voorbeeld volgt de nieuwste main-build — nieuwere functies, minder getest. Valt terug op stabiel als er een nieuwere stabiele release is.",
+    "self_check": "Run self-check",
+    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Warning",
+    "self_check_fail": "Failed",
+    "self_check_healthy": "All checks passed — this install looks healthy.",
+    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
+    "save_bundle": "Save diagnostic bundle",
+    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
+    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
   },
   "privacy": {
     "desc": "Alles draait op <1>deze machine</1>. Uw audio, video en transcripties verlaten uw computer nooit, tenzij u expliciet een online vertaler (Google, DeepL, enz.) gebruikt of naar HuggingFace pusht.",
@@ -654,7 +664,10 @@
     "diagnostic_copied": "Diagnostiek gekopieerd",
     "copy_failed": "Kopiëren mislukt",
     "open_docs": "Documenten openen",
-    "copy_diagnostic": "Diagnostiek kopiëren"
+    "copy_diagnostic": "Diagnostiek kopiëren",
+    "num_speakers_label": "Speakers",
+    "num_speakers_auto": "Auto",
+    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
   },
   "glossary": {
     "title": "Woordenlijst",
@@ -977,7 +990,7 @@
     "back": "Terug naar Studio",
     "badge": "Commerciële licentie",
     "hero_title": "Verzend AI-stemmen in productie",
-    "hero_desc": "OmniVoice Studio is bron-beschikbaar onder de Functionele Bronlicentie (FSL). De meeste gebruikers kunnen zonder commerciële overeenkomst evalueren, prototypen maken en zelfs intern implementeren. U heeft alleen een commerciële licentie nodig als u een concurrerend product of dienst bouwt, of als uw gebruiksscenario buiten de grenzen van de FSL valt.",
+    "hero_desc": "OmniVoice Studio is vrije en open-source software onder de GNU Affero General Public License v3 (AGPL-3.0) — gratis te gebruiken, ook voor commercieel en intern zakelijk gebruik. Een commerciële licentie is alleen nodig als je OmniVoice Studio wilt inbouwen in een closed-source of propriëtair product of dienst zonder de copyleft-verplichtingen van de AGPL-3.0.",
     "why_title": "Waarom bedrijven voor OmniVoice kiezen",
     "pricing_title": "Prijzen",
     "faq_title": "Veelgestelde vragen",
@@ -998,7 +1011,7 @@
     "benefit_source_desc": "Volledig zicht op de stapel. Audit, fork en pas aan binnen de licentievoorwaarden.",
     "benefit_lang": "646 talen",
     "benefit_lang_desc": "Transcribeer, vertaal en kopieer in 646 talen met kwaliteit op menselijk niveau.",
-    "hero_note": "Intern gebruik – zelfs op grote schaal – is gratis onder de FSL; een commerciële licentie is alleen vereist om OmniVoice aan anderen aan te bieden als een concurrerend product of dienst (een gehoste of pay-per-use API, een doorverkochte of white-labeled app). Prijsniveaus volgen binnenkort. Neem in de tussentijd contact met ons op."
+    "hero_note": "Gebruik, self-hosting en commercieel gebruik zijn allemaal gratis onder de AGPL-3.0 — ook op grote schaal. De AGPL is een netwerk-copyleft-licentie: als je OmniVoice aanpast en die aangepaste versie via een netwerk aan anderen aanbiedt, moet je je gewijzigde broncode onder dezelfde voorwaarden delen. Een commerciële licentie heft die copyleft-verplichtingen op voor propriëtaire closed-source-implementaties. Prijsplannen volgen binnenkort — neem in de tussentijd contact op."
   },
   "exportModal": {
     "export": "Exporteren",
@@ -1097,7 +1110,8 @@
     "script_french": "Niet-Engels (Frans)",
     "aria_pause": "Pauze {{label}}",
     "aria_hear": "Hoor {{label}}",
-    "aria_replay": "Speel {{label}} opnieuw af via de transcriber"
+    "aria_replay": "Speel {{label}} opnieuw af via de transcriber",
+    "dictation_lede_hotkey_only": "Houd de sneltoets hierboven overal op je bureaublad ingedrukt, spreek, laat los — de tekst belandt in de app met focus. Druk nu om te verifiëren."
   },
   "direction": {
     "title": "Richting voor segment #{{id}}",
@@ -1122,7 +1136,10 @@
     "title": "Dit tabblad stuitte op een probleem.",
     "desc": "Maak je geen zorgen: de rest van de app werkt nog steeds. U kunt van tabblad wisselen of het hieronder opnieuw proberen.",
     "tryAgain": "Probeer het opnieuw",
-    "openDocs": "Open documenten voor deze fout"
+    "openDocs": "Open documenten voor deze fout",
+    "report": "Report this bug",
+    "searchIssues": "Search similar issues",
+    "unexpected": "Unexpected error: {{message}}"
   },
   "keyboard": {
     "title": "Sneltoetsen",
@@ -1411,13 +1428,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Heb ik een licentie nodig voor interne tools?",
-    "a_internal_tools": "Intern gebruik door uw werknemers en contractanten is een toegestaan doel onder de FSL – er is geen licentie vereist. Een commerciële licentie is nodig wanneer u OmniVoice beschikbaar stelt aan anderen als onderdeel van een concurrerend product of dienst (wederverkoop, gehoste SaaS, white-label).",
+    "a_internal_tools": "Nee. Gebruik door je medewerkers en contractors — inclusief intern aanpassen en self-hosten — is gratis onder de AGPL-3.0. Een commerciële licentie is alleen nodig als je OmniVoice inbouwt in een closed-source of propriëtair product of dienst en niet wilt voldoen aan de broncode-deelverplichtingen van de AGPL.",
     "q_try_before": "Kan ik het proberen voordat ik me vastleg?",
-    "a_try_before": "Ja. De volledige app kan gratis worden gedownload en lokaal worden uitgevoerd voor evaluatie onder de FSL. Wanneer u klaar bent om een ​​commerciële implementatie te bespreken, kunt u ons een e-mail sturen, zodat we samen de details kunnen doornemen.",
+    "a_try_before": "Ja. De volledige app is gratis te downloaden, draaien en zelf te hosten onder de AGPL-3.0 — geen overeenkomst nodig. Wil je een commerciële licentie (propriëtair gebruik) bespreken, mail ons dan en we werken de details samen uit.",
     "q_watermark": "Hoe zit het met het watermerk?",
-    "a_watermark": "Het onzichtbare AudioSeal-watermerk is standaard ingesloten. Commerciële licentiehouders kunnen dit uitschakelen via Instellingen → Privacy. Bij gratis/persoonlijk gebruik is altijd het watermerk inbegrepen.",
-    "q_apache": "Wordt de bron ooit Apache 2.0?",
-    "a_apache": "Ja. Elke release wordt automatisch geconverteerd naar de Apache-licentie, versie 2.0, op de tweede verjaardag van de publicatie ervan. Dat betekent dat de release van vandaag over twee jaar Apache 2.0 is, zonder dat er actie van ons nodig is; de FSL garandeert dit onherroepelijk."
+    "a_watermark": "Het onzichtbare AudioSeal-watermerk is standaard voor iedereen ingesloten. Commerciële licentiehouders kunnen dit uitschakelen via Instellingen → Privacy."
   },
   "gallery_extra": {
     "save_prompt": "Voer een naam in voor dit stemprofiel:",
@@ -1659,6 +1674,17 @@
     "lib_use": "Gebruik",
     "lib_active": "actief",
     "lib_in_settings": "later installeren in Instellingen",
-    "lib_show_all": "Toon {{count}} optionele modellen"
+    "lib_show_all": "Toon {{count}} optionele modellen",
+    "trust_line": "Alles draait en blijft op deze machine — geen account, geen cloud, geen telemetrie.",
+    "resume_note": "Onderbroken downloads hervatten automatisch — de app sluiten is veilig.",
+    "eta_left": "nog ~{{eta}}",
+    "first_sound_text": "Welkom in je studio. Elk woord dat je hoort is zojuist op deze machine gegenereerd.",
+    "first_sound_done": "Die stem? Seconden geleden lokaal gegenereerd. Welkom.",
+    "hf_token_title": "Hugging Face-token (optioneel)",
+    "hf_token_hint": "Ontgrendelt afgeschermde modellen — bijv. sprekerdiarisatie voor dubben met meerdere stemmen (pyannote). Token van gratis account; blijft op deze machine.",
+    "hf_token_save": "Opslaan",
+    "hf_token_saving": "opslaan…",
+    "hf_token_saved": "Hugging Face-token opgeslagen",
+    "hf_token_error": "Token kon niet worden opgeslagen — probeer opnieuw of stel het later in via Instellingen → Inloggegevens."
   }
 }
