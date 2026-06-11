@@ -348,16 +348,16 @@
     "channel_preview": "Xem trước",
     "channel_set": "Đã đặt kênh cập nhật thành {{channel}}",
     "channel_preview_hint": "Bản xem trước theo dõi bản dựng main mới nhất — tính năng mới hơn, ít được kiểm thử hơn. Quay lại bản ổn định nếu có bản phát hành ổn định mới hơn.",
-    "self_check": "Run self-check",
-    "self_check_failed": "Self-check failed: {{message}}",
-    "self_check_ok": "OK",
-    "self_check_warn": "Warning",
-    "self_check_fail": "Failed",
-    "self_check_healthy": "All checks passed — this install looks healthy.",
-    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
-    "save_bundle": "Save diagnostic bundle",
-    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
-    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
+    "self_check": "Chạy tự kiểm tra",
+    "self_check_failed": "Tự kiểm tra thất bại: {{message}}",
+    "self_check_ok": "Ổn",
+    "self_check_warn": "Cảnh báo",
+    "self_check_fail": "Thất bại",
+    "self_check_healthy": "Tất cả kiểm tra đều đạt — bản cài đặt này có vẻ ổn.",
+    "self_check_attention": "{{count}} kiểm tra thất bại — xem gợi ý ở trên.",
+    "save_bundle": "Lưu gói chẩn đoán",
+    "bundle_saved": "Đã lưu gói chẩn đoán: {{filename}}",
+    "bundle_failed": "Không thể tạo gói chẩn đoán: {{message}}"
   },
   "privacy": {
     "desc": "Mọi thứ đều chạy trên <1>máy này</1>. Âm thanh, video và bản ghi của bạn không bao giờ rời khỏi máy tính của bạn trừ khi bạn sử dụng một cách rõ ràng một trình dịch trực tuyến (Google, DeepL, v.v.) hoặc đẩy tới HuggingFace.",
@@ -675,9 +675,9 @@
     "copy_failed": "Sao chép không thành công",
     "open_docs": "Mở tài liệu",
     "copy_diagnostic": "Sao chép chẩn đoán",
-    "num_speakers_label": "Speakers",
-    "num_speakers_auto": "Auto",
-    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
+    "num_speakers_label": "Người nói",
+    "num_speakers_auto": "Tự động",
+    "num_speakers_help": "Video này có bao nhiêu người nói? Để trống để tự động phát hiện. Đặt một con số nếu tính năng tự động gộp nhiều người nói thành một."
   },
   "glossary": {
     "title": "Thuật ngữ",
@@ -1149,9 +1149,9 @@
     "desc": "Đừng lo lắng — phần còn lại của ứng dụng vẫn hoạt động. Bạn có thể chuyển đổi tab hoặc thử lại bên dưới.",
     "tryAgain": "Thử lại",
     "openDocs": "Mở tài liệu cho lỗi này",
-    "report": "Report this bug",
-    "searchIssues": "Search similar issues",
-    "unexpected": "Unexpected error: {{message}}"
+    "report": "Báo cáo lỗi này",
+    "searchIssues": "Tìm các vấn đề tương tự",
+    "unexpected": "Lỗi không mong muốn: {{message}}"
   },
   "keyboard": {
     "title": "Phím tắt",

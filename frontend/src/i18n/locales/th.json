@@ -348,16 +348,16 @@
     "channel_preview": "พรีวิว",
     "channel_set": "ตั้งค่าช่องอัปเดตเป็น {{channel}} แล้ว",
     "channel_preview_hint": "พรีวิวจะติดตามบิลด์ main ล่าสุด — ฟีเจอร์ใหม่กว่า แต่ทดสอบน้อยกว่า จะกลับไปใช้เวอร์ชันเสถียรหากมีรุ่นเสถียรที่ใหม่กว่า",
-    "self_check": "Run self-check",
-    "self_check_failed": "Self-check failed: {{message}}",
-    "self_check_ok": "OK",
-    "self_check_warn": "Warning",
-    "self_check_fail": "Failed",
-    "self_check_healthy": "All checks passed — this install looks healthy.",
-    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
-    "save_bundle": "Save diagnostic bundle",
-    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
-    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
+    "self_check": "เรียกใช้การตรวจสอบตนเอง",
+    "self_check_failed": "การตรวจสอบตนเองล้มเหลว: {{message}}",
+    "self_check_ok": "ปกติ",
+    "self_check_warn": "คำเตือน",
+    "self_check_fail": "ล้มเหลว",
+    "self_check_healthy": "ผ่านการตรวจสอบทั้งหมด — การติดตั้งนี้ดูปกติดี",
+    "self_check_attention": "การตรวจสอบล้มเหลว {{count}} รายการ — ดูคำแนะนำด้านบน",
+    "save_bundle": "บันทึกชุดวินิจฉัย",
+    "bundle_saved": "บันทึกชุดวินิจฉัยแล้ว: {{filename}}",
+    "bundle_failed": "ไม่สามารถสร้างชุดวินิจฉัยได้: {{message}}"
   },
   "privacy": {
     "desc": "ทุกอย่างทำงานบน <1>เครื่องนี้</1> เสียง วิดีโอ และการถอดเสียงของคุณจะไม่ออกจากคอมพิวเตอร์ของคุณ เว้นแต่คุณจะใช้โปรแกรมแปลออนไลน์อย่างชัดเจน (Google, DeepL ฯลฯ) หรือกดไปที่ HuggingFace",
@@ -675,9 +675,9 @@
     "copy_failed": "การคัดลอกล้มเหลว",
     "open_docs": "เปิดเอกสาร",
     "copy_diagnostic": "คัดลอกการวินิจฉัย",
-    "num_speakers_label": "Speakers",
-    "num_speakers_auto": "Auto",
-    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
+    "num_speakers_label": "ผู้พูด",
+    "num_speakers_auto": "อัตโนมัติ",
+    "num_speakers_help": "วิดีโอนี้มีผู้พูดกี่คน? เว้นว่างเพื่อตรวจหาอัตโนมัติ ระบุจำนวนหากการตรวจหาอัตโนมัติรวมผู้พูดหลายคนเป็นคนเดียว"
   },
   "glossary": {
     "title": "อภิธานศัพท์",
@@ -1149,9 +1149,9 @@
     "desc": "ไม่ต้องกังวล แอปที่เหลือยังใช้งานได้ คุณสามารถสลับแท็บหรือลองอีกครั้งด้านล่าง",
     "tryAgain": "ลองอีกครั้ง",
     "openDocs": "เปิดเอกสารเพื่อดูข้อผิดพลาดนี้",
-    "report": "Report this bug",
-    "searchIssues": "Search similar issues",
-    "unexpected": "Unexpected error: {{message}}"
+    "report": "รายงานข้อบกพร่องนี้",
+    "searchIssues": "ค้นหาปัญหาที่คล้ายกัน",
+    "unexpected": "ข้อผิดพลาดที่ไม่คาดคิด: {{message}}"
   },
   "keyboard": {
     "title": "แป้นพิมพ์ลัด",

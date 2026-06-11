@@ -348,16 +348,16 @@
     "channel_preview": "Voorbeeld",
     "channel_set": "Updatekanaal ingesteld op {{channel}}",
     "channel_preview_hint": "Voorbeeld volgt de nieuwste main-build — nieuwere functies, minder getest. Valt terug op stabiel als er een nieuwere stabiele release is.",
-    "self_check": "Run self-check",
-    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check": "Zelfcontrole uitvoeren",
+    "self_check_failed": "Zelfcontrole mislukt: {{message}}",
     "self_check_ok": "OK",
-    "self_check_warn": "Warning",
-    "self_check_fail": "Failed",
-    "self_check_healthy": "All checks passed — this install looks healthy.",
-    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
-    "save_bundle": "Save diagnostic bundle",
-    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
-    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
+    "self_check_warn": "Waarschuwing",
+    "self_check_fail": "Mislukt",
+    "self_check_healthy": "Alle controles geslaagd — deze installatie ziet er gezond uit.",
+    "self_check_attention": "{{count}} controle(s) mislukt — zie de hints hierboven.",
+    "save_bundle": "Diagnosepakket opslaan",
+    "bundle_saved": "Diagnosepakket opgeslagen: {{filename}}",
+    "bundle_failed": "Kon het diagnosepakket niet maken: {{message}}"
   },
   "privacy": {
     "desc": "Alles draait op <1>deze machine</1>. Uw audio, video en transcripties verlaten uw computer nooit, tenzij u expliciet een online vertaler (Google, DeepL, enz.) gebruikt of naar HuggingFace pusht.",
@@ -675,9 +675,9 @@
     "copy_failed": "Kopiëren mislukt",
     "open_docs": "Documenten openen",
     "copy_diagnostic": "Diagnostiek kopiëren",
-    "num_speakers_label": "Speakers",
-    "num_speakers_auto": "Auto",
-    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
+    "num_speakers_label": "Sprekers",
+    "num_speakers_auto": "Automatisch",
+    "num_speakers_help": "Hoeveel sprekers zijn er in deze video? Laat leeg voor automatische detectie. Stel een aantal in als de detectie meerdere sprekers samenvoegt tot één."
   },
   "glossary": {
     "title": "Woordenlijst",
@@ -1149,9 +1149,9 @@
     "desc": "Maak je geen zorgen: de rest van de app werkt nog steeds. U kunt van tabblad wisselen of het hieronder opnieuw proberen.",
     "tryAgain": "Probeer het opnieuw",
     "openDocs": "Open documenten voor deze fout",
-    "report": "Report this bug",
-    "searchIssues": "Search similar issues",
-    "unexpected": "Unexpected error: {{message}}"
+    "report": "Deze bug melden",
+    "searchIssues": "Vergelijkbare problemen zoeken",
+    "unexpected": "Onverwachte fout: {{message}}"
   },
   "keyboard": {
     "title": "Sneltoetsen",

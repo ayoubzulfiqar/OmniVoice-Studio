@@ -348,16 +348,16 @@
     "channel_preview": "Podgląd",
     "channel_set": "Kanał aktualizacji ustawiony na {{channel}}",
     "channel_preview_hint": "Podgląd śledzi najnowszą kompilację main — nowsze funkcje, mniej testów. Wraca do stabilnej, jeśli stabilne wydanie jest nowsze.",
-    "self_check": "Run self-check",
-    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check": "Uruchom autodiagnostykę",
+    "self_check_failed": "Autodiagnostyka nie powiodła się: {{message}}",
     "self_check_ok": "OK",
-    "self_check_warn": "Warning",
-    "self_check_fail": "Failed",
-    "self_check_healthy": "All checks passed — this install looks healthy.",
-    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
-    "save_bundle": "Save diagnostic bundle",
-    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
-    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
+    "self_check_warn": "Ostrzeżenie",
+    "self_check_fail": "Niepowodzenie",
+    "self_check_healthy": "Wszystkie testy zaliczone — ta instalacja wygląda na sprawną.",
+    "self_check_attention": "{{count}} test(y) zakończone niepowodzeniem — zobacz wskazówki powyżej.",
+    "save_bundle": "Zapisz pakiet diagnostyczny",
+    "bundle_saved": "Pakiet diagnostyczny zapisany: {{filename}}",
+    "bundle_failed": "Nie udało się utworzyć pakietu diagnostycznego: {{message}}"
   },
   "privacy": {
     "desc": "Wszystko działa na <1>tej maszynie</1>. Twoje nagrania audio, wideo i transkrypcje nigdy nie opuszczają Twojego komputera, chyba że wyraźnie skorzystasz z tłumacza online (Google, DeepL itp.) lub przekażesz je do HuggingFace.",
@@ -675,9 +675,9 @@
     "copy_failed": "Kopiowanie nie powiodło się",
     "open_docs": "Otwórz dokumenty",
     "copy_diagnostic": "Kopiuj diagnostykę",
-    "num_speakers_label": "Speakers",
-    "num_speakers_auto": "Auto",
-    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
+    "num_speakers_label": "Mówcy",
+    "num_speakers_auto": "Automatycznie",
+    "num_speakers_help": "Ilu mówców jest w tym wideo? Pozostaw puste, aby wykryć automatycznie. Podaj liczbę, jeśli automatyczne wykrywanie łączy kilku mówców w jednego."
   },
   "glossary": {
     "title": "Glosariusz",
@@ -1149,9 +1149,9 @@
     "desc": "Nie martw się — reszta aplikacji nadal działa. Możesz przełączyć karty lub spróbować ponownie poniżej.",
     "tryAgain": "Spróbuj ponownie",
     "openDocs": "Otwórz dokumenty dotyczące tego błędu",
-    "report": "Report this bug",
-    "searchIssues": "Search similar issues",
-    "unexpected": "Unexpected error: {{message}}"
+    "report": "Zgłoś ten błąd",
+    "searchIssues": "Szukaj podobnych problemów",
+    "unexpected": "Nieoczekiwany błąd: {{message}}"
   },
   "keyboard": {
     "title": "Skróty klawiaturowe",

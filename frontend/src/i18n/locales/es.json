@@ -349,16 +349,16 @@
     "channel_preview": "Vista previa",
     "channel_set": "Canal de actualización configurado en {{channel}}",
     "channel_preview_hint": "La vista previa sigue la última compilación de main: funciones más nuevas, menos probadas. Vuelve a estable si hay una versión estable más reciente.",
-    "self_check": "Run self-check",
-    "self_check_failed": "Self-check failed: {{message}}",
-    "self_check_ok": "OK",
-    "self_check_warn": "Warning",
-    "self_check_fail": "Failed",
-    "self_check_healthy": "All checks passed — this install looks healthy.",
-    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
-    "save_bundle": "Save diagnostic bundle",
-    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
-    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
+    "self_check": "Ejecutar autocomprobación",
+    "self_check_failed": "La autocomprobación falló: {{message}}",
+    "self_check_ok": "Correcto",
+    "self_check_warn": "Advertencia",
+    "self_check_fail": "Falló",
+    "self_check_healthy": "Todas las comprobaciones pasaron — esta instalación parece estar en buen estado.",
+    "self_check_attention": "{{count}} comprobación(es) fallaron — consulta las pistas de arriba.",
+    "save_bundle": "Guardar paquete de diagnóstico",
+    "bundle_saved": "Paquete de diagnóstico guardado: {{filename}}",
+    "bundle_failed": "No se pudo crear el paquete de diagnóstico: {{message}}"
   },
   "privacy": {
     "desc": "Todo se ejecuta en <1>esta máquina</1>. Su audio, video y transcripciones nunca salen de su computadora a menos que utilice explícitamente un traductor en línea (Google, DeepL, etc.) o acceda a HuggingFace.",
@@ -676,9 +676,9 @@
     "copy_failed": "Copia fallida",
     "open_docs": "Documentos abiertos",
     "copy_diagnostic": "Copiar diagnóstico",
-    "num_speakers_label": "Speakers",
-    "num_speakers_auto": "Auto",
-    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
+    "num_speakers_label": "Hablantes",
+    "num_speakers_auto": "Automático",
+    "num_speakers_help": "¿Cuántos hablantes hay en este vídeo? Déjalo vacío para detectarlo automáticamente. Indica un número si la detección automática fusiona varios hablantes en uno."
   },
   "glossary": {
     "title": "Glosario",
@@ -1150,9 +1150,9 @@
     "desc": "No te preocupes, el resto de la aplicación sigue funcionando. Puedes cambiar de pestaña o volver a intentarlo a continuación.",
     "tryAgain": "Inténtalo de nuevo",
     "openDocs": "Abrir documentos para este error",
-    "report": "Report this bug",
-    "searchIssues": "Search similar issues",
-    "unexpected": "Unexpected error: {{message}}"
+    "report": "Informar de este error",
+    "searchIssues": "Buscar problemas similares",
+    "unexpected": "Error inesperado: {{message}}"
   },
   "keyboard": {
     "title": "Atajos de teclado",

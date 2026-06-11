@@ -348,16 +348,16 @@
     "channel_preview": "Förhandsvisning",
     "channel_set": "Uppdateringskanal inställd på {{channel}}",
     "channel_preview_hint": "Förhandsvisning följer det senaste main-bygget – nyare funktioner, mindre testade. Återgår till stabil om en stabil version ligger före.",
-    "self_check": "Run self-check",
-    "self_check_failed": "Self-check failed: {{message}}",
+    "self_check": "Kör självtest",
+    "self_check_failed": "Självtestet misslyckades: {{message}}",
     "self_check_ok": "OK",
-    "self_check_warn": "Warning",
-    "self_check_fail": "Failed",
-    "self_check_healthy": "All checks passed — this install looks healthy.",
-    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
-    "save_bundle": "Save diagnostic bundle",
-    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
-    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
+    "self_check_warn": "Varning",
+    "self_check_fail": "Misslyckades",
+    "self_check_healthy": "Alla kontroller godkända — installationen ser frisk ut.",
+    "self_check_attention": "{{count}} kontroll(er) misslyckades — se tipsen ovan.",
+    "save_bundle": "Spara diagnostikpaket",
+    "bundle_saved": "Diagnostikpaket sparat: {{filename}}",
+    "bundle_failed": "Kunde inte skapa diagnostikpaketet: {{message}}"
   },
   "privacy": {
     "desc": "Allt körs på <1>denna maskin</1>. Ditt ljud, video och transkriptioner lämnar aldrig din dator om du inte uttryckligen använder en onlineöversättare (Google, DeepL, etc.) eller trycker till HuggingFace.",
@@ -675,9 +675,9 @@
     "copy_failed": "Kopieringen misslyckades",
     "open_docs": "Öppna dokument",
     "copy_diagnostic": "Kopiera diagnostik",
-    "num_speakers_label": "Speakers",
+    "num_speakers_label": "Talare",
     "num_speakers_auto": "Auto",
-    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
+    "num_speakers_help": "Hur många talare finns i videon? Lämna tomt för automatisk identifiering. Ange ett antal om identifieringen slår ihop flera talare till en."
   },
   "glossary": {
     "title": "Ordlista",
@@ -1149,9 +1149,9 @@
     "desc": "Oroa dig inte – resten av appen fungerar fortfarande. Du kan byta flik eller försöka igen nedan.",
     "tryAgain": "Försök igen",
     "openDocs": "Öppna dokument för detta fel",
-    "report": "Report this bug",
-    "searchIssues": "Search similar issues",
-    "unexpected": "Unexpected error: {{message}}"
+    "report": "Rapportera den här buggen",
+    "searchIssues": "Sök liknande problem",
+    "unexpected": "Oväntat fel: {{message}}"
   },
   "keyboard": {
     "title": "Kortkommandon",

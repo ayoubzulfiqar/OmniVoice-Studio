@@ -348,16 +348,16 @@
     "channel_preview": "प्रीव्यू",
     "channel_set": "अपडेट चैनल {{channel}} पर सेट किया गया",
     "channel_preview_hint": "प्रीव्यू नवीनतम main बिल्ड को ट्रैक करता है — नई सुविधाएँ, कम परीक्षण। यदि कोई स्थिर रिलीज़ आगे है तो स्थिर पर वापस आ जाता है।",
-    "self_check": "Run self-check",
-    "self_check_failed": "Self-check failed: {{message}}",
-    "self_check_ok": "OK",
-    "self_check_warn": "Warning",
-    "self_check_fail": "Failed",
-    "self_check_healthy": "All checks passed — this install looks healthy.",
-    "self_check_attention": "{{count}} check(s) failed — see the hints above.",
-    "save_bundle": "Save diagnostic bundle",
-    "bundle_saved": "Diagnostic bundle saved: {{filename}}",
-    "bundle_failed": "Could not build the diagnostic bundle: {{message}}"
+    "self_check": "सेल्फ़-चेक चलाएँ",
+    "self_check_failed": "सेल्फ़-चेक विफल: {{message}}",
+    "self_check_ok": "ठीक",
+    "self_check_warn": "चेतावनी",
+    "self_check_fail": "विफल",
+    "self_check_healthy": "सभी जाँचें सफल — यह इंस्टॉल ठीक लग रहा है।",
+    "self_check_attention": "{{count}} जाँच विफल — ऊपर दिए संकेत देखें।",
+    "save_bundle": "डायग्नोस्टिक बंडल सहेजें",
+    "bundle_saved": "डायग्नोस्टिक बंडल सहेजा गया: {{filename}}",
+    "bundle_failed": "डायग्नोस्टिक बंडल नहीं बन सका: {{message}}"
   },
   "privacy": {
     "desc": "सब कुछ <1>इस मशीन</1> पर चलता है। जब तक आप स्पष्ट रूप से ऑनलाइन अनुवादक (Google, DeepL, आदि) का उपयोग नहीं करते हैं या HuggingFace पर नहीं जाते हैं, तब तक आपका ऑडियो, वीडियो और ट्रांसक्रिप्ट आपके कंप्यूटर को कभी नहीं छोड़ते हैं।",
@@ -675,9 +675,9 @@
     "copy_failed": "प्रतिलिपि विफल",
     "open_docs": "दस्तावेज़ खोलें",
     "copy_diagnostic": "डायग्नोस्टिक कॉपी करें",
-    "num_speakers_label": "Speakers",
-    "num_speakers_auto": "Auto",
-    "num_speakers_help": "How many speakers are in this video? Leave blank to auto-detect. Set a number if auto-detect merges multiple speakers into one."
+    "num_speakers_label": "वक्ता",
+    "num_speakers_auto": "स्वतः",
+    "num_speakers_help": "इस वीडियो में कितने वक्ता हैं? स्वतः पहचान के लिए खाली छोड़ें। यदि स्वतः पहचान कई वक्ताओं को एक में मिला देती है तो संख्या निर्धारित करें।"
   },
   "glossary": {
     "title": "शब्दावली",
@@ -1149,9 +1149,9 @@
     "desc": "चिंता न करें - बाकी ऐप अभी भी काम करता है। आप टैब स्विच कर सकते हैं, या नीचे पुनः प्रयास कर सकते हैं।",
     "tryAgain": "पुनः प्रयास करें",
     "openDocs": "इस त्रुटि के लिए दस्तावेज़ खोलें",
-    "report": "Report this bug",
-    "searchIssues": "Search similar issues",
-    "unexpected": "Unexpected error: {{message}}"
+    "report": "इस बग की रिपोर्ट करें",
+    "searchIssues": "मिलते-जुलते मुद्दे खोजें",
+    "unexpected": "अप्रत्याशित त्रुटि: {{message}}"
   },
   "keyboard": {
     "title": "कीबोर्ड शॉर्टकट",

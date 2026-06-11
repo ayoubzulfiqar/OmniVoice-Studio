@@ -413,8 +413,7 @@ function App() {
     (async () => {
       try {
         const fd = new FormData();
-        fd.append('text', i18n.t('firstrun.first_sound_text',
-          'Welcome to your studio. Every word you hear was generated on this machine, just now.'));
+        fd.append('text', i18n.t('firstrun.first_sound_text'));
         // Functional model prompt (not user-facing copy) — keeps the demo
         // voice warm without depending on seeded profiles.
         fd.append('instruct', 'A warm, friendly narrator voice, medium pace');
@@ -423,8 +422,7 @@ function App() {
         if (!res.ok) return;
         const blob = await res.blob();
         await playBlobAudio(blob);
-        toast.success(i18n.t('firstrun.first_sound_done',
-          'That voice? Generated seconds ago, locally. Welcome in.'), { duration: 7000 });
+        toast.success(i18n.t('firstrun.first_sound_done'), { duration: 7000 });
       } catch { /* silent — see above */ }
     })();
   }, [setupChecked, setupNeeded, bootstrapStage]);
