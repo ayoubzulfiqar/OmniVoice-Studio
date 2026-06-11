@@ -264,6 +264,8 @@ def _check_network() -> dict:
     # all model downloads need to get started. urllib honors HTTP(S)_PROXY.
     import urllib.request
     import urllib.error
+    if not _HUB_URL.startswith("https://"):  # constant today; guard the sink anyway
+        raise ValueError(f"hub URL must be https, got {_HUB_URL!r}")
     req = urllib.request.Request(_HUB_URL, method="HEAD")
     try:
         with urllib.request.urlopen(req, timeout=_HUB_TIMEOUT_S):

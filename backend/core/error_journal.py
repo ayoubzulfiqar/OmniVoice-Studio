@@ -111,7 +111,8 @@ def classify_exception(exc: BaseException, trace: str = "") -> str:
 def _fingerprint(error_class: str, exc: BaseException) -> str:
     import hashlib
     raw = f"{error_class}|{type(exc).__name__}|{scrub_text(str(exc))[:200]}"
-    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:16]
+    # Dedup key for the journal, not a security boundary.
+    return hashlib.sha1(raw.encode("utf-8", "replace"), usedforsecurity=False).hexdigest()[:16]
 
 
 def _persist_locked() -> None:
