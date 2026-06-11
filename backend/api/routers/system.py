@@ -322,9 +322,10 @@ def _tauri_log_candidates():
             os.path.join(home, "Library/Logs/OmniVoice/backend_err.log"),
         ]
     if sys.platform.startswith("linux"):
+        data_dir = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local/share")
         state_dir = os.environ.get("XDG_STATE_HOME") or os.path.join(home, ".local/state")
         return [
-            os.path.join(home, ".local/share", bid, "logs", "tauri.log"),
+            os.path.join(data_dir, bid, "logs", "tauri.log"),
             os.path.join(home, ".config", bid, "logs", "tauri.log"),
             os.path.join(state_dir, "OmniVoice", "backend.log"),
             os.path.join(state_dir, "OmniVoice", "backend_err.log"),
@@ -464,6 +465,14 @@ async def clear_system_logs():
                     status_code=500,
                     detail=f"Could not clear log at {p}: {e}. The file may be open in another process or read-only — close tailing tools and retry.",
                 )
+    if cleared_any:
+        # The crash log just shrank to zero — drop any stored ack so a stale
+        # byte count can't suppress the next 'crash-last-session' notice.
+        for key in ("crash_log_acked", "crash_log_acked_size"):
+            try:
+                prefs_delete(key)
+            except Exception:
+                pass
     return {"cleared": cleared_any}
 
 
@@ -686,18 +695,33 @@ def _crashed_last_session() -> bool:
     if not os.path.exists(CRASH_LOG_PATH):
         return False
     size = os.path.getsize(CRASH_LOG_PATH)
-    acked = int(prefs_get("crash_log_acked_size", 0) or 0)
-    if size <= acked:
+    if size == 0:
         return False
-    return os.path.getmtime(CRASH_LOG_PATH) < _PROCESS_START_TS
+    mtime = os.path.getmtime(CRASH_LOG_PATH)
+    # Composite ack (size + mtime): a bare byte count goes stale after the log
+    # is truncated — the next crash log can stay smaller than the old acked
+    # size forever, silently suppressing 'crash-last-session'. The ack only
+    # holds while it still covers the file's current state.
+    ack = prefs_get("crash_log_acked")
+    if isinstance(ack, dict):
+        if float(ack.get("mtime", 0) or 0) >= mtime and int(ack.get("size", 0) or 0) >= size:
+            return False
+    else:
+        # Legacy size-only ack from older builds.
+        if size <= int(prefs_get("crash_log_acked_size", 0) or 0):
+            return False
+    return mtime < _PROCESS_START_TS
 
 
 @router.post("/system/crash/ack")
 async def ack_crash():
     """Mark the current crash log as seen — dismisses the
-    'crash-last-session' notification until the log grows again."""
-    size = os.path.getsize(CRASH_LOG_PATH) if os.path.exists(CRASH_LOG_PATH) else 0
-    prefs_set("crash_log_acked_size", size)
+    'crash-last-session' notification until the log changes again."""
+    size = mtime = 0
+    if os.path.exists(CRASH_LOG_PATH):
+        size = os.path.getsize(CRASH_LOG_PATH)
+        mtime = os.path.getmtime(CRASH_LOG_PATH)
+    prefs_set("crash_log_acked", {"size": size, "mtime": mtime})
     return {"acked_size": size}
 
 

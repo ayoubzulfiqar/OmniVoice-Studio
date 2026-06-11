@@ -103,7 +103,17 @@
     "region_russia": "Ryssland (spegel)",
     "region_restricted": "Begränsad (spegel)",
     "unknown_error": "Okänt fel",
-    "retrying": "Försöker igen..."
+    "retrying": "Försöker igen...",
+    "hint_readme": "README.md saknades i paketet. Detta åtgärdas nu automatiskt — ett nytt försök bör fungera.",
+    "hint_python_mirror": "Nätverket kunde inte nå Python-nedladdningen (github.com-release). Byt region i Inställningar → Nätverk (Kina / Ryssland / Begränsad går via en spegel), eller installera Python 3.11+ systemvitt så att appen använder den.",
+    "hint_uv_timeout": "Nätverkstimeout vid nedladdning av uv. Kontrollera din internetanslutning eller prova en annan region i Inställningar → Nätverk.",
+    "hint_uv_sync": "Installation av beroenden misslyckades. \"Rensa & Försök igen\" raderar den cachade venv:n och börjar om.",
+    "hint_build_backend": "Fel i Pythons byggbackend. \"Rensa & Försök igen\" tar bort den trasiga venv:n så att den byggs om från grunden.",
+    "hint_ffmpeg": "Nedladdningen av ffmpeg misslyckades. Detta är inte kritiskt — försök igen eller installera ffmpeg manuellt.",
+    "hint_port": "Port 3900 används redan. Stäng andra OmniVoice-instanser eller appar som använder porten.",
+    "hint_silent_crash": "Backenden kraschade utan felmeddelande. \"Rensa & Försök igen\" löser ofta problem med en korrupt venv.",
+    "hint_github_blocked": "Ditt nätverk kan blockera GitHub. Installera Python 3.11+ från python.org (lägg till i PATH) och starta om, eller sätt UV_PYTHON_INSTALL_MIRROR — se docs/install/troubleshooting.md.",
+    "hint_default": "Prova \"Försök igen\" först. Misslyckas det igen bygger \"Rensa & Försök igen\" om miljön från grunden."
   },
   "stories": {
     "title": "Redaktör för berättelser",
@@ -969,7 +979,9 @@
     "open": "Öppna",
     "install_required_models": "Installera de modeller som krävs ovan för att fortsätta.",
     "try_dictation": "Prova diktering",
-    "next_try_dictation": "Nästa: Prova diktering"
+    "next_try_dictation": "Nästa: Prova diktering",
+    "step_aria": "Steg {{num}}: {{label}}",
+    "step_completed": "klart"
   },
   "donate": {
     "title": "Support",

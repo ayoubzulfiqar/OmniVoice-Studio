@@ -104,7 +104,17 @@
     "region_russia": "Russie (miroir)",
     "region_restricted": "Restreint (miroir)",
     "unknown_error": "Erreur inconnue",
-    "retrying": "Nouvelle tentative…"
+    "retrying": "Nouvelle tentative…",
+    "hint_readme": "README.md manquait dans le paquet. C'est désormais corrigé automatiquement — réessayer devrait fonctionner.",
+    "hint_python_mirror": "Le réseau n'a pas pu atteindre le téléchargement de Python (release github.com). Changez de région dans Paramètres → Réseau (Chine / Russie / Restreint passent par un miroir), ou installez Python 3.11+ sur le système pour que l'application l'utilise.",
+    "hint_uv_timeout": "Délai réseau dépassé lors du téléchargement de uv. Vérifiez votre connexion internet ou essayez une autre région dans Paramètres → Réseau.",
+    "hint_uv_sync": "L'installation des dépendances a échoué. « Nettoyer et réessayer » supprimera le venv en cache et repartira de zéro.",
+    "hint_build_backend": "Erreur du backend de build Python. « Nettoyer et réessayer » supprime le venv défectueux pour le reconstruire entièrement.",
+    "hint_ffmpeg": "Le téléchargement de ffmpeg a échoué. Ce n'est pas bloquant — réessayez ou installez ffmpeg manuellement.",
+    "hint_port": "Le port 3900 est déjà utilisé. Fermez les autres instances d'OmniVoice ou les applications utilisant ce port.",
+    "hint_silent_crash": "Le backend s'est arrêté sans message d'erreur. « Nettoyer et réessayer » corrige souvent un venv corrompu.",
+    "hint_github_blocked": "Votre réseau bloque peut-être GitHub. Installez Python 3.11+ depuis python.org (ajout au PATH) et relancez, ou définissez UV_PYTHON_INSTALL_MIRROR — voir docs/install/troubleshooting.md.",
+    "hint_default": "Essayez d'abord « Réessayer ». En cas de nouvel échec, « Nettoyer et réessayer » reconstruira l'environnement de zéro."
   },
   "stories": {
     "title": "Éditeur d'histoires",
@@ -970,7 +980,9 @@
     "open": "Ouvert",
     "install_required_models": "Installez les modèles requis ci-dessus pour continuer.",
     "try_dictation": "Essayez la dictée",
-    "next_try_dictation": "Suivant : Essayez la dictée"
+    "next_try_dictation": "Suivant : Essayez la dictée",
+    "step_aria": "Étape {{num}} : {{label}}",
+    "step_completed": "terminée"
   },
   "donate": {
     "title": "Assistance",

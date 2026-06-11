@@ -103,7 +103,17 @@
     "region_russia": "Rusia (cermin)",
     "region_restricted": "Dibatasi (cermin)",
     "unknown_error": "Kesalahan tidak diketahui",
-    "retrying": "Mencoba lagi…"
+    "retrying": "Mencoba lagi…",
+    "hint_readme": "README.md hilang dari bundel. Ini sekarang diperbaiki otomatis — coba lagi seharusnya berhasil.",
+    "hint_python_mirror": "Jaringan tidak dapat menjangkau unduhan Python (rilis github.com). Ganti wilayah di Pengaturan → Jaringan (Tiongkok / Rusia / Terbatas lewat mirror), atau pasang Python 3.11+ di sistem agar aplikasi memakainya.",
+    "hint_uv_timeout": "Waktu jaringan habis saat mengunduh uv. Periksa koneksi internet Anda atau coba wilayah lain di Pengaturan → Jaringan.",
+    "hint_uv_sync": "Pemasangan dependensi gagal. \"Bersihkan & Coba Lagi\" akan menghapus venv yang ter-cache dan memulai dari awal.",
+    "hint_build_backend": "Kesalahan backend build Python. \"Bersihkan & Coba Lagi\" menghapus venv yang rusak agar dibangun ulang dari awal.",
+    "hint_ffmpeg": "Unduhan ffmpeg gagal. Ini tidak fatal — coba lagi atau pasang ffmpeg secara manual.",
+    "hint_port": "Port 3900 sudah digunakan. Tutup instans OmniVoice lain atau aplikasi yang memakai port itu.",
+    "hint_silent_crash": "Backend berhenti tanpa pesan kesalahan. \"Bersihkan & Coba Lagi\" sering memperbaiki masalah venv yang rusak.",
+    "hint_github_blocked": "Jaringan Anda mungkin memblokir GitHub. Pasang Python 3.11+ dari python.org (tambahkan ke PATH) lalu jalankan ulang, atau setel UV_PYTHON_INSTALL_MIRROR — lihat docs/install/troubleshooting.md.",
+    "hint_default": "Coba \"Coba Lagi\" dulu. Jika gagal lagi, \"Bersihkan & Coba Lagi\" akan membangun ulang lingkungan dari awal."
   },
   "stories": {
     "title": "Editor Cerita",
@@ -969,7 +979,9 @@
     "open": "Buka",
     "install_required_models": "Instal model yang diperlukan di atas untuk melanjutkan.",
     "try_dictation": "Coba dikte",
-    "next_try_dictation": "Berikutnya: Coba dikte"
+    "next_try_dictation": "Berikutnya: Coba dikte",
+    "step_aria": "Langkah {{num}}: {{label}}",
+    "step_completed": "selesai"
   },
   "donate": {
     "title": "Dukungan",

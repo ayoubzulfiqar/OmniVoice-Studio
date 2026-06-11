@@ -104,7 +104,17 @@
     "region_russia": "Rusia (espejo)",
     "region_restricted": "Restringido (espejo)",
     "unknown_error": "Error desconocido",
-    "retrying": "Reintentando…"
+    "retrying": "Reintentando…",
+    "hint_readme": "Faltaba README.md en el paquete. Ya se corrige automáticamente — reintentar debería funcionar.",
+    "hint_python_mirror": "La red no pudo alcanzar la descarga de Python (release de github.com). Cambia la región en Configuración → Red (China / Rusia / Restringido pasan por un mirror) o instala Python 3.11+ en el sistema para que la app lo use.",
+    "hint_uv_timeout": "Tiempo de espera agotado al descargar uv. Comprueba tu conexión a internet o prueba otra región en Configuración → Red.",
+    "hint_uv_sync": "Falló la instalación de dependencias. «Limpiar y reintentar» eliminará el venv en caché y empezará de cero.",
+    "hint_build_backend": "Error del backend de compilación de Python. «Limpiar y reintentar» elimina el venv dañado para reconstruirlo desde cero.",
+    "hint_ffmpeg": "Falló la descarga de ffmpeg. No es fatal — reintenta o instala ffmpeg manualmente.",
+    "hint_port": "El puerto 3900 ya está en uso. Cierra otras instancias de OmniVoice o aplicaciones que usen ese puerto.",
+    "hint_silent_crash": "El backend se cerró sin mensaje de error. «Limpiar y reintentar» suele arreglar problemas de venv corrupto.",
+    "hint_github_blocked": "Tu red puede estar bloqueando GitHub. Instala Python 3.11+ desde python.org (añádelo al PATH) y reinicia, o define UV_PYTHON_INSTALL_MIRROR — consulta docs/install/troubleshooting.md.",
+    "hint_default": "Prueba primero «Reintentar». Si vuelve a fallar, «Limpiar y reintentar» reconstruirá el entorno desde cero."
   },
   "stories": {
     "title": "Editor de historias",
@@ -970,7 +980,9 @@
     "open": "Abierto",
     "install_required_models": "Instale los modelos requeridos arriba para continuar.",
     "try_dictation": "Prueba el dictado",
-    "next_try_dictation": "Siguiente: Prueba el dictado"
+    "next_try_dictation": "Siguiente: Prueba el dictado",
+    "step_aria": "Paso {{num}}: {{label}}",
+    "step_completed": "completado"
   },
   "donate": {
     "title": "Soporte",

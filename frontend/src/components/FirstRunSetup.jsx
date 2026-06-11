@@ -222,8 +222,10 @@ export default function FirstRunSetup() {
           modelsDir: s.defaults.modelsDir,
           region: s.defaults.region,
           updateChannel: s.defaults.updateChannel,
-          // Pre-select ROCm when the machine looks AMD — detection is shown
-          // on the card, and the user can always flip back to Auto.
+          // Pre-select ROCm only when Rust verified the ROCm userspace is
+          // installed (kind === 'rocm'). A bare AMD GPU without the runtime
+          // reports kind === 'amd': ROCm stays offered but unselected, since
+          // its wheels would silently fall back to CPU on such machines.
           torchVariant: s.hardware?.kind === 'rocm' ? 'rocm' : s.defaults.torchVariant,
           mirrors: { pypiIndex: '', hfEndpoint: '', pythonDownloads: '' },
         });

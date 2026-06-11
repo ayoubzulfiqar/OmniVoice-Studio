@@ -104,7 +104,17 @@
     "region_russia": "ロシア（鏡）",
     "region_restricted": "制限付き（ミラー）",
     "unknown_error": "不明なエラー",
-    "retrying": "再試行中…"
+    "retrying": "再試行中…",
+    "hint_readme": "バンドルに README.md がありませんでした。現在は自動修正されます — 再試行すれば動作するはずです。",
+    "hint_python_mirror": "ネットワークが Python のダウンロード(github.com のリリース)に到達できませんでした。設定 → ネットワークで地域を切り替える(中国 / ロシア / 制限付きはミラー経由)か、システムに Python 3.11+ をインストールしてアプリにそちらを使わせてください。",
+    "hint_uv_timeout": "uv のダウンロードでネットワークがタイムアウトしました。インターネット接続を確認するか、設定 → ネットワークで別の地域を試してください。",
+    "hint_uv_sync": "依存関係のインストールに失敗しました。「クリーンアップして再試行」はキャッシュされた venv を削除して最初からやり直します。",
+    "hint_build_backend": "Python ビルドバックエンドのエラーです。「クリーンアップして再試行」は壊れた venv を削除してゼロから再構築します。",
+    "hint_ffmpeg": "ffmpeg のダウンロードに失敗しました。致命的ではありません — 再試行するか、ffmpeg を手動でインストールしてください。",
+    "hint_port": "ポート 3900 は既に使用中です。他の OmniVoice インスタンスや、そのポートを使うアプリを終了してください。",
+    "hint_silent_crash": "バックエンドがエラーメッセージなしでクラッシュしました。「クリーンアップして再試行」で venv の破損が直ることがよくあります。",
+    "hint_github_blocked": "ネットワークが GitHub をブロックしている可能性があります。python.org から Python 3.11+ をインストール(PATH に追加)して再起動するか、UV_PYTHON_INSTALL_MIRROR を設定してください — docs/install/troubleshooting.md を参照。",
+    "hint_default": "まず「再試行」を試してください。再び失敗する場合、「クリーンアップして再試行」が環境をゼロから再構築します。"
   },
   "stories": {
     "title": "ストーリーエディター",
@@ -970,7 +980,9 @@
     "open": "開く",
     "install_required_models": "続行するには、上記の必要なモデルをインストールしてください。",
     "try_dictation": "ディクテーションを試してみる",
-    "next_try_dictation": "次へ: ディクテーションを試してみる"
+    "next_try_dictation": "次へ: ディクテーションを試してみる",
+    "step_aria": "ステップ {{num}}: {{label}}",
+    "step_completed": "完了"
   },
   "donate": {
     "title": "サポート",

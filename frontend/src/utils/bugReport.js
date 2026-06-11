@@ -32,9 +32,12 @@ const TOKEN_PATTERNS = [
 ];
 
 const HOME_PATTERNS = [
-  /\/Users\/[^/\s"']+/g,             // macOS
-  /\/home\/[^/\s"']+/g,              // Linux
-  /[A-Za-z]:\\Users\\[^\\\s"']+/g,   // Windows
+  // Windows-with-forward-slashes must run BEFORE the bare macOS shape, or
+  // `/Users/<name>` inside `C:/Users/<name>` gets eaten first, leaving `C:~`.
+  /(?:file:\/\/\/)?[A-Za-z]:\/Users\/[^/\s"']+/g, // Windows, forward slashes (webview stacks, file:/// URLs)
+  /\/Users\/[^/\s"']+/g,                       // macOS
+  /\/home\/[^/\s"']+/g,                        // Linux
+  /[A-Za-z]:\\Users\\[^\\\s"']+/g,             // Windows, backslashes
 ];
 
 /** Redact credential-shaped substrings and home directories. */
@@ -51,6 +54,20 @@ export function scrubText(text) {
 const MAX_STACK_CHARS = 1800;
 const MAX_BODY_CHARS = 6000;
 
+/** Bound every context fetch: a backend that accepts the socket and then
+ * stalls must not pin the report button / error-toast / boundary flow on the
+ * browser's full network timeout — partial context beats a hung report. */
+async function fetchJsonWithTimeout(url, timeoutMs = 2500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: controller.signal });
+    return r.ok ? await r.json() : null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Environment lines for the report body. Best-effort — every fetch is
  * optional so a dead backend still yields a usable report. */
 export async function captureContext() {
@@ -60,9 +77,8 @@ export async function captureContext() {
   ];
 
   try {
-    const r = await fetch(`${API}/system/info`);
-    if (r.ok) {
-      const j = await r.json();
+    const j = await fetchJsonWithTimeout(`${API}/system/info`);
+    if (j) {
       if (j?.os_version) lines.push(`**OS:** \`${scrubText(j.os_version)}\``);
       else if (j?.platform) lines.push(`**OS:** \`${j.platform}\``);
       if (j?.python) lines.push(`**Python:** \`${j.python}\``);
@@ -75,15 +91,12 @@ export async function captureContext() {
       if (j?.ram_total_gb) lines.push(`**RAM:** \`${j.ram_total_gb} GB\``);
       if (j?.disk_free_gb) lines.push(`**Disk free:** \`${j.disk_free_gb} GB\``);
     }
-  } catch { /* backend probably not up yet */ }
+  } catch { /* backend down, stalled, or timed out — partial context is fine */ }
 
   try {
-    const r = await fetch(`${API}/engines`);
-    if (r.ok) {
-      const j = await r.json();
-      const active = j?.tts?.active;
-      if (active) lines.push(`**Active TTS engine:** \`${active}\``);
-    }
+    const j = await fetchJsonWithTimeout(`${API}/engines`);
+    const active = j?.tts?.active;
+    if (active) lines.push(`**Active TTS engine:** \`${active}\``);
   } catch { /* noop */ }
 
   return lines.join('\n');

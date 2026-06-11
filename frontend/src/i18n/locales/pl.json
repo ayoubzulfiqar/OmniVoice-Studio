@@ -103,7 +103,17 @@
     "region_russia": "Rosja (lustro)",
     "region_restricted": "Ograniczone (lustro)",
     "unknown_error": "Nieznany błąd",
-    "retrying": "Ponawiam próbę…"
+    "retrying": "Ponawiam próbę…",
+    "hint_readme": "W pakiecie brakowało README.md. Jest to już naprawiane automatycznie — ponowienie powinno zadziałać.",
+    "hint_python_mirror": "Sieć nie mogła pobrać Pythona (release z github.com). Zmień region w Ustawienia → Sieć (Chiny / Rosja / Ograniczony korzystają z mirrora) albo zainstaluj Pythona 3.11+ w systemie, aby aplikacja z niego korzystała.",
+    "hint_uv_timeout": "Przekroczono limit czasu pobierania uv. Sprawdź połączenie z internetem lub wybierz inny region w Ustawienia → Sieć.",
+    "hint_uv_sync": "Instalacja zależności nie powiodła się. „Wyczyść i ponów” usunie zbuforowany venv i zacznie od nowa.",
+    "hint_build_backend": "Błąd backendu budowania Pythona. „Wyczyść i ponów” usuwa uszkodzony venv, aby zbudować go od zera.",
+    "hint_ffmpeg": "Pobieranie ffmpeg nie powiodło się. To nie jest krytyczne — ponów próbę lub zainstaluj ffmpeg ręcznie.",
+    "hint_port": "Port 3900 jest już zajęty. Zamknij inne instancje OmniVoice lub aplikacje korzystające z tego portu.",
+    "hint_silent_crash": "Backend zakończył działanie bez komunikatu o błędzie. „Wyczyść i ponów” często naprawia problemy z uszkodzonym venv.",
+    "hint_github_blocked": "Twoja sieć może blokować GitHub. Zainstaluj Pythona 3.11+ z python.org (dodaj do PATH) i uruchom ponownie albo ustaw UV_PYTHON_INSTALL_MIRROR — zobacz docs/install/troubleshooting.md.",
+    "hint_default": "Najpierw spróbuj „Ponów”. Jeśli znowu się nie powiedzie, „Wyczyść i ponów” odbuduje środowisko od zera."
   },
   "stories": {
     "title": "Redaktor opowiadań",
@@ -969,7 +979,9 @@
     "open": "Otwórz",
     "install_required_models": "Aby kontynuować, zainstaluj wymagane modele powyżej.",
     "try_dictation": "Spróbuj dyktowania",
-    "next_try_dictation": "Dalej: Wypróbuj dyktowanie"
+    "next_try_dictation": "Dalej: Wypróbuj dyktowanie",
+    "step_aria": "Krok {{num}}: {{label}}",
+    "step_completed": "ukończono"
   },
   "donate": {
     "title": "Wsparcie",

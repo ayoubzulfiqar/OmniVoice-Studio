@@ -7,6 +7,9 @@ describe('scrubText — frontend twin of backend/core/scrub.py', () => {
     ['/Users/alice/Library/Logs/app.log', '~/Library/Logs/app.log'],
     ['/home/bob/.omnivoice/omnivoice.log', '~/.omnivoice/omnivoice.log'],
     ['C:\\Users\\carol\\AppData\\Roaming\\OmniVoice', '~\\AppData\\Roaming\\OmniVoice'],
+    // Windows paths normalized to forward slashes (webview stacks, file URLs)
+    ['C:/Users/dave/AppData/Local/OmniVoice/app.log', '~/AppData/Local/OmniVoice/app.log'],
+    ['file:///C:/Users/erin/project/index.js', '~/project/index.js'],
   ])('redacts home path %s', (raw, expected) => {
     expect(scrubText(raw)).toBe(expected);
   });

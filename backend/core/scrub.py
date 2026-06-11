@@ -42,9 +42,12 @@ _TOKEN_PATTERNS = (
 # pattern-wise (not just this machine's $HOME) so paths quoted from a
 # user's pasted log on another OS get cleaned too.
 _HOME_PATTERNS = (
+    # Windows-with-forward-slashes must run BEFORE the bare macOS shape, or
+    # `/Users/<name>` inside `C:/Users/<name>` gets eaten first, leaving `C:~`.
+    re.compile(r"[A-Za-z]:/Users/[^/\s\"']+"),       # Windows, forward slashes (file URLs, normalized traces)
     re.compile(r"/Users/[^/\s\"']+"),                # macOS
     re.compile(r"/home/[^/\s\"']+"),                 # Linux
-    re.compile(r"[A-Za-z]:\\Users\\[^\\\s\"']+"),    # Windows
+    re.compile(r"[A-Za-z]:\\Users\\[^\\\s\"']+"),    # Windows, backslashes
 )
 
 # Values shorter than this are too entropy-poor to be real secrets and too

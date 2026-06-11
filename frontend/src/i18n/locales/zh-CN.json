@@ -939,7 +939,9 @@
     "open": "打开",
     "install_required_models": "请先安装以上必需模型。",
     "try_dictation": "试用听写",
-    "next_try_dictation": "下一步：试用听写"
+    "next_try_dictation": "下一步：试用听写",
+    "step_aria": "第 {{num}} 步:{{label}}",
+    "step_completed": "已完成"
   },
   "donate": {
     "title": "支持项目",
@@ -1111,7 +1113,17 @@
     "region_russia": "俄罗斯（镜子）",
     "region_restricted": "受限（镜像）",
     "unknown_error": "未知错误",
-    "retrying": "正在重试..."
+    "retrying": "正在重试...",
+    "hint_readme": "安装包中缺少 README.md。该问题现已自动修复 — 重试应该可以成功。",
+    "hint_python_mirror": "网络无法访问 Python 下载(github.com 发布页)。请在设置 → 网络中切换区域(中国 / 俄罗斯 / 受限会经由镜像),或在系统中安装 Python 3.11+ 让应用直接使用。",
+    "hint_uv_timeout": "下载 uv 时网络超时。请检查网络连接,或在设置 → 网络中尝试其他区域。",
+    "hint_uv_sync": "依赖安装失败。「清理并重试」会删除缓存的 venv 并重新开始。",
+    "hint_build_backend": "Python 构建后端出错。「清理并重试」会移除损坏的 venv,从头重新构建。",
+    "hint_ffmpeg": "ffmpeg 下载失败。这不是致命问题 — 可以重试,或手动安装 ffmpeg。",
+    "hint_port": "端口 3900 已被占用。请关闭其他 OmniVoice 实例或占用该端口的应用。",
+    "hint_silent_crash": "后端无错误信息地崩溃了。「清理并重试」通常能解决 venv 损坏的问题。",
+    "hint_github_blocked": "您的网络可能屏蔽了 GitHub。请从 python.org 安装 Python 3.11+(勾选加入 PATH)后重新启动,或设置 UV_PYTHON_INSTALL_MIRROR — 参见 docs/install/troubleshooting.md。",
+    "hint_default": "请先尝试「重试」。若再次失败,「清理并重试」会从头重建运行环境。"
   },
   "direction": {
     "title": "段 #{{id}} 的方向",

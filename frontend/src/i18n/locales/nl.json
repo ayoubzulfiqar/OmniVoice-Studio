@@ -103,7 +103,17 @@
     "region_russia": "Rusland (spiegel)",
     "region_restricted": "Beperkt (spiegel)",
     "unknown_error": "Onbekende fout",
-    "retrying": "Opnieuw proberen…"
+    "retrying": "Opnieuw proberen…",
+    "hint_readme": "README.md ontbrak in het pakket. Dit wordt nu automatisch hersteld — opnieuw proberen zou moeten werken.",
+    "hint_python_mirror": "Het netwerk kon de Python-download (github.com-release) niet bereiken. Wissel van regio in Instellingen → Netwerk (China / Rusland / Beperkt lopen via een mirror), of installeer Python 3.11+ systeembreed zodat de app die gebruikt.",
+    "hint_uv_timeout": "Netwerk-time-out bij het downloaden van uv. Controleer je internetverbinding of probeer een andere regio in Instellingen → Netwerk.",
+    "hint_uv_sync": "Installatie van afhankelijkheden mislukt. \"Wissen & Opnieuw proberen\" verwijdert de gecachte venv en begint opnieuw.",
+    "hint_build_backend": "Fout in de Python-build-backend. \"Wissen & Opnieuw proberen\" verwijdert de kapotte venv zodat die opnieuw wordt opgebouwd.",
+    "hint_ffmpeg": "ffmpeg-download mislukt. Dit is niet fataal — probeer opnieuw of installeer ffmpeg handmatig.",
+    "hint_port": "Poort 3900 is al in gebruik. Sluit andere OmniVoice-instanties of apps die deze poort gebruiken.",
+    "hint_silent_crash": "De backend is zonder foutmelding gecrasht. \"Wissen & Opnieuw proberen\" verhelpt vaak problemen met een corrupte venv.",
+    "hint_github_blocked": "Je netwerk blokkeert mogelijk GitHub. Installeer Python 3.11+ van python.org (voeg toe aan PATH) en herstart, of stel UV_PYTHON_INSTALL_MIRROR in — zie docs/install/troubleshooting.md.",
+    "hint_default": "Probeer eerst \"Opnieuw proberen\". Mislukt het weer, dan bouwt \"Wissen & Opnieuw proberen\" de omgeving helemaal opnieuw op."
   },
   "stories": {
     "title": "Verhalen-editor",
@@ -969,7 +979,9 @@
     "open": "Openen",
     "install_required_models": "Installeer de vereiste modellen hierboven om door te gaan.",
     "try_dictation": "Probeer dicteren",
-    "next_try_dictation": "Volgende: Probeer dicteren"
+    "next_try_dictation": "Volgende: Probeer dicteren",
+    "step_aria": "Stap {{num}}: {{label}}",
+    "step_completed": "voltooid"
   },
   "donate": {
     "title": "Ondersteuning",

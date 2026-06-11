@@ -104,7 +104,17 @@
     "region_russia": "Russland (Spiegel)",
     "region_restricted": "Eingeschränkt (Spiegel)",
     "unknown_error": "Unbekannter Fehler",
-    "retrying": "Erneuter Versuch…"
+    "retrying": "Erneuter Versuch…",
+    "hint_readme": "README.md fehlte im Paket. Das wird inzwischen automatisch behoben — ein erneuter Versuch sollte funktionieren.",
+    "hint_python_mirror": "Das Netzwerk konnte den Python-Download (github.com-Release) nicht erreichen. Wechseln Sie die Region in Einstellungen → Netzwerk (China / Russland / Eingeschränkt nutzen einen Mirror) oder installieren Sie Python 3.11+ systemweit, damit die App dieses verwendet.",
+    "hint_uv_timeout": "Netzwerk-Timeout beim Herunterladen von uv. Prüfen Sie Ihre Internetverbindung oder wählen Sie eine andere Region unter Einstellungen → Netzwerk.",
+    "hint_uv_sync": "Installation der Abhängigkeiten fehlgeschlagen. „Bereinigen & Wiederholen“ löscht das zwischengespeicherte venv und startet neu.",
+    "hint_build_backend": "Fehler im Python-Build-Backend. „Bereinigen & Wiederholen“ entfernt das defekte venv, sodass es von Grund auf neu aufgebaut wird.",
+    "hint_ffmpeg": "ffmpeg-Download fehlgeschlagen. Das ist nicht kritisch — erneut versuchen oder ffmpeg manuell installieren.",
+    "hint_port": "Port 3900 wird bereits verwendet. Schließen Sie andere OmniVoice-Instanzen oder Programme, die diesen Port nutzen.",
+    "hint_silent_crash": "Das Backend ist ohne Fehlermeldung abgestürzt. „Bereinigen & Wiederholen“ behebt oft Probleme mit einem beschädigten venv.",
+    "hint_github_blocked": "Ihr Netzwerk blockiert möglicherweise GitHub. Installieren Sie Python 3.11+ von python.org (zu PATH hinzufügen) und starten Sie neu, oder setzen Sie UV_PYTHON_INSTALL_MIRROR — siehe docs/install/troubleshooting.md.",
+    "hint_default": "Versuchen Sie zuerst „Wiederholen“. Schlägt es erneut fehl, baut „Bereinigen & Wiederholen“ die Umgebung von Grund auf neu."
   },
   "stories": {
     "title": "Story-Editor",
@@ -970,7 +980,9 @@
     "open": "Offen",
     "install_required_models": "Installieren Sie die oben genannten erforderlichen Modelle, um fortzufahren.",
     "try_dictation": "Versuchen Sie es mit Diktat",
-    "next_try_dictation": "Als nächstes: Versuchen Sie es mit dem Diktat"
+    "next_try_dictation": "Als nächstes: Versuchen Sie es mit dem Diktat",
+    "step_aria": "Schritt {{num}}: {{label}}",
+    "step_completed": "abgeschlossen"
   },
   "donate": {
     "title": "Unterstützung",

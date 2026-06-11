@@ -869,7 +869,9 @@
     "open": "Open",
     "install_required_models": "Install the required models above to continue.",
     "try_dictation": "Try dictation",
-    "next_try_dictation": "Next: Try dictation"
+    "next_try_dictation": "Next: Try dictation",
+    "step_aria": "Step {{num}}: {{label}}",
+    "step_completed": "completed"
   },
   "donate": {
     "title": "Support",
@@ -1041,7 +1043,17 @@
     "region_russia": "Russia (mirror)",
     "region_restricted": "Restricted (mirror)",
     "unknown_error": "Unknown error",
-    "retrying": "Retrying…"
+    "retrying": "Retrying…",
+    "hint_readme": "README.md was missing from the bundle. This is now auto-fixed — retry should work.",
+    "hint_python_mirror": "Network couldn't reach the Python download (github.com release). Switch your region in Settings → Network (China / Russia / Restricted route through a mirror), or install Python 3.11+ system-wide so the app uses that instead.",
+    "hint_uv_timeout": "Network timeout downloading uv. Check your internet connection or try a different region in Settings → Network.",
+    "hint_uv_sync": "Dependency install failed. \"Clean & Retry\" will delete the cached venv and start fresh.",
+    "hint_build_backend": "Python build backend error. \"Clean & Retry\" removes the broken venv so it rebuilds from scratch.",
+    "hint_ffmpeg": "ffmpeg download failed. This is non-fatal — retry or install ffmpeg manually.",
+    "hint_port": "Port 3900 is already in use. Close other instances of OmniVoice or apps using that port.",
+    "hint_silent_crash": "Backend crashed silently. \"Clean & Retry\" often fixes corrupt venv issues.",
+    "hint_github_blocked": "Your network may block GitHub. Install Python 3.11+ from python.org (Add to PATH) and relaunch, or set UV_PYTHON_INSTALL_MIRROR — see docs/install/troubleshooting.md.",
+    "hint_default": "Try \"Retry\" first. If it fails again, \"Clean & Retry\" will rebuild the environment from scratch."
   },
   "direction": {
     "title": "Direction for segment #{{id}}",

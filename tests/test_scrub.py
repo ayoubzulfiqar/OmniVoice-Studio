@@ -21,6 +21,9 @@ from core.scrub import scrub_text, REDACTED
         ("/home/bob/.omnivoice/omnivoice.log", "~/.omnivoice/omnivoice.log"),
         (r"C:\Users\carol\AppData\Roaming\OmniVoice", r"~\AppData\Roaming\OmniVoice"),
         (r"D:\Users\dave\models", r"~\models"),
+        # Windows paths normalized to forward slashes (file URLs, traces)
+        ("C:/Users/erin/AppData/Local/OmniVoice/app.log", "~/AppData/Local/OmniVoice/app.log"),
+        ("file:///D:/Users/frank/voice.wav", "file:///~/voice.wav"),
     ],
 )
 def test_home_paths_redacted(raw, expected):

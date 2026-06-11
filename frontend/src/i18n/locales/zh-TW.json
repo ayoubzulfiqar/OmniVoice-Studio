@@ -103,7 +103,17 @@
     "region_russia": "俄羅斯（鏡子）",
     "region_restricted": "受限（鏡像）",
     "unknown_error": "未知錯誤",
-    "retrying": "正在重試..."
+    "retrying": "正在重試...",
+    "hint_readme": "安裝包中缺少 README.md。此問題現已自動修復 — 重試應該可以成功。",
+    "hint_python_mirror": "網路無法連線到 Python 下載(github.com 發行版)。請在設定 → 網路中切換地區(中國 / 俄羅斯 / 受限會經由鏡像),或在系統中安裝 Python 3.11+ 讓應用程式直接使用。",
+    "hint_uv_timeout": "下載 uv 時網路逾時。請檢查網路連線,或在設定 → 網路中嘗試其他地區。",
+    "hint_uv_sync": "相依套件安裝失敗。「清理並重試」會刪除快取的 venv 並重新開始。",
+    "hint_build_backend": "Python 建置後端發生錯誤。「清理並重試」會移除損壞的 venv,從頭重新建置。",
+    "hint_ffmpeg": "ffmpeg 下載失敗。這不是致命問題 — 可以重試,或手動安裝 ffmpeg。",
+    "hint_port": "連接埠 3900 已被佔用。請關閉其他 OmniVoice 實例或佔用該連接埠的應用程式。",
+    "hint_silent_crash": "後端在沒有錯誤訊息的情況下當機。「清理並重試」通常能解決 venv 損壞的問題。",
+    "hint_github_blocked": "您的網路可能封鎖了 GitHub。請從 python.org 安裝 Python 3.11+(加入 PATH)後重新啟動,或設定 UV_PYTHON_INSTALL_MIRROR — 參見 docs/install/troubleshooting.md。",
+    "hint_default": "請先嘗試「重試」。若再次失敗,「清理並重試」會從頭重建執行環境。"
   },
   "stories": {
     "title": "故事編輯器",
@@ -969,7 +979,9 @@
     "open": "打開",
     "install_required_models": "安裝上面所需的模型以繼續。",
     "try_dictation": "試著聽寫",
-    "next_try_dictation": "下一步：嘗試聽寫"
+    "next_try_dictation": "下一步：嘗試聽寫",
+    "step_aria": "第 {{num}} 步:{{label}}",
+    "step_completed": "已完成"
   },
   "donate": {
     "title": "支援",
