@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import time
 import shutil
@@ -34,29 +35,86 @@ def list_profiles():
         rows = conn.execute("SELECT * FROM voice_profiles ORDER BY created_at DESC").fetchall()
     return [dict(r) for r in rows]
 
+_DESIGN_SEED = 42  # deterministic sample render, same as archetype previews
+
+
 @router.post("/profiles")
 async def create_profile(
     name: str = Form(...),
-    ref_audio: UploadFile = File(...),
+    ref_audio: Optional[UploadFile] = File(None),
     ref_text: str = Form(""),
     instruct: str = Form(""),
     language: str = Form("Auto"),
     seed: Optional[int] = Form(None),
     personality: str = Form(""),
+    kind: str = Form("clone"),
+    vd_states: Optional[str] = Form(None),
 ):
-    profile_id = str(uuid.uuid4())[:8]
-    ext = os.path.splitext(ref_audio.filename or ".wav")[1]
-    audio_filename = f"{profile_id}{ext}"
-    audio_path = os.path.join(VOICES_DIR, audio_filename)
+    """Create a voice profile (spec: docs/specs/voice-studio-unification.md §5).
 
-    with open(audio_path, "wb") as f:
-        f.write(await ref_audio.read())
+    kind='clone'  — requires `ref_audio` (the user's reference recording).
+    kind='design' — requires `vd_states` (JSON of category picks); the server
+                    renders a deterministic sample WAV (seed 42, same path as
+                    archetype materialization) and stores it as the profile's
+                    reference so the voice identity is stable across runs.
+    """
+    if kind not in ("clone", "design"):
+        raise HTTPException(status_code=422, detail="kind must be 'clone' or 'design'")
+    if kind == "clone" and ref_audio is None:
+        raise HTTPException(status_code=422, detail="clone profiles require ref_audio")
+    if kind == "design":
+        if not (vd_states or "").strip():
+            raise HTTPException(status_code=422, detail="design profiles require vd_states")
+        import json as _json
+        try:
+            parsed = _json.loads(vd_states)
+            if not isinstance(parsed, dict):
+                raise ValueError("not an object")
+        except ValueError:
+            raise HTTPException(status_code=422, detail="vd_states must be a JSON object")
+        if not instruct.strip():
+            raise HTTPException(status_code=422, detail="design profiles require instruct")
+
+    profile_id = str(uuid.uuid4())[:8]
+
+    if kind == "clone":
+        ext = os.path.splitext(ref_audio.filename or ".wav")[1]
+        audio_filename = f"{profile_id}{ext}"
+        audio_path = os.path.join(VOICES_DIR, audio_filename)
+        with open(audio_path, "wb") as f:
+            f.write(await ref_audio.read())
+        used_seed = seed
+    else:
+        # Render the deterministic identity sample through the one shared TTS
+        # path (archetypes' renderer) — never a second inference code path.
+        from pathlib import Path
+        from api.routers.archetypes import _render_archetype_wav
+        audio_filename = f"{profile_id}.wav"
+        audio_path = os.path.join(VOICES_DIR, audio_filename)
+        try:
+            await _render_archetype_wav(
+                {
+                    "language": language,
+                    "sample_script": ref_text,  # optional custom sample line
+                    "instruct": instruct,
+                },
+                Path(audio_path),
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"could not render the design sample: {e}",
+            )
+        used_seed = seed if seed is not None else _DESIGN_SEED
 
     try:
         with db_conn() as conn:
             conn.execute(
-                "INSERT INTO voice_profiles (id, name, ref_audio_path, ref_text, instruct, language, seed, personality, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (profile_id, name, audio_filename, ref_text, instruct, language, seed, personality, time.time())
+                "INSERT INTO voice_profiles (id, name, ref_audio_path, ref_text, instruct, "
+                "language, seed, personality, kind, vd_states, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (profile_id, name, audio_filename, ref_text, instruct, language,
+                 used_seed, personality, kind, vd_states, time.time())
             )
     except Exception:
         # Clean up orphaned audio file if DB insert fails
@@ -64,7 +122,7 @@ async def create_profile(
             os.remove(audio_path)
         raise
     event_bus.emit("profiles", {"action": "created", "id": profile_id})
-    return {"id": profile_id, "name": name}
+    return {"id": profile_id, "name": name, "kind": kind}
 
 @router.get("/profiles/{profile_id}")
 def get_profile(profile_id: str):
@@ -234,15 +292,122 @@ async def unlock_profile(profile_id: str):
     event_bus.emit("profiles", {"action": "unlocked", "id": profile_id})
     return {"unlocked": True, "profile_id": profile_id}
 
+# ── Consent lock (parity program Wave 0.2) ─────────────────────────────────
+#
+# A profile becomes "verified own voice" when its owner records themselves
+# reading a consent statement. The recording is provenance, not a voiceprint
+# check — agentic features and gallery sharing gate on the flag; plain local
+# synthesis never does. Spec: docs/competitive-analysis.md Action 22.
+
+_MIN_CONSENT_AUDIO_BYTES = 1000  # same floor as the frontend recorder
+
+# Upload filename extension whitelist — anything else falls back to .wav so a
+# crafted filename can never influence the on-disk path (py/path-injection).
+_CONSENT_EXT_RE = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
+
+
+def _voices_path(filename: str) -> Optional[str]:
+    """Resolve a DB-stored audio filename strictly inside VOICES_DIR.
+
+    Rejects anything that isn't a bare filename or that escapes the voices
+    directory after symlink resolution. Returns None instead of raising so
+    cleanup paths can simply skip bad values.
+    """
+    if not filename or os.path.basename(filename) != filename:
+        return None
+    root = os.path.realpath(VOICES_DIR)
+    path = os.path.realpath(os.path.join(root, filename))
+    if not path.startswith(root + os.sep):
+        return None
+    return path
+
+
+@router.post("/profiles/{profile_id}/consent")
+async def record_consent(
+    profile_id: str,
+    consent_audio: UploadFile = File(...),
+    consent_text: str = Form(...),
+):
+    if not consent_text.strip():
+        raise HTTPException(status_code=422, detail="consent_text must not be empty")
+    data = await consent_audio.read()
+    if len(data) < _MIN_CONSENT_AUDIO_BYTES:
+        raise HTTPException(status_code=422, detail="consent recording is too short")
+
+    with db_conn() as conn:
+        row = conn.execute(
+            "SELECT id, consent_audio_path FROM voice_profiles WHERE id=?", (profile_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    ext = os.path.splitext(consent_audio.filename or "")[1]
+    if not _CONSENT_EXT_RE.match(ext):
+        ext = ".wav"
+    audio_filename = f"{profile_id}_consent{ext}"
+    audio_path = _voices_path(audio_filename)
+    if audio_path is None:  # profile_id is server-generated; this is belt+braces
+        raise HTTPException(status_code=400, detail="Invalid profile id")
+    with open(audio_path, "wb") as f:
+        f.write(data)
+
+    # A re-record may change the extension; drop the superseded file.
+    old = row["consent_audio_path"]
+    if old and old != audio_filename:
+        old_path = _voices_path(old)
+        if old_path and os.path.exists(old_path):
+            os.remove(old_path)
+
+    recorded_at = time.time()
+    try:
+        with db_conn() as conn:
+            conn.execute(
+                "UPDATE voice_profiles SET verified_own_voice=1, consent_text=?, "
+                "consent_audio_path=?, consent_recorded_at=? WHERE id=?",
+                (consent_text.strip(), audio_filename, recorded_at, profile_id),
+            )
+    except Exception:
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+        raise
+    event_bus.emit("profiles", {"action": "consent_recorded", "id": profile_id})
+    return {
+        "id": profile_id,
+        "verified_own_voice": True,
+        "consent_recorded_at": recorded_at,
+    }
+
+
+@router.delete("/profiles/{profile_id}/consent")
+def revoke_consent(profile_id: str):
+    with db_conn() as conn:
+        row = conn.execute(
+            "SELECT consent_audio_path FROM voice_profiles WHERE id=?", (profile_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        conn.execute(
+            "UPDATE voice_profiles SET verified_own_voice=0, consent_text='', "
+            "consent_audio_path='', consent_recorded_at=NULL WHERE id=?",
+            (profile_id,),
+        )
+    if row["consent_audio_path"]:
+        path = _voices_path(row["consent_audio_path"])
+        if path and os.path.exists(path):
+            os.remove(path)
+    event_bus.emit("profiles", {"action": "consent_revoked", "id": profile_id})
+    return {"id": profile_id, "verified_own_voice": False}
+
+
 @router.delete("/profiles/{profile_id}")
 def delete_profile(profile_id: str):
     with db_conn() as conn:
-        row = conn.execute("SELECT ref_audio_path, locked_audio_path FROM voice_profiles WHERE id=?", (profile_id,)).fetchone()
+        row = conn.execute("SELECT ref_audio_path, locked_audio_path, consent_audio_path FROM voice_profiles WHERE id=?", (profile_id,)).fetchone()
         if row:
-            for col in ["ref_audio_path", "locked_audio_path"]:
+            for col in ["ref_audio_path", "locked_audio_path", "consent_audio_path"]:
                 if row[col]:
-                    path = os.path.join(VOICES_DIR, row[col])
-                    if os.path.exists(path):
+                    path = _voices_path(row[col])
+                    if path and os.path.exists(path):
                         os.remove(path)
         # Prevent FOREIGN KEY constraint failure
         conn.execute("UPDATE generation_history SET profile_id = NULL WHERE profile_id=?", (profile_id,))

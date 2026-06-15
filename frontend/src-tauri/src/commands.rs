@@ -258,7 +258,19 @@ fn hf_hub_cache_dir() -> PathBuf {
 use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
 
 #[tauri::command]
-pub fn simulate_paste() -> Result<(), String> {
+pub fn simulate_paste(text: Option<String>) -> Result<(), String> {
+    // Write the transcript to the clipboard natively first: the widget window
+    // is intentionally unfocused on macOS (so the simulated ⌘V reaches the
+    // target app), which makes the WebView clipboard APIs (navigator.clipboard
+    // / execCommand('copy')) fail silently there (#287). `text` is optional so
+    // call sites that already populated the clipboard keep working.
+    if let Some(t) = text {
+        let mut cb = arboard::Clipboard::new()
+            .map_err(|e| format!("clipboard init failed: {e}"))?;
+        cb.set_text(t)
+            .map_err(|e| format!("clipboard write failed: {e}"))?;
+    }
+
     std::thread::sleep(Duration::from_millis(80));
 
     let mut enigo = Enigo::new(&EnigoSettings::default())
@@ -529,4 +541,19 @@ pub fn is_pill_autostart_enabled() -> bool {
     {
         return pill_autostart_path().exists();
     }
+}
+
+#[tauri::command]
+pub fn save_text_file(path: String, contents: String) -> Result<(), String> {
+    // Subtitle exports (#309). The path comes from the OS save dialog in this
+    // process — the user's dialog interaction *is* the authorization, which is
+    // why this write lives here and not behind a loopback-HTTP query param.
+    let p = std::path::Path::new(&path);
+    if !p.is_absolute() {
+        return Err("save path must be absolute".into());
+    }
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("create dir: {e}"))?;
+    }
+    std::fs::write(p, contents).map_err(|e| format!("write: {e}"))
 }

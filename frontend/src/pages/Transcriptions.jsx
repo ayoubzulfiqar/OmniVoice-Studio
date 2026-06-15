@@ -8,22 +8,18 @@
  * page updates in realtime without requiring a shared store.
  */
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { copyText } from "../utils/copyText";
 import { useTranslation } from 'react-i18next';
 import { Mic, Copy, Trash2, Search, Clock, Languages, FileText, Download } from 'lucide-react';
 import { Button } from '../ui';
 import { toast } from 'react-hot-toast';
+import {
+  loadTranscriptions, TRANSCRIPTIONS_KEY, TRANSCRIPTION_EVENT,
+} from '../utils/transcriptionsStore';
 import './Transcriptions.css';
 
-const STORAGE_KEY = 'omni_transcriptions';
-const TXN_EVENT = 'omni:transcription-added';
-
-function loadTranscriptions() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
-  catch { return []; }
-}
-
 function saveTranscriptions(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  localStorage.setItem(TRANSCRIPTIONS_KEY, JSON.stringify(list));
 }
 
 export function addTranscription(entry) {
@@ -41,7 +37,7 @@ export function addTranscription(entry) {
   if (list.length > 200) list.length = 200;
   saveTranscriptions(list);
   // Fire custom event for reactive updates
-  window.dispatchEvent(new CustomEvent(TXN_EVENT, { detail: newEntry }));
+  window.dispatchEvent(new CustomEvent(TRANSCRIPTION_EVENT, { detail: newEntry }));
 }
 
 export default function TranscriptionsPage() {
@@ -55,8 +51,8 @@ export default function TranscriptionsPage() {
     const handler = () => {
       setTranscriptions(loadTranscriptions());
     };
-    window.addEventListener(TXN_EVENT, handler);
-    return () => window.removeEventListener(TXN_EVENT, handler);
+    window.addEventListener(TRANSCRIPTION_EVENT, handler);
+    return () => window.removeEventListener(TRANSCRIPTION_EVENT, handler);
   }, []);
 
   const filtered = useMemo(() => {
@@ -74,7 +70,7 @@ export default function TranscriptionsPage() {
   );
 
   const copyText = useCallback((text) => {
-    navigator.clipboard.writeText(text).then(
+    copyText(text).then(
       () => toast.success(t('transcriptions.copied')),
       () => toast.error(t('transcriptions.copy_failed'))
     );

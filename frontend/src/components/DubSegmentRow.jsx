@@ -13,8 +13,8 @@ import './DubSegmentRow.css';
 const CHAR_BUDGET_RATIO = 1.3;
 const SENTENCE_END = /[.!?。！？]/;
 
-function rowClass(isActive, isDone, selected, isPlaying) {
-  return `segment-row${isActive ? ' segment-active' : ''}${isDone ? ' segment-done' : ''}${selected ? ' segment-selected' : ''}${isPlaying ? ' segment-playing' : ''}`;
+function rowClass(isActive, isDone, selected, isPlaying, timelineSelected) {
+  return `segment-row${isActive ? ' segment-active' : ''}${isDone ? ' segment-done' : ''}${selected ? ' segment-selected' : ''}${isPlaying ? ' segment-playing' : ''}${timelineSelected ? ' segment-timeline-selected' : ''}`;
 }
 
 // Best split point for the Scissors menu when the user hasn't placed a cursor —
@@ -49,7 +49,7 @@ function parseTime(s) {
 function DubSegmentRow({
   seg, idx, style, disabled, isActive, isDone, isPlaying, previewLoading, selected,
   profiles, speakerClones, onEditField, onDelete, onRestore, onPreview, onSelect, onSplit, onMerge, canMerge,
-  onDirect, onSeek,
+  onDirect, onSeek, timelineSelected,
 }) {
   const { t } = useTranslation();
   const textInputRef = useRef(null);
@@ -75,32 +75,32 @@ function DubSegmentRow({
   let fitBadge = null;
   if (fitStatus) {
     if (fitStatus.status === 'fits') {
-      fitBadge = { color: '#b8bb26', Icon: CheckCircle, label: 'Fits', title: 'Natural-rate audio fit inside the slot.' };
+      fitBadge = { color: '#b8bb26', Icon: CheckCircle, label: t('segment.fit_fits'), title: t('segment.fit_fits_title') };
     } else if (fitStatus.status === 'overflows') {
       const over = fitStatus.overflow_s || 0;
       fitBadge = {
         color: over > 0.5 ? '#fb4934' : '#fabd2f',
         Icon: AlertCircle,
-        label: `Overflows +${over.toFixed(2)}s`,
-        title: `Translated text was longer than the original slot by ${over.toFixed(2)}s. The audio was hard-trimmed; shorten the text or switch Timing to "Stretch Video".`,
+        label: t('segment.fit_overflows', { seconds: over.toFixed(2) }),
+        title: t('segment.fit_overflows_title', { seconds: over.toFixed(2) }),
       };
     } else if (fitStatus.status === 'video_stretched') {
       const r = fitStatus.stretch_ratio || 1.0;
       fitBadge = {
         color: r > 1.18 ? '#fb4934' : r > 1.05 ? '#fabd2f' : '#83a598',
         Icon: Circle,
-        label: `Video ${r.toFixed(2)}×`,
-        title: `Stretch Video mode: this segment's video was slowed to ${r.toFixed(2)}× to fit the natural dub audio.`,
+        label: t('segment.fit_stretched', { ratio: r.toFixed(2) }),
+        title: t('segment.fit_stretched_title', { ratio: r.toFixed(2) }),
       };
     }
   } else if (seg.sync_ratio !== undefined) {
     const r = seg.sync_ratio;
     if (r > 1.25) {
-      fitBadge = { color: '#fb4934', Icon: AlertCircle, label: `${Math.round(r * 100)}%`, title: `TTS audio is ${Math.round(r * 100)}% of the slot — heavily compressed.` };
+      fitBadge = { color: '#fb4934', Icon: AlertCircle, label: `${Math.round(r * 100)}%`, title: t('segment.fit_compressed_title', { pct: Math.round(r * 100) }) };
     } else if (r >= 0.95 && r <= 1.05) {
-      fitBadge = { color: '#b8bb26', Icon: CheckCircle, label: 'Fits', title: 'Audio fit inside the slot.' };
+      fitBadge = { color: '#b8bb26', Icon: CheckCircle, label: t('segment.fit_fits'), title: t('segment.fit_audio_title') };
     } else {
-      fitBadge = { color: '#fabd2f', Icon: Circle, label: `${Math.round(r * 100)}%`, title: `TTS audio is ${Math.round(r * 100)}% of the slot.` };
+      fitBadge = { color: '#fabd2f', Icon: Circle, label: `${Math.round(r * 100)}%`, title: t('segment.fit_ratio_title', { pct: Math.round(r * 100) }) };
     }
   }
 
@@ -133,7 +133,7 @@ function DubSegmentRow({
   };
 
   return (
-    <div style={style} className={rowClass(isActive, isDone, selected, isPlaying)} onClick={handleRowClick}>
+    <div style={style} className={rowClass(isActive, isDone, selected, isPlaying, timelineSelected)} onClick={handleRowClick}>
       <input
         type="checkbox"
         checked={!!selected}
@@ -152,7 +152,7 @@ function DubSegmentRow({
             defaultValue={formatTime(seg.start)}
             key={`start-${seg.id}-${seg.start}`}
             disabled={disabled}
-            title="Click to edit start time (m:ss.s). Enter to commit, Esc to cancel."
+            title={t('segment.time_edit_title')}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               if (e.key === 'Enter') e.target.blur();
@@ -186,6 +186,17 @@ function DubSegmentRow({
             title={fitBadge.title}
           >
             <fitBadge.Icon size={8} /> {fitBadge.label}
+          </span>
+        )}
+        {seg.qc_flagged && (
+          // Wave 3.3: second-pass ASR heard something different from the
+          // target text for this line — worth a re-listen / re-dub.
+          <span
+            className="seg-sync-badge"
+            style={{ color: '#fb4934' }}
+            title={t('segment.qc_verify_title', { heard: seg.qc_recognized || '' })}
+          >
+            <AlertCircle size={8} /> {t('segment.qc_verify')}
           </span>
         )}
         {seg.rate_ratio != null && Math.abs(seg.rate_ratio - 1.0) > 0.03 && (
@@ -388,6 +399,7 @@ export default memo(DubSegmentRow, (prev, next) => (
   prev.isActive === next.isActive &&
   prev.isDone === next.isDone &&
   prev.isPlaying === next.isPlaying &&
+  prev.timelineSelected === next.timelineSelected &&
   prev.previewLoading === next.previewLoading &&
   prev.onDirect === next.onDirect &&
   prev.onSeek === next.onSeek &&

@@ -1,5 +1,7 @@
 import os
 import sys
+import platform
+import time
 import uuid
 import psutil
 import asyncio
@@ -8,13 +10,14 @@ from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query, 
 from core.prefs import set_ as prefs_set, delete as prefs_delete
 from services import network_share
 from services import tailscale as _tailscale
-from api.schemas import SysinfoResponse, SystemInfoResponse, ModelStatusResponse, LogsResponse, FlushMemoryResponse
+from api.schemas import SysinfoResponse, SystemInfoResponse, ModelStatusResponse
 from api.dependencies import require_loopback
 from fastapi.responses import FileResponse, StreamingResponse
 import torch
 import shutil
 
 from core.config import OUTPUTS_DIR, DATA_DIR, CRASH_LOG_PATH, LOG_PATH, IDLE_TIMEOUT_SECONDS
+from core.version import APP_VERSION
 from services.model_manager import get_model_status, get_best_device
 from services.ffmpeg_utils import find_ffmpeg, run_ffmpeg
 
@@ -38,6 +41,57 @@ _is_cuda = torch.cuda.is_available()
 psutil.cpu_percent(interval=None)
 
 
+def _detect_cpu_model() -> str:
+    """Human-readable CPU model. platform.processor() is empty on most
+    Linux distros, so read /proc/cpuinfo there; sysctl on macOS."""
+    try:
+        if sys.platform.startswith("linux"):
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if line.lower().startswith("model name"):
+                        return line.split(":", 1)[1].strip()
+        if sys.platform == "darwin":
+            import subprocess
+            return subprocess.check_output(
+                ["sysctl", "-n", "machdep.cpu.brand_string"], text=True, timeout=5
+            ).strip()
+        return platform.processor() or ""
+    except Exception:
+        return platform.processor() or ""
+
+
+def _detect_gpu() -> tuple[str, float]:
+    """(gpu_name, vram_total_gb) — static for the process lifetime.
+
+    MPS has unified memory, so there's no separate VRAM figure to report;
+    the name alone tells a bug-report reader what hardware this is.
+    """
+    try:
+        if _is_cuda:
+            props = torch.cuda.get_device_properties(0)
+            return torch.cuda.get_device_name(0), round(props.total_memory / (1024 ** 3), 1)
+        if _is_mac:
+            return "Apple Silicon (MPS)", 0.0
+    except Exception:
+        pass
+    return "", 0.0
+
+
+# Static hardware facts, captured once — /system/info is hit on every
+# Settings page load and must stay cheap.
+_CPU_MODEL = _detect_cpu_model()
+_GPU_NAME, _VRAM_TOTAL_GB = _detect_gpu()
+_RAM_TOTAL_GB = round(psutil.virtual_memory().total / (1024 ** 3), 1)
+_OS_VERSION = platform.platform()
+
+
+def _disk_free_gb() -> float:
+    try:
+        return round(shutil.disk_usage(DATA_DIR).free / (1024 ** 3), 1)
+    except Exception:
+        return 0.0
+
+
 def _ui_port() -> int:
     """The Vite UI dev-server port, single-sourced from OMNIVOICE_UI_PORT.
 
@@ -51,6 +105,52 @@ def _ui_port() -> int:
         return int(raw)
     except (TypeError, ValueError):
         return 3901
+
+
+def _fast_download_status() -> dict:
+    """Report the download-acceleration state for the Settings UI (FDL-03).
+
+    Reports the *runtime* truth, not just whether hf_xet is importable. The app
+    currently sets ``HF_HUB_DISABLE_XET=1`` by default (main.py) — Xet's chunked
+    transfer is fast but its progress bypasses our tqdm patch, so the legacy-LFS
+    path is forced to keep accurate byte progress. So:
+
+      * ``xet_installed`` — hf_xet present
+      * ``xet_active``    — installed AND not disabled via HF_HUB_DISABLE_XET
+      * ``xet_enabled``   — alias of xet_active (what the UI badge keys off)
+
+    Must never throw: /system/info is called on every Settings load.
+    """
+    installed = False
+    version = None
+    try:
+        import hf_xet  # noqa: F401
+        installed = True
+        try:
+            from importlib.metadata import version as _ver
+            version = _ver("hf-xet")
+        except Exception:
+            version = None
+    except Exception:
+        installed = False
+    disabled = str(os.environ.get("HF_HUB_DISABLE_XET", "")).strip().lower() in {"1", "true", "yes", "on"}
+    active = installed and not disabled
+    try:
+        from core import prefs
+        high_perf = prefs.resolve(
+            "xet_high_performance", env="HF_XET_HIGH_PERFORMANCE", default=False
+        )
+        high_perf = high_perf if isinstance(high_perf, bool) else \
+            str(high_perf).strip().lower() in {"1", "true", "yes", "on"}
+    except Exception:
+        high_perf = False
+    return {
+        "xet_installed": installed,
+        "xet_active": active,
+        "xet_enabled": active,  # UI badge: only true when Xet actually runs
+        "xet_version": version,
+        "high_performance": bool(high_perf),
+    }
 
 
 def _has_hf_token() -> bool:
@@ -74,88 +174,23 @@ def model_status():
 
 @router.get("/model/loaded")
 def loaded_models():
-    """Return details about all currently loaded models for the flush dropdown.
-
-    Returns a list of models with name, type, device, and estimated VRAM usage.
-    """
-    import services.model_manager as mm
-
-    models = []
-
-    # 1. TTS model (OmniVoice)
-    if mm.model is not None:
-        device = "unknown"
-        vram_mb = 0
-        try:
-            device = str(next(mm.model.parameters()).device) if hasattr(mm.model, 'parameters') else get_best_device()
-        except Exception:
-            device = get_best_device()
-        try:
-            torch = mm._lazy_torch()
-            if torch.cuda.is_available():
-                vram_mb = torch.cuda.memory_allocated() / (1024 ** 2)
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                driver = getattr(torch.mps, "driver_allocated_memory", None)
-                if driver:
-                    vram_mb = driver() / (1024 ** 2)
-        except Exception:
-            pass
-        models.append({
-            "id": "tts",
-            "name": "OmniVoice TTS",
-            "checkpoint": os.environ.get("OMNIVOICE_MODEL", "k2-fsa/OmniVoice"),
-            "device": device,
-            "vram_mb": round(vram_mb, 1),
-            "unloadable": True,
-        })
-
-    # 2. ASR model (WhisperX)
-    if mm.model is not None and hasattr(mm.model, '_asr_pipe') and mm.model._asr_pipe is not None:
-        models.append({
-            "id": "asr",
-            "name": "WhisperX ASR",
-            "checkpoint": os.environ.get("ASR_MODEL", "Systran/faster-whisper-large-v3"),
-            "device": "cpu",
-            "vram_mb": 0,
-            "unloadable": False,  # tied to TTS model lifecycle
-        })
-
-    # 3. Diarization pipeline
-    if mm._diar_pipeline is not None:
-        models.append({
-            "id": "diarization",
-            "name": "Pyannote Diarization",
-            "checkpoint": "pyannote/speaker-diarization-3.1",
-            "device": get_best_device(),
-            "vram_mb": 0,
-            "unloadable": True,
-        })
-
-    return {"models": models, "count": len(models)}
+    """List all currently loaded models for the flush dropdown (MM2-04).
+    Thin delegation to the model_lifecycle facade — shape unchanged:
+    ``{models, count}``."""
+    from services import model_lifecycle
+    return model_lifecycle.list_loaded()
 
 
 @router.post("/model/unload/{model_id}")
 async def unload_model(model_id: str):
-    """Unload a specific model by ID."""
-    import services.model_manager as mm
-
-    if model_id == "tts":
-        async with mm._model_lock:
-            if mm.model is not None:
-                mm.model = None
-                mm.free_vram()
-                return {"unloaded": "tts", "success": True}
-        return {"unloaded": "tts", "success": False, "reason": "not loaded"}
-
-    elif model_id == "diarization":
-        if mm._diar_pipeline is not None:
-            mm._diar_pipeline = None
-            mm.free_vram()
-            return {"unloaded": "diarization", "success": True}
-        return {"unloaded": "diarization", "success": False, "reason": "not loaded"}
-
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown model id: {model_id}")
+    """Unload a specific model by id (MM2-04). Delegates to model_lifecycle;
+    an unknown id maps to HTTP 400. ``tts`` | ``diarization`` |
+    ``sidecar:<id>`` | ``sidecars``."""
+    from services import model_lifecycle
+    try:
+        return await model_lifecycle.unload(model_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/system/info", response_model=SystemInfoResponse)
@@ -168,6 +203,7 @@ def system_info():
     try:
         _ffmpeg = find_ffmpeg()
         return {
+            "app_version": APP_VERSION,
             "data_dir": DATA_DIR,
             "outputs_dir": OUTPUTS_DIR,
             "crash_log_path": CRASH_LOG_PATH,
@@ -176,9 +212,18 @@ def system_info():
             "asr_model": os.environ.get("ASR_MODEL", "Systran/faster-whisper-large-v3"),
             "translate_provider": os.environ.get("TRANSLATE_PROVIDER", "google"),
             "has_hf_token": _has_hf_token(),
+            "fast_download": _fast_download_status(),
             "device": get_best_device(),
             "python": sys.version.split()[0],
             "platform": sys.platform,
+            "arch": platform.machine(),
+            "os_version": _OS_VERSION,
+            "cpu_model": _CPU_MODEL,
+            "cpu_count": psutil.cpu_count(logical=True) or 0,
+            "ram_total_gb": _RAM_TOTAL_GB,
+            "gpu_name": _GPU_NAME,
+            "vram_total_gb": _VRAM_TOTAL_GB,
+            "disk_free_gb": _disk_free_gb(),
             "ffmpeg_ok": bool(_ffmpeg),
             "ffmpeg_path": _ffmpeg or "",
             "proxy_url": os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or "",
@@ -193,6 +238,7 @@ def system_info():
     except Exception as e:
         logger.exception("system_info failed — returning safe defaults")
         return {
+            "app_version": APP_VERSION,
             "data_dir": DATA_DIR,
             "outputs_dir": OUTPUTS_DIR,
             "crash_log_path": str(CRASH_LOG_PATH),
@@ -204,6 +250,14 @@ def system_info():
             "device": "cpu",
             "python": sys.version.split()[0],
             "platform": sys.platform,
+            "arch": platform.machine(),
+            "os_version": _OS_VERSION,
+            "cpu_model": _CPU_MODEL,
+            "cpu_count": psutil.cpu_count(logical=True) or 0,
+            "ram_total_gb": _RAM_TOTAL_GB,
+            "gpu_name": _GPU_NAME,
+            "vram_total_gb": _VRAM_TOTAL_GB,
+            "disk_free_gb": _disk_free_gb(),
             "proxy_url": "",
             "share_enabled": network_share.get_state().enabled,
             "share_port": network_share.get_state().share_port,
@@ -226,11 +280,19 @@ def _tail_file(path: str, tail: int):
 def _tauri_log_candidates():
     """Likely paths for Tauri-side logs, most useful first.
 
-    `tauri-plugin-log` writes to `~/Library/Logs/<bundle_id>/<file_name>.log`
-    by default on macOS. Our bundle id is `com.debpalash.omnivoice-studio`
-    (see frontend/src-tauri/tauri.conf.json). lib.rs also redirects the
-    spawned backend's stdout/stderr to `~/Library/Logs/OmniVoice/backend.log`
-    which is where `print()` calls and uvicorn startup banners land.
+    Two distinct producers, both per-platform:
+
+    - `tauri-plugin-log` writes `tauri.log` to the app log dir
+      (`~/Library/Logs/<bundle_id>` on macOS, `$XDG_DATA_HOME/<bundle_id>/logs`
+      on Linux, `%LOCALAPPDATA%\\<bundle_id>\\logs` on Windows). Bundle id is
+      `com.debpalash.omnivoice-studio` (frontend/src-tauri/tauri.conf.json).
+    - backend.rs::backend_log_path() redirects the spawned backend's
+      stdout/stderr to `backend.log` / `backend_err.log` under
+      `~/Library/Logs/OmniVoice` (macOS), `$XDG_STATE_HOME/OmniVoice` falling
+      back to `~/.local/state/OmniVoice` (Linux), and
+      `%LOCALAPPDATA%\\OmniVoice\\Logs` (Windows). This is where uvicorn
+      startup banners and hard-crash tracebacks land — keep all three OS
+      shapes listed or sidecar crashes become invisible off-macOS.
     """
     home = os.path.expanduser("~")
     bid = "com.debpalash.omnivoice-studio"
@@ -242,14 +304,22 @@ def _tauri_log_candidates():
             os.path.join(home, "Library/Logs/OmniVoice/backend_err.log"),
         ]
     if sys.platform.startswith("linux"):
+        data_dir = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local/share")
+        state_dir = os.environ.get("XDG_STATE_HOME") or os.path.join(home, ".local/state")
         return [
-            os.path.join(home, ".local/share", bid, "logs", "tauri.log"),
+            os.path.join(data_dir, bid, "logs", "tauri.log"),
             os.path.join(home, ".config", bid, "logs", "tauri.log"),
+            os.path.join(state_dir, "OmniVoice", "backend.log"),
+            os.path.join(state_dir, "OmniVoice", "backend_err.log"),
         ]
     if sys.platform.startswith("win"):
         appdata = os.environ.get("APPDATA", home)
+        localappdata = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
         return [
+            os.path.join(localappdata, bid, "logs", "tauri.log"),
             os.path.join(appdata, bid, "logs", "tauri.log"),
+            os.path.join(localappdata, "OmniVoice", "Logs", "backend.log"),
+            os.path.join(localappdata, "OmniVoice", "Logs", "backend_err.log"),
         ]
     return []
 
@@ -377,6 +447,14 @@ async def clear_system_logs():
                     status_code=500,
                     detail=f"Could not clear log at {p}: {e}. The file may be open in another process or read-only — close tailing tools and retry.",
                 )
+    if cleared_any:
+        # The crash log just shrank to zero — drop any stored ack so a stale
+        # byte count can't suppress the next 'crash-last-session' notice.
+        for key in ("crash_log_acked", "crash_log_acked_size"):
+            try:
+                prefs_delete(key)
+            except Exception:
+                pass
     return {"cleared": cleared_any}
 
 
@@ -437,7 +515,7 @@ async def flush_memory(unload_model: bool = False):
     re-loaded lazily on the next generation request.
     """
     import gc
-    from services.model_manager import free_vram, model as _current_model
+    from services.model_manager import free_vram
 
     freed_model = False
     if unload_model:
@@ -478,6 +556,21 @@ async def flush_memory(unload_model: bool = False):
 
 # ── Actionable notifications ──────────────────────────────────────────────
 
+_GPU_ARCH_WARNING: "list[str | None]" = []  # [-1] = computed result
+
+
+def _gpu_arch_warning_cached() -> "str | None":
+    """check_device_compatibility() once per process (it lazy-imports torch —
+    too heavy for the 30s notifications poll)."""
+    if not _GPU_ARCH_WARNING:
+        try:
+            from services.model_manager import check_device_compatibility
+            compatible, warning = check_device_compatibility()
+            _GPU_ARCH_WARNING.append(None if compatible else warning)
+        except Exception:
+            _GPU_ARCH_WARNING.append(None)
+    return _GPU_ARCH_WARNING[-1]
+
 
 @router.get("/system/notifications")
 def system_notifications():
@@ -507,6 +600,20 @@ def system_notifications():
                 "type": "navigate",
                 "target": "settings",
             },
+        })
+
+    # 1b. GPU compute capability unsupported by this torch build (#284) —
+    # the model "runs" but emits pure noise, the worst silent failure mode
+    # (RTX 50-series Blackwell sm_120 on pre-cu128 wheels). The loader logs
+    # this, but a log line never reached the affected users — surface it in
+    # the panel. Checked once per process: it lazy-imports torch.
+    gpu_warn = _gpu_arch_warning_cached()
+    if gpu_warn:
+        notes.append({
+            "id": "gpu-arch-unsupported",
+            "level": "error",
+            "title": "GPU not supported by this PyTorch build",
+            "message": gpu_warn + " Until then, output will be noise/garbage.",
         })
 
     # 2. Missing ffmpeg
@@ -563,7 +670,70 @@ def system_notifications():
             "action": None,
         })
 
+    # 5. A previous session logged a crash the user never saw.
+    #    crash_log grew past the last acknowledged size AND predates this
+    #    process — i.e. it happened last run, not just now (errors from the
+    #    current session already surfaced as toasts).
+    try:
+        if _crashed_last_session():
+            notes.append({
+                "id": "crash-last-session",
+                "level": "error",
+                "title": "Last session ended with an error",
+                "message": (
+                    "A crash was logged before this session started. "
+                    "Review the backend log and consider filing a report."
+                ),
+                "action": {
+                    "label": "View logs",
+                    "type": "navigate",
+                    "target": "settings",
+                },
+            })
+    except Exception:
+        pass
+
     return {"notifications": notes, "count": len(notes)}
+
+
+# Process start time — anchors "did the crash happen before this run?".
+_PROCESS_START_TS = time.time()
+
+
+def _crashed_last_session() -> bool:
+    from core.prefs import get as prefs_get
+
+    if not os.path.exists(CRASH_LOG_PATH):
+        return False
+    size = os.path.getsize(CRASH_LOG_PATH)
+    if size == 0:
+        return False
+    mtime = os.path.getmtime(CRASH_LOG_PATH)
+    # Composite ack (size + mtime): a bare byte count goes stale after the log
+    # is truncated — the next crash log can stay smaller than the old acked
+    # size forever, silently suppressing 'crash-last-session'. The ack only
+    # holds while it still covers the file's current state.
+    ack = prefs_get("crash_log_acked")
+    if isinstance(ack, dict):
+        if float(ack.get("mtime", 0) or 0) >= mtime and int(ack.get("size", 0) or 0) >= size:
+            return False
+    else:
+        # Legacy size-only ack from older builds.
+        if size <= int(prefs_get("crash_log_acked_size", 0) or 0):
+            return False
+    return mtime < _PROCESS_START_TS
+
+
+@router.post("/system/crash/ack")
+async def ack_crash():
+    """Mark the current crash log as seen — dismisses the
+    'crash-last-session' notification until the log changes again."""
+    size = mtime = 0
+    if os.path.exists(CRASH_LOG_PATH):
+        size = os.path.getsize(CRASH_LOG_PATH)
+        mtime = os.path.getmtime(CRASH_LOG_PATH)
+    prefs_set("crash_log_acked", {"size": size, "mtime": mtime})
+    return {"acked_size": size}
 
 
 # ── Environment variable setter ───────────────────────────────────────────
@@ -781,6 +951,59 @@ def hf_token_state():
         "active": s["active"],
         "sources": [asdict(row) for row in s["sources"]],
     }
+
+
+# ── Error journal ─────────────────────────────────────────────────────────
+
+
+@router.get("/system/errors/recent")
+def recent_errors(limit: int = Query(20, ge=1, le=50)):
+    """Recent unhandled backend errors, newest first — structured, deduped
+    (count per fingerprint), classified (error_class), pre-scrubbed. The
+    bug-report pipeline reads this to auto-attach the most recent backend
+    failure; Settings → Logs can render it as a triage view.
+    """
+    from core import error_journal
+
+    errors = error_journal.recent(limit)
+    return {"errors": errors, "count": len(errors)}
+
+
+# ── Diagnostic bundle ─────────────────────────────────────────────────────
+
+
+@router.post("/system/diagnostic-bundle")
+async def diagnostic_bundle(network: bool = Query(False, description="Include the hub reachability probe")):
+    """Build the drag-onto-a-GitHub-issue zip (core.diagnostic_bundle):
+    self-check report, recent error journal, scrubbed log tails. Returns the
+    local path so the UI can reveal it in the file manager. The path itself
+    is NOT scrubbed — this response never leaves the machine; the zip's
+    *contents* are scrubbed because the zip does.
+    """
+    from core.diagnostic_bundle import build_bundle
+
+    path = await asyncio.to_thread(build_bundle, network)
+    return {"path": path, "filename": os.path.basename(path)}
+
+
+# ── Self-check diagnostics ────────────────────────────────────────────────
+
+
+@router.get("/system/diagnose")
+async def system_diagnose(
+    network: bool = Query(True, description="Include the HuggingFace hub reachability probe"),
+    deep: bool = Query(False, description="Also load the active engine and synthesize a short utterance (may cold-load the model — minutes on first run)"),
+):
+    """Run the self-check suite (core.diagnose) and return the structured report.
+
+    The hub probe can block up to ~5s (and ``deep=true`` far longer), so the
+    whole run goes through a threadpool; pass ``network=false`` for an
+    instant offline report. Output is pre-scrubbed (core.scrub) — safe to
+    paste into a GitHub issue.
+    """
+    from core.diagnose import run_diagnostics
+
+    return await asyncio.to_thread(run_diagnostics, network, deep)
 
 
 # ── Phase 1 Wave 3 — macOS Gatekeeper quarantine probe (#54) ────────────
