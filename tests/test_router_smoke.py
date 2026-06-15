@@ -33,6 +33,22 @@ def test_system_info_smoke(client):
     body = r.json()
     assert "data_dir" in body
     assert "device" in body
+    # The Docker/web build has no Tauri getVersion(); Settings → About reads the
+    # running version from here so it shows the real version, not a dash (#249).
+    from core.version import APP_VERSION
+    assert body["app_version"] == APP_VERSION
+    # Settings → About → Architecture must reflect the SERVER's machine, not the
+    # client browser's navigator.platform (which showed "Win32" in Docker, #262).
+    import platform as _pf
+    assert body["arch"] == _pf.machine()
+
+
+def test_health_exposes_version(client):
+    """`/health` is the zero-auth way to confirm the running version (#249)."""
+    from core.version import APP_VERSION
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    assert body["version"] == APP_VERSION
 
 
 def test_system_logs_smoke(client):

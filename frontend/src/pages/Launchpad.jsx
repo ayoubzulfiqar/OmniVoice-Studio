@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import {
-  Scale, Fingerprint, Wand2, Film, Lock,
+  Scale, Fingerprint, Wand2, Film, Lock, BookOpen, BookMarked, LibraryBig,
+  FileText, HardDrive, Download, ArrowRight,
 } from 'lucide-react';
 import { API } from '../api/client';
+import { useAppStore } from '../store';
 import ReadinessChecklist from '../components/ReadinessChecklist';
 
 function DubThumb({ jobId, fallback }) {
@@ -31,7 +33,7 @@ function DubThumb({ jobId, fallback }) {
  * cursor position. Eternal breath ring lives on `.lp-glow-layer::after`
  * and pulses forever whether the card is hovered or not.
  */
-function ActionCard({ hue, Icon, title, accent, count, onClick, children }) {
+function ActionCard({ hue, Icon, title, count, onClick, children }) {
   const handleMouseMove = (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`);
@@ -50,22 +52,27 @@ function ActionCard({ hue, Icon, title, accent, count, onClick, children }) {
       <div className="card-icon">
         <Icon size={18} color={hue} />
       </div>
-      <h3>
-        {title} <span className="lp-action-card__emoji" aria-hidden="true">{accent}</span>
-      </h3>
+      <h3>{title}</h3>
       <p className="card-desc">{children}</p>
     </button>
   );
 }
 
 export default function Launchpad({
-  profiles, studioProjects, dubHistory,
+  profiles, studioProjects, dubHistory, exportHistory = [],
   setMode, setIsCompareModalOpen, handleSelectProfile, loadProject,
 }) {
   const { t } = useTranslation();
+  // Clone/Design are no longer separate navigation modes — both cards open
+  // the unified Voice ('studio') workspace preset to the matching method.
+  const setDefineMethod = useAppStore(s => s.setDefineMethod);
+  const openStudio = (method) => { setMode('studio'); setDefineMethod(method); };
   const cloneProfiles = profiles.filter(p => !p.instruct);
   const designProfiles = profiles.filter(p => !!p.instruct);
   const demoProfile = profiles.find(p => p.id === 'demo0001');
+  // Most-recent exported files from OmniDrive — a quick "pick up where you left
+  // off" strip. exportHistory arrives newest-first from /export/history.
+  const recentFiles = exportHistory.slice(0, 4);
 
   return (
     <div className="launchpad">
@@ -129,16 +136,61 @@ export default function Launchpad({
 
       {/* Action Cards */}
       <div className="lp-actions">
-        <ActionCard hue="#d3869b" Icon={Fingerprint} title={t('launchpad.clone_title')} accent="✨" count={cloneProfiles.length} onClick={() => setMode('clone')}>
+        <ActionCard hue="#d3869b" Icon={Fingerprint} title={t('launchpad.clone_title')} count={cloneProfiles.length} onClick={() => openStudio('audio')}>
           {t('launchpad.clone_desc')}
         </ActionCard>
-        <ActionCard hue="#8ec07c" Icon={Wand2} title={t('launchpad.design_title')} accent="🧪" count={designProfiles.length} onClick={() => setMode('design')}>
+        <ActionCard hue="#8ec07c" Icon={Wand2} title={t('launchpad.design_title')} count={designProfiles.length} onClick={() => openStudio('design')}>
           {t('launchpad.design_desc')}
         </ActionCard>
-        <ActionCard hue="#fe8019" Icon={Film} title={t('launchpad.dub_title')} accent="🎬" count={studioProjects.length} onClick={() => setMode('dub')}>
+        <ActionCard hue="#fe8019" Icon={Film} title={t('launchpad.dub_title')} count={studioProjects.length} onClick={() => setMode('dub')}>
           {t('launchpad.dub_desc')}
         </ActionCard>
+        <ActionCard hue="#83a598" Icon={BookOpen} title={t('launchpad.stories_title')} onClick={() => setMode('stories')}>
+          {t('launchpad.stories_desc')}
+        </ActionCard>
+        <ActionCard hue="#458588" Icon={BookMarked} title={t('launchpad.audiobook_title')} onClick={() => setMode('audiobook')}>
+          {t('launchpad.audiobook_desc')}
+        </ActionCard>
+        <ActionCard hue="#fabd2f" Icon={LibraryBig} title={t('launchpad.gallery_title')} onClick={() => setMode('gallery')}>
+          {t('launchpad.gallery_desc')}
+        </ActionCard>
+        <ActionCard hue="#b8bb26" Icon={FileText} title={t('launchpad.transcripts_title')} onClick={() => setMode('transcriptions')}>
+          {t('launchpad.transcripts_desc')}
+        </ActionCard>
       </div>
+
+      {/* Recent files from OmniDrive — last few exports, with a jump to the
+          full file browser (the Projects/OmniDrive page). */}
+      {recentFiles.length > 0 && (
+        <div className="lp-section lp-files">
+          <div className="lp-files__head">
+            <div className="lp-section-title"><HardDrive size={12} color="#fabd2f" /> {t('launchpad.recent_files')}</div>
+            <button type="button" className="lp-view-all" onClick={() => setMode('projects')}>
+              {t('launchpad.view_all_files')} <ArrowRight size={12} />
+            </button>
+          </div>
+          <div className="lp-files__grid">
+            {recentFiles.map((f, i) => {
+              const name = (f.destination_path || f.path || f.filename || '').split('/').pop() || t('launchpad.file');
+              return (
+                <button
+                  key={f.id || f.destination_path || i}
+                  type="button"
+                  className="lp-project-card lp-file-card"
+                  onClick={() => setMode('projects')}
+                  title={name}
+                >
+                  <div className="proj-icon lp-proj-icon--file"><Download size={14} color="#fabd2f" /></div>
+                  <div className="proj-info">
+                    <div className="proj-name">{name}</div>
+                    {f.mode && <div className="proj-meta">{f.mode}</div>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Demo profile callout */}
       {demoProfile && profiles.length === 1 && studioProjects.length === 0 && (
@@ -147,7 +199,7 @@ export default function Launchpad({
           <span>{t('launchpad.demo_callout')}</span>
           <button
             className="lp-demo-callout__btn"
-            onClick={() => { setMode('clone'); handleSelectProfile(demoProfile); }}
+            onClick={() => { openStudio('audio'); handleSelectProfile(demoProfile); }}
           >
             {t('launchpad.try_it')}
           </button>
@@ -170,7 +222,7 @@ export default function Launchpad({
                         <div className="proj-name">{p.name}</div>
                         <div className="proj-meta">{p.ref_audio_path}</div>
                       </div>
-                      <button className="proj-action" onClick={() => { setMode('clone'); handleSelectProfile(p); }}>{t('launchpad.open')}</button>
+                      <button className="proj-action" onClick={() => { openStudio('audio'); handleSelectProfile(p); }}>{t('launchpad.open')}</button>
                     </div>
                   ))}
                 </div>
@@ -192,7 +244,7 @@ export default function Launchpad({
                         <div className="proj-meta lp-proj-meta--italic">{p.instruct}</div>
                       </div>
                       {p.is_locked && <span className="lp-locked-badge">{t('launchpad.locked')}</span>}
-                      <button className="proj-action" onClick={() => { setMode('design'); handleSelectProfile(p); }}>{t('launchpad.open')}</button>
+                      <button className="proj-action" onClick={() => { openStudio('design'); handleSelectProfile(p); }}>{t('launchpad.open')}</button>
                     </div>
                   ))}
                 </div>

@@ -17,9 +17,11 @@
  *   POST /system/tailscale/disable  → {ok}
  */
 import React, { useCallback, useEffect, useState } from 'react';
+import { copyText } from "../../utils/copyText";
 import QRCode from 'qrcode';
 import { Wifi, Globe, Copy, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
 import { apiJson, apiPost } from '../../api/client';
 import { openExternal } from '../../api/external';
 import NetworkToggle from '../NetworkToggle';
@@ -28,12 +30,54 @@ import './SharingPanel.css';
 const TAILSCALE_DOWNLOAD_URL = 'https://tailscale.com/download';
 
 export default function SharingPanel() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState('');
   const [note, setNote] = useState('');
   const [qr, setQr] = useState('');
+  // Port configuration (read from /system/info; LAN-share port is editable).
+  const [ports, setPorts] = useState(null);
+  const [sharePortInput, setSharePortInput] = useState('');
+  const [savingPort, setSavingPort] = useState(false);
+
+  // Fetch the resolved port config once on mount; cancel-safe.
+  useEffect(() => {
+    const ctrl = { aborted: false };
+    (async () => {
+      try {
+        const info = await apiJson('/system/info');
+        if (ctrl.aborted) return;
+        setPorts(info);
+        if (info?.share_port_base != null) {
+          setSharePortInput(String(info.share_port_base));
+        }
+      } catch {
+        // Loopback-only; if unreachable just hide the ports subsection.
+        if (!ctrl.aborted) setPorts(null);
+      }
+    })();
+    return () => { ctrl.aborted = true; };
+  }, []);
+
+  const saveSharePort = async () => {
+    const n = Number(sharePortInput);
+    if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+      toast.error(t('sharing.port_error'));
+      return;
+    }
+    setSavingPort(true);
+    try {
+      await apiPost('/system/set-env', { key: 'OMNIVOICE_SHARE_PORT', value: String(n) });
+      setPorts((p) => (p ? { ...p, share_port_base: n } : p));
+      toast.success(t('sharing.port_saved'));
+    } catch (e) {
+      toast.error(t('sharing.port_save_failed', { message: e.message }));
+    } finally {
+      setSavingPort(false);
+    }
+  };
 
   const refresh = useCallback(async (signal) => {
     setLoading(true);
@@ -78,13 +122,13 @@ export default function SharingPanel() {
       if (r?.ok) {
         setUrl(r.url || '');
         setNote(r.note || '');
-        toast.success('Tailscale serve enabled');
+        toast.success(t('sharing.tailscale_enabled'));
         await refresh();
       } else {
-        toast.error(r?.error || 'Could not enable Tailscale');
+        toast.error(r?.error || t('sharing.tailscale_enable_failed'));
       }
     } catch (e) {
-      toast.error(`Could not enable Tailscale: ${e.message}`);
+      toast.error(t('sharing.tailscale_enable_error', { message: e.message }));
     } finally {
       setBusy(false);
     }
@@ -95,21 +139,21 @@ export default function SharingPanel() {
     try {
       const r = await apiPost('/system/tailscale/disable');
       if (r && r.ok === false) {
-        toast.error(r.error || 'Could not disable Tailscale');
+        toast.error(r.error || t('sharing.tailscale_disable_failed'));
       } else {
         setUrl('');
         setNote('');
-        toast.success('Tailscale serve disabled');
+        toast.success(t('sharing.tailscale_disabled'));
       }
       await refresh();
     } catch (e) {
-      toast.error(`Could not disable Tailscale: ${e.message}`);
+      toast.error(t('sharing.tailscale_disable_error', { message: e.message }));
     } finally {
       setBusy(false);
     }
   };
 
-  const copy = (text) => { navigator.clipboard?.writeText(text); toast.success('Copied'); };
+  const copy = (text) => { copyText(text); toast.success(t('sharing.copied')); };
 
   const installed = !!status?.installed;
   const running = !!status?.running;
@@ -117,42 +161,89 @@ export default function SharingPanel() {
   return (
     <section className="sharingpanel" aria-labelledby="sharingpanel-heading">
       <h3 id="sharingpanel-heading" className="sharingpanel__title">
-        <Wifi size={14} /> Sharing &amp; Remote Access
+        <Wifi size={14} /> {t('sharing.title')}
       </h3>
 
       <p className="sharingpanel__help">
-        Expose this running OmniVoice instance to your other machines without
-        restarting it. Loopback-only is the default — nothing is shared until
-        you turn it on here.
+        {t('sharing.help')}
       </p>
 
       {/* ── LAN sharing ──────────────────────────────────────────────── */}
       <div className="sharingpanel__section" data-testid="sharing-lan">
         <h4 className="sharingpanel__subtitle">
-          <Wifi size={12} /> Local network
+          <Wifi size={12} /> {t('sharing.local_network')}
         </h4>
         <p className="sharingpanel__subhelp">
-          Share on your Wi-Fi / Ethernet with a one-time access PIN. Other
-          devices scan the QR code or open the link.
+          {t('sharing.local_help')}
         </p>
         <NetworkToggle />
       </div>
 
+      {/* ── Ports ────────────────────────────────────────────────────── */}
+      {ports && (
+        <div className="sharingpanel__section" data-testid="sharing-ports">
+          <h4 className="sharingpanel__subtitle">
+            <Globe size={12} /> {t('sharing.ports_title')}
+          </h4>
+          <p className="sharingpanel__subhelp">
+            {t('sharing.ports_help')}
+          </p>
+
+          <div className="sharingpanel__row">
+            <span>{t('sharing.backend_port')}</span>
+            <code className="sharingpanel__addr" data-testid="port-backend">{ports.backend_port}</code>
+            <code className="sharingpanel__envname">OMNIVOICE_PORT</code>
+          </div>
+
+          <div className="sharingpanel__row">
+            <span>{t('sharing.ui_port')}</span>
+            <code className="sharingpanel__addr" data-testid="port-ui">{ports.ui_port}</code>
+            <code className="sharingpanel__envname">OMNIVOICE_UI_PORT</code>
+          </div>
+
+          <div className="sharingpanel__row">
+            <label htmlFor="share-port-input">{t('sharing.lan_share_port')}</label>
+            <input
+              id="share-port-input"
+              type="number"
+              min={1024}
+              max={65535}
+              value={sharePortInput}
+              onChange={(e) => setSharePortInput(e.target.value)}
+              className="sharingpanel__portinput"
+              data-testid="port-share-input"
+            />
+            <code className="sharingpanel__envname">OMNIVOICE_SHARE_PORT</code>
+            <button
+              type="button"
+              className="sharingpanel__btn"
+              onClick={saveSharePort}
+              disabled={savingPort}
+              data-testid="port-share-save"
+            >
+              {savingPort ? t('sharing.saving') : t('common.save')}
+            </button>
+          </div>
+          <p className="sharingpanel__note">
+            {t('sharing.ports_note')}
+          </p>
+        </div>
+      )}
+
       {/* ── Tailscale ────────────────────────────────────────────────── */}
       <div className="sharingpanel__section" data-testid="sharing-tailscale">
         <h4 className="sharingpanel__subtitle">
-          <Globe size={12} /> Tailscale (private remote access)
+          <Globe size={12} /> {t('sharing.tailscale_title')}
         </h4>
 
         {loading && !status && (
-          <p className="sharingpanel__subhelp">Checking for Tailscale…</p>
+          <p className="sharingpanel__subhelp">{t('sharing.tailscale_checking')}</p>
         )}
 
         {status && !installed && (
           <div className="sharingpanel__tailscale-absent" data-testid="tailscale-absent">
             <p className="sharingpanel__subhelp">
-              Tailscale not detected. Install it to reach OmniVoice securely
-              from anywhere on your private tailnet.
+              {t('sharing.tailscale_absent')}
             </p>
             <button
               type="button"
@@ -160,7 +251,7 @@ export default function SharingPanel() {
               onClick={() => openExternal(TAILSCALE_DOWNLOAD_URL)}
               data-testid="tailscale-install"
             >
-              <ExternalLink size={12} /> Install Tailscale
+              <ExternalLink size={12} /> {t('sharing.tailscale_install')}
             </button>
           </div>
         )}
@@ -169,8 +260,8 @@ export default function SharingPanel() {
           <div className="sharingpanel__tailscale-present">
             <p className="sharingpanel__subhelp">
               {running
-                ? 'Tailscale is running. Serve OmniVoice over your private tailnet.'
-                : 'Tailscale is installed but not logged in. Start and sign in to Tailscale first.'}
+                ? t('sharing.tailscale_running')
+                : t('sharing.tailscale_not_logged_in')}
             </p>
 
             {!url ? (
@@ -181,7 +272,7 @@ export default function SharingPanel() {
                 disabled={busy}
                 data-testid="tailscale-enable"
               >
-                {busy ? 'Enabling…' : 'Enable Tailscale serve'}
+                {busy ? t('sharing.tailscale_enabling') : t('sharing.tailscale_enable_btn')}
               </button>
             ) : (
               <div className="sharingpanel__tailscale-url">
@@ -191,8 +282,8 @@ export default function SharingPanel() {
                     type="button"
                     className="sharingpanel__iconbtn"
                     onClick={() => copy(url)}
-                    aria-label="Copy Tailscale URL"
-                    title="Copy link"
+                    aria-label={t('sharing.tailscale_copy')}
+                    title={t('sharing.tailscale_copy')}
                     data-testid="tailscale-copy"
                   >
                     <Copy size={12} />
@@ -201,8 +292,8 @@ export default function SharingPanel() {
                     type="button"
                     className="sharingpanel__iconbtn"
                     onClick={() => openExternal(url)}
-                    aria-label="Open Tailscale URL"
-                    title="Open in browser"
+                    aria-label={t('sharing.tailscale_open')}
+                    title={t('sharing.tailscale_open')}
                     data-testid="tailscale-open"
                   >
                     <ExternalLink size={12} />
@@ -213,7 +304,7 @@ export default function SharingPanel() {
                   <img
                     className="sharingpanel__qr"
                     src={qr}
-                    alt="QR code for the Tailscale URL"
+                    alt={t('sharing.tailscale_qr_alt')}
                     width={104}
                     height={104}
                   />
@@ -225,7 +316,7 @@ export default function SharingPanel() {
                   disabled={busy}
                   data-testid="tailscale-disable"
                 >
-                  {busy ? 'Disabling…' : 'Stop Tailscale serve'}
+                  {busy ? t('sharing.tailscale_disabling') : t('sharing.tailscale_disable_btn')}
                 </button>
               </div>
             )}

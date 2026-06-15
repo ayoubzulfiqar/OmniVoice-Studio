@@ -37,6 +37,12 @@ logger = logging.getLogger("omnivoice.llm")
 class LLMBackend(ABC):
     id: str = "base"
     display_name: str = "Base LLM"
+    # LLM backends call out over the network (OpenAI/Ollama/LM Studio) or are a
+    # no-op — none run a model on the user's GPU. So `gpu_compat` is empty and
+    # list_backends() labels the family `effective_device:"network"` /
+    # routing_status:"n/a" rather than asserting a false GPU claim. Routing is
+    # never gated for LLM (see engines.select_engine + diagnose).
+    gpu_compat: tuple[str, ...] = ()
 
     @classmethod
     @abstractmethod
@@ -106,6 +112,22 @@ class OpenAICompatBackend(LLMBackend):
         return self._client
 
     def chat(self, *, system: str, user: str, timeout: Optional[float] = None) -> str:
+        return self.chat_messages(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            timeout=timeout,
+        )
+
+    def chat_messages(self, *, messages: list[dict], timeout: Optional[float] = None) -> str:
+        """One-shot completion over a full message list.
+
+        Additive surface for callers that need structured few-shot turns
+        (dictation refinement, Wave 2.1) — small local models pattern-match
+        and echo inline examples, so examples must arrive as prior chat
+        turns, not inside the system prompt.
+        """
         if timeout is None:
             try:
                 timeout = float(os.environ.get("OMNIVOICE_LLM_TIMEOUT", "45"))
@@ -114,10 +136,7 @@ class OpenAICompatBackend(LLMBackend):
         res = self._get_client().chat.completions.create(
             model=self.model_name,
             timeout=timeout,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            messages=messages,
         )
         return (res.choices[0].message.content or "").strip()
 
@@ -143,6 +162,9 @@ class OffBackend(LLMBackend):
             "to use features that need one (Cinematic translate, glossary auto-extract)."
         )
 
+    def chat_messages(self, **kw) -> str:
+        return self.chat(**kw)
+
 
 _REGISTRY: dict[str, type[LLMBackend]] = {
     "openai-compat": OpenAICompatBackend,
@@ -150,15 +172,53 @@ _REGISTRY: dict[str, type[LLMBackend]] = {
 }
 
 
+# Most-recent failure per backend (parity with tts/asr list_backends).
+_LAST_ERRORS: dict[str, str] = {}
+
+_INSTALL_HINTS: dict[str, str] = {
+    "openai-compat": "Set TRANSLATE_BASE_URL (+ TRANSLATE_API_KEY) — OpenAI, "
+                     "Ollama (http://localhost:11434/v1), or any compatible host.",
+}
+
+
 def list_backends() -> list[dict]:
-    out = []
+    """Same 11-key shape as tts/asr so the matrix renders families uniformly.
+
+    LLM is NOT a GPU family: every entry carries literal
+    ``effective_device:"network"`` / ``routing_status:"n/a"`` /
+    ``routing_reason:null`` (NOT via resolve_routing — that would be a false
+    GPU claim). ``effective_device:"network"`` is a label, not a probe: nothing
+    here touches the network (local-first).
+    """
+    from core.scrub import scrub_text
+
+    out: list[dict] = []
     for bid, cls in _REGISTRY.items():
-        ok, msg = cls.is_available()
+        try:
+            ok, msg = cls.is_available()
+        except Exception as exc:
+            ok = False
+            msg = f"{type(exc).__name__}: {exc}"
+            logger.warning(
+                "llm list_backends: %s.is_available() raised — degrading "
+                "gracefully so the picker still renders: %s", bid, msg,
+            )
+        if ok:
+            _LAST_ERRORS.pop(bid, None)
+        else:
+            _LAST_ERRORS[bid] = scrub_text(msg)
         out.append({
             "id": bid,
             "display_name": cls.display_name,
             "available": ok,
-            "reason": None if ok else msg,
+            "reason": None if ok else scrub_text(msg),
+            "install_hint": _INSTALL_HINTS.get(bid),
+            "last_error": _LAST_ERRORS.get(bid),
+            "isolation_mode": "in-process",
+            "gpu_compat": list(getattr(cls, "gpu_compat", ())),
+            "effective_device": "network",
+            "routing_status": "n/a",
+            "routing_reason": None,
         })
     return out
 

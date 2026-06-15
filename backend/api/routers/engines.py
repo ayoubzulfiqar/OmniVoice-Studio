@@ -266,11 +266,26 @@ class SelectEngineRequest(BaseModel):
     backend_id: str
 
 
-@router.post("/engines/select")
+class SelectEngineResponse(BaseModel):
+    family: str
+    active: str
+    env_override: bool
+    # Routing verdict for the selected engine on THIS host (#21). Always present
+    # so the UI can show a confirm/warning toast on a cpu_fallback pick without
+    # branching on key presence; defaults match a legacy/degraded row.
+    routing_status: str = "cpu_only"
+    effective_device: str = "cpu"
+    routing_reason: str | None = None
+
+
+@router.post("/engines/select", response_model=SelectEngineResponse)
 def select_engine(req: SelectEngineRequest):
-    """Persist a family's engine pick to prefs.json. Refuses unknown backends
-    + refuses backends whose deps aren't installed (so the UI can't silently
-    brick a pipeline by picking an unavailable engine)."""
+    """Persist a family's engine pick to prefs.json. Refuses unknown backends,
+    backends whose deps aren't installed, AND backends that cannot run on THIS
+    host's hardware (routing_status == "unavailable") — so the UI can't silently
+    brick a pipeline by picking an engine that needs a GPU this machine lacks.
+    A `cpu_fallback` pick is allowed (it runs, just slower) — only a hard
+    `unavailable` is blocked. LLM is never routing-gated (its status is "n/a")."""
     family = _FAMILIES.get(req.family)
     if not family:
         raise HTTPException(400, f"Unknown family: {req.family}. Expected one of tts/asr/llm.")
@@ -278,12 +293,26 @@ def select_engine(req: SelectEngineRequest):
     available = {b["id"]: b for b in module.list_backends()}
     if req.backend_id not in available:
         raise HTTPException(400, f"Unknown {req.family} backend: {req.backend_id!r}")
-    if not available[req.backend_id]["available"]:
-        reason = available[req.backend_id].get("reason") or "unavailable"
+    entry = available[req.backend_id]
+    if not entry["available"]:
+        reason = entry.get("reason") or "unavailable"
         raise HTTPException(400, f"Backend {req.backend_id} not ready: {reason}")
+    # Host-routing gate (no silent CPU fallback). `.get` is defensive so an
+    # older/legacy payload without routing keys still selects cleanly.
+    if entry.get("routing_status") == "unavailable":
+        why = entry.get("routing_reason") or "requires a GPU this host doesn't have"
+        raise HTTPException(
+            400,
+            f"Backend {req.backend_id} can't run on this machine: {why}. "
+            f"Pick an engine with a CPU path, or one that supports this host's GPU.",
+        )
     prefs.set_(pref_key, req.backend_id)
     return {
         "family": req.family,
         "active": module.active_backend_id(),
         "env_override": bool(__import__("os").environ.get(f"OMNIVOICE_{req.family.upper()}_BACKEND")),
+        # Echo the routing verdict so the UI can warn on a cpu_fallback pick.
+        "routing_status": entry.get("routing_status", "cpu_only"),
+        "effective_device": entry.get("effective_device", "cpu"),
+        "routing_reason": entry.get("routing_reason"),
     }

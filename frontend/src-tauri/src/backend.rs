@@ -229,17 +229,38 @@ pub fn spawn_backend<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress: Opt
     let err_log_file = fs::File::create(&err_path).ok();
 
     let mut env: Vec<(String, String)> = vec![("PYTHONUNBUFFERED".into(), "1".into())];
+    // Pin the child's OMNIVOICE_PORT to the value Rust resolved so Python's
+    // network_share.backend_port() always agrees with the uvicorn --port we
+    // pass below — otherwise a user-set OMNIVOICE_PORT would change the
+    // LAN-share/Tailscale target while the listener stayed on the Rust port.
+    env.push(("OMNIVOICE_PORT".into(), backend_port().to_string()));
     if cfg!(target_os = "windows") {
         env.push(("TORCHDYNAMO_DISABLE".into(), "1".into()));
         env.push(("HF_HUB_DISABLE_SYMLINKS_WARNING".into(), "1".into()));
         env.push(("HF_HUB_DISABLE_SYMLINKS".into(), "1".into()));
     }
+    // HF endpoint precedence: process env (power user) > setup-screen custom
+    // mirror > region preset.
+    let cfg = load_config(app);
     if let Ok(hf_ep) = std::env::var("HF_ENDPOINT") {
         env.push(("HF_ENDPOINT".into(), hf_ep));
-    } else {
-        let cfg = load_config(app);
-        if cfg.region == "china" {
-            env.push(("HF_ENDPOINT".into(), "https://hf-mirror.com".into()));
+    } else if let Some(hf_mirror) = cfg.mirrors.hf_endpoint.as_deref() {
+        env.push(("HF_ENDPOINT".into(), hf_mirror.into()));
+    } else if cfg.region == "china" {
+        env.push(("HF_ENDPOINT".into(), "https://hf-mirror.com".into()));
+    }
+    // Storage layout chosen on the setup screen. Unset (None) means platform
+    // default — we deliberately don't set the env vars then, so legacy
+    // installs keep byte-identical behavior. Process env still wins so a
+    // power user can relocate per-launch.
+    if std::env::var("OMNIVOICE_DATA_DIR").is_err() {
+        if let Some(data_dir) = crate::setup::resolved_data_dir(app) {
+            env.push(("OMNIVOICE_DATA_DIR".into(), data_dir.to_string_lossy().into()));
+        }
+    }
+    if std::env::var("OMNIVOICE_CACHE_DIR").is_err() {
+        if let Some(models_dir) = crate::setup::resolved_models_dir(app) {
+            env.push(("OMNIVOICE_CACHE_DIR".into(), models_dir.to_string_lossy().into()));
         }
     }
     let app_data = app.path().app_local_data_dir().unwrap_or_default();

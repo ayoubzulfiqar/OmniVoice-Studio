@@ -3,6 +3,11 @@
 This page is self-contained: follow it top to bottom and you'll end up with a
 working OmniVoice Studio install on macOS (Apple Silicon or Intel).
 
+> **Intel Macs:** the pre-built `.app`/DMG currently ships **Apple Silicon
+> only** — on Intel, install **from source** (works fully; ASR falls back to
+> CTranslate2). A pre-built Intel bundle is tracked in
+> [#279](https://github.com/debpalash/OmniVoice-Studio/issues/279).
+
 ## Prerequisites
 
 - **macOS 12 (Monterey) or newer** — Apple Silicon or Intel.
@@ -35,30 +40,49 @@ Download the latest DMG from the
 [Releases page](https://github.com/debpalash/OmniVoice-Studio/releases/latest),
 double-click to mount, drag **OmniVoice Studio.app** into `/Applications`.
 
-If the first launch shows "app is damaged and can't be opened", that's macOS
-Gatekeeper — see the next section.
+Pick the DMG that matches your Mac (check **Apple menu → About This Mac → Chip/Processor**):
+
+| Mac | DMG to download |
+|-----|-----------------|
+| Apple Silicon (M1/M2/M3/M4…) | `OmniVoice.Studio_<version>_aarch64.dmg` |
+| Intel | `OmniVoice.Studio_<version>_x64.dmg` |
+
+The architectures are **not** interchangeable: an Intel Mac cannot run the
+`aarch64` build (Rosetta 2 only translates the other direction — it lets Apple
+Silicon run Intel apps, never the reverse). If a release predates the Intel
+build target and has no `x64` DMG, use the
+[install-from-source path](#install-from-source) above instead.
+
+If the first launch is blocked by macOS Gatekeeper ("OmniVoice Studio cannot be
+opened because the developer cannot be verified"), see the next section — it
+opens with one right-click, no Terminal.
 
 ## App is "damaged" / can't be opened (Gatekeeper)
 
 <a id="gatekeeper-quarantine"></a>
 
-If you see **"OmniVoice Studio.app" is damaged and can't be opened. You should
-move it to the Trash**, the app is **not** damaged — that misleading message is
-macOS Gatekeeper blocking an app it can't verify (issues #134, #72).
+On first launch you'll see **"OmniVoice Studio cannot be opened because the
+developer cannot be verified"** — macOS Gatekeeper blocking an app it can't trace
+to a paid Apple Developer account (issues #134, #72).
 
-**Why:** the build isn't yet notarised by Apple, so macOS quarantines any copy
-downloaded from the internet outside the App Store and shows the "damaged"
-message. This is expected for open-source unsigned builds — releases are only
-notarised once the project's Apple Developer ID signing pipeline is configured
-(see "For maintainers" below). The workaround below is **safe** because you
-downloaded the app from the official repo / Releases page; if you want
-belt-and-braces, verify the SHA-256 against the `*.dmg.sha256` checksum on the
-release page first.
+**Why:** the build is **ad-hoc code-signed** (a valid signature, free) but not
+yet **notarised** by Apple, so macOS quarantines any copy downloaded from the
+internet and asks you to confirm the first launch. This is expected for
+open-source builds — releases are notarised (warning-free) only once the
+project's Apple Developer ID pipeline is funded (see "For maintainers" below).
+Confirming is **safe** because you downloaded from the official repo / Releases
+page; for belt-and-braces, verify the SHA-256 against the `*.dmg.sha256` checksum
+on the release page first.
 
-**Fix — GUI (no terminal):** in Finder, **right-click** (or Control-click) the
-app → **Open** → click **Open** again in the dialog. Or go to **System Settings
-→ Privacy & Security**, scroll to the security section, and click **"Open
-Anyway"** next to the OmniVoice Studio prompt.
+**Fix — GUI, no Terminal (do this):** in Finder, **right-click** (or
+Control-click) **OmniVoice Studio.app** → **Open** → click **Open** again in the
+dialog. (On macOS 15 Sequoia: double-click once, then go to **System Settings →
+Privacy & Security**, scroll down, and click **"Open Anyway"**.) This is a
+one-time confirmation per install; afterwards it launches by double-click.
+
+> If you instead see the harsher **"app is damaged and can't be opened. Move to
+> Trash"** with no Open option, the download was corrupted or it's a pre-signing
+> build — re-download the latest release, or use the Terminal fallback below.
 
 **Fix — Terminal:** after dragging the app into `/Applications`, run:
 

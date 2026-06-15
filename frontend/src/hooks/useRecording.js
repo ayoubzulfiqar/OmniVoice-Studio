@@ -5,9 +5,12 @@
  */
 import { useState, useRef } from 'react';
 import { toast } from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
 import { cleanAudio as apiCleanAudio } from '../api/system';
+import { micErrorMessage } from '../utils/micError';
 
 export default function useRecording(ingestRefAudio) {
+  const { t } = useTranslation();
   const [isRecording, setIsRecording] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -33,7 +36,7 @@ export default function useRecording(ingestRefAudio) {
 
         const blob = new Blob(recordingChunksRef.current, { type: 'audio/webm' });
         if (blob.size < 1000) {
-          toast.error("Recording too short");
+          toast.error(t('recording.too_short', { defaultValue: 'Recording too short' }));
           return;
         }
 
@@ -49,12 +52,12 @@ export default function useRecording(ingestRefAudio) {
           const cleanFile = new File([cleanBlob], cleanFilename, { type: "audio/wav" });
 
           await ingestRefAudio(cleanFile);
-          toast.success("🎙️ Recording cleaned & loaded!");
+          toast.success(t('recording.cleaned_loaded', { defaultValue: 'Recording cleaned & loaded!' }));
         } catch (e) {
           // Fallback: use raw recording without denoising
           const rawFile = new File([blob], "recording.webm", { type: "audio/webm" });
           await ingestRefAudio(rawFile);
-          toast.success("Recording loaded (raw — denoising unavailable)");
+          toast.success(t('recording.loaded_raw', { defaultValue: 'Recording loaded (raw — denoising unavailable)' }));
         } finally {
           setIsCleaning(false);
         }
@@ -70,7 +73,9 @@ export default function useRecording(ingestRefAudio) {
       }, 100);
 
     } catch (e) {
-      toast.error("Microphone access denied");
+      // Same actionable mapping as the dictation pill: denied → per-OS
+      // settings hint; otherwise no-device / device-busy / generic (#323).
+      toast.error(micErrorMessage(t, e), { duration: 6000 });
     }
   };
 

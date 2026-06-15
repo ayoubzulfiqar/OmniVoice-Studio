@@ -1,8 +1,11 @@
 import React, { useState, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Volume2, Play, Square, Loader, X, Mic } from 'lucide-react';
 import { generateSpeech } from '../api/generate';
 import { PRESETS } from '../utils/constants';
 import { Button } from '../ui';
+import WaveformPlayer from './WaveformPlayer';
+import { stopActivePlayback } from '../utils/playback';
 import './VoicePreview.css';
 
 /**
@@ -12,7 +15,6 @@ import './VoicePreview.css';
  * sentence, hits Play → hears TTS output instantly (8 inference steps for
  * speed). The result is disposable — it doesn't save to history.
  */
-const DEFAULT_TEXT = 'Hello! This is a preview of how I sound in this voice.';
 
 export default function VoicePreview({
   open,
@@ -21,12 +23,11 @@ export default function VoicePreview({
   initialProfileId = '',
   fileToMediaUrl,
 }) {
-  const [text, setText] = useState(DEFAULT_TEXT);
+  const { t } = useTranslation();
+  const [text, setText] = useState(() => t('voicePreview.default_text'));
   const [voiceId, setVoiceId] = useState(initialProfileId);
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const audioRef = useRef(null);
   const abortRef = useRef(null);
 
   // Sync initialProfileId when it changes (e.g. clicking preview on a different profile)
@@ -74,13 +75,7 @@ export default function VoicePreview({
       const blob = await res.blob();
       const urls = await fileToMediaUrl(blob, null);
       setAudioUrl(urls.audioUrl);
-
-      // Auto-play
-      setTimeout(() => {
-        if (audioRef.current) {
-          audioRef.current.play().catch(() => {});
-        }
-      }, 50);
+      // Playback + autoplay handled by the shared WaveformPlayer below.
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error('Preview generation failed:', err);
@@ -92,11 +87,7 @@ export default function VoicePreview({
 
   const handleStop = () => {
     abortRef.current?.abort();
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-    setPlaying(false);
+    stopActivePlayback();
     setLoading(false);
   };
 
@@ -106,13 +97,13 @@ export default function VoicePreview({
     <div className="voice-preview">
       <div className="voice-preview__head">
         <span className="voice-preview__title">
-          <Volume2 size={13} /> Voice Preview
+          <Volume2 size={13} /> {t('voicePreview.title')}
         </span>
         <button
           type="button"
           className="voice-preview__close"
           onClick={onClose}
-          aria-label="Close preview"
+          aria-label={t('voicePreview.close')}
         >
           <X size={12} />
         </button>
@@ -124,23 +115,23 @@ export default function VoicePreview({
           value={voiceId}
           onChange={e => setVoiceId(e.target.value)}
         >
-          <option value="">Default voice</option>
+          <option value="">{t('voicePreview.default_voice')}</option>
           {profiles.filter(p => !p.instruct).length > 0 && (
-            <optgroup label="Clone Profiles">
+            <optgroup label={t('voicePreview.clone_profiles')}>
               {profiles.filter(p => !p.instruct).map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </optgroup>
           )}
           {profiles.filter(p => !!p.instruct).length > 0 && (
-            <optgroup label="Designed Voices">
+            <optgroup label={t('voicePreview.designed_voices')}>
               {profiles.filter(p => !!p.instruct).map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </optgroup>
           )}
           {PRESETS.length > 0 && (
-            <optgroup label="Presets">
+            <optgroup label={t('voicePreview.presets')}>
               {PRESETS.map(p => (
                 <option key={p.id} value={`preset:${p.id}`}>{p.name}</option>
               ))}
@@ -153,19 +144,16 @@ export default function VoicePreview({
           value={text}
           onChange={e => setText(e.target.value)}
           rows={2}
-          placeholder="Type something to hear…"
+          placeholder={t('voicePreview.placeholder')}
           spellCheck={false}
         />
 
         {audioUrl && (
-          <audio
-            ref={audioRef}
+          <WaveformPlayer
             src={audioUrl}
+            source="voice-preview"
+            autoPlay
             className="voice-preview__audio"
-            controls
-            onPlay={() => setPlaying(true)}
-            onPause={() => setPlaying(false)}
-            onEnded={() => setPlaying(false)}
           />
         )}
       </div>
@@ -173,7 +161,7 @@ export default function VoicePreview({
       <div className="voice-preview__foot">
         {loading ? (
           <Button variant="ghost" size="sm" onClick={handleStop} leading={<Square size={10} />}>
-            Stop
+            {t('voicePreview.stop')}
           </Button>
         ) : (
           <Button
@@ -184,11 +172,12 @@ export default function VoicePreview({
             loading={loading}
             leading={!loading && <Play size={10} />}
           >
-            {audioUrl ? 'Regenerate' : 'Preview'}
+            {audioUrl ? t('voicePreview.regenerate') : t('voicePreview.preview')}
           </Button>
         )}
-        <span className="voice-preview__hint">8 steps · fast preview</span>
+        <span className="voice-preview__hint">{t('voicePreview.hint')}</span>
       </div>
     </div>
   );
 }
+

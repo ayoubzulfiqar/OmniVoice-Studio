@@ -4,10 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omnivoice"
-version = "0.3.0"
+version = "0.3.6"
 description = "OmniVoice: Towards Omnilingual Zero-Shot Text-to-Speech with Diffusion Language Models"
 readme = "README.md"
-license = "Apache-2.0"
+# Free and open-source under the GNU Affero General Public License v3 (see
+# LICENSE). A commercial license is available for proprietary/closed-source use
+# without AGPL obligations — contact OmniVoice@palash.dev. The bundled omnivoice/
+# TTS model by Han Zhu remains Apache-2.0 upstream (Apache-2.0 is AGPL-compatible).
+license = "AGPL-3.0-only"
 requires-python = ">=3.11"
 authors = [{name = "Han Zhu"}]
 keywords = [
@@ -40,10 +44,14 @@ dependencies = [
     "webdataset",
     "numpy",
     "soundfile",
-    # pkg_resources is used by whisperx/faster-whisper at runtime.
-    # On Python 3.12+ it's no longer bundled by default — pin a modern
-    # setuptools to guarantee it's present (fixes #58).
-    "setuptools>=75.0",
+    # whisperx / faster-whisper import `pkg_resources` at runtime. setuptools
+    # 80+ DROPPED the bundled pkg_resources, so an unpinned ">=75" now resolves
+    # to a version WITHOUT it → "No module named 'pkg_resources'", which both
+    # breaks WhisperX transcription and makes its is_available() report false
+    # ("No ASR backend is ready"). Cap below 80 so pkg_resources stays present
+    # (issue #224; also #58). Revisit when whisperx/faster-whisper drop the
+    # pkg_resources dependency.
+    "setuptools>=75,<80",
     "psutil>=7.2.2",
     # Pinned to 3.x — pyannote 4.x removed `use_auth_token` from `Inference`
     # which whisperx 3.4.2 still passes, blowing up `whisperx.load_model()`
@@ -100,6 +108,23 @@ dependencies = [
     # (Assumption A1 in RESEARCH.md was checked at execute-time and proved
     # false — `cryptography` is not on the install path today).
     "cryptography>=41",
+    "mcp>=1.2",
+    # Fast model downloads (FDL plan). huggingface_hub arrives transitively via
+    # transformers, but we pin it directly so the Xet fast-download path can't
+    # silently disappear on a resolve, and we pull `hf-xet` explicitly: it is
+    # the content-defined-chunking, parallel byte-range downloader that gives
+    # IDM/uGet-style speed for Xet-backed repos (the entire current model
+    # catalog — see .planning/quick/260613-fdl-fast-model-downloads/SPIKE).
+    # hf-xet is 64-bit only (fine for every OmniVoice target). Do NOT add
+    # `hf_transfer` — it is deprecated in favour of Xet and breaks progress
+    # callbacks (the accurate-progress work in this same plan depends on tqdm).
+    "huggingface_hub>=1.7",
+    "hf-xet>=1.1",
+    # Audiobook PDF ingest (/audiobook/import). Pure-Python, MIT, zero native
+    # deps → identical behaviour on macOS/Windows/Linux (default-parity rule).
+    # EPUB + plaintext stay stdlib-only; only PDF needs a real parser, and
+    # pypdf is the lightest one that ships no C extensions.
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]

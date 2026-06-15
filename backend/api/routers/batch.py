@@ -96,8 +96,6 @@ def _set_progress(job, stage, percent=0, **extra):
 async def _run_batch_pipeline(job_id: str, job: dict):
     """Full batch dub pipeline: extract → transcribe → translate → generate → mix → export."""
     import subprocess
-    import tempfile
-    import soundfile as sf
 
     loop = asyncio.get_running_loop()
     video_path = job["video_path"]
@@ -300,6 +298,9 @@ async def _run_batch_pipeline(job_id: str, job: dict):
                         denoise=True, postprocess_output=True,
                     )
                     audio_out = audios[0]
+                    # TODO(#312): this route runs the OmniVoice model directly (not the active
+                    # backend), so VoxCPM2 never reaches it. When these routes become
+                    # engine-aware, guard with `if not getattr(backend, "applies_own_mastering", False)`.
                     mastered = apply_mastering(
                         audio_out,
                         sample_rate=sr,

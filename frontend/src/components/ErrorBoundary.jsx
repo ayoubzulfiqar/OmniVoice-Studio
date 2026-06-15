@@ -1,6 +1,9 @@
 import React from 'react';
-import { AlertCircle, BookOpen, RefreshCw } from 'lucide-react';
+import { AlertCircle, BookOpen, Bug, RefreshCw, Search } from 'lucide-react';
+import i18next from 'i18next';
 import { classifyError, openDocsFor } from '../utils/errorDocsMap';
+import { openExternal } from '../api/external';
+import { buildBugReportUrl, buildIssueSearchUrl } from '../utils/bugReport';
 import './WaveformErrorBoundary.css';
 
 export default class ErrorBoundary extends React.Component {
@@ -35,6 +38,26 @@ export default class ErrorBoundary extends React.Component {
     }
   };
 
+  report = async () => {
+    // Prefilled GitHub Issues URL with the scrubbed error attached — the
+    // user reviews everything on github.com before anything is submitted.
+    try {
+      await openExternal(await buildBugReportUrl({ error: this.state.error }));
+    } catch (err) {
+      console.warn('[ErrorBoundary] report failed', err);
+    }
+  };
+
+  searchIssues = async () => {
+    // "Has someone already hit this?" — issue search in the browser, so a
+    // duplicate gets a 👍 on the existing thread instead of a new report.
+    try {
+      await openExternal(buildIssueSearchUrl(this.state.error));
+    } catch (err) {
+      console.warn('[ErrorBoundary] issue search failed', err);
+    }
+  };
+
   render() {
     if (!this.state.error) return this.props.children;
 
@@ -44,10 +67,10 @@ export default class ErrorBoundary extends React.Component {
         <div className="errbnd-card">
           <AlertCircle size={32} color="var(--chrome-severity-err)" className="errbnd-icon" />
           <h2 className="errbnd-title">
-            This tab hit a snag.
+            {i18next.t('errors.title')}
           </h2>
           <p className="errbnd-desc">
-            Don't worry — the rest of the app still works. You can switch tabs, or try again below.
+            {i18next.t('errors.desc')}
           </p>
           <pre className="errbnd-trace">{msg}</pre>
           <div className="errbnd-actions">
@@ -55,15 +78,31 @@ export default class ErrorBoundary extends React.Component {
               onClick={this.reset}
               className="btn-primary errbnd-retry"
             >
-              <RefreshCw size={12} /> Try again
+              <RefreshCw size={12} /> {i18next.t('errors.tryAgain')}
             </button>
             <button
               type="button"
               onClick={this.openDocs}
               className="btn-secondary errbnd-docs"
-              title="Open the docs page for this error in your browser"
+              title={i18next.t('errors.openDocs')}
             >
-              <BookOpen size={12} /> Open docs for this error
+              <BookOpen size={12} /> {i18next.t('errors.openDocs')}
+            </button>
+            <button
+              type="button"
+              onClick={this.searchIssues}
+              className="btn-secondary errbnd-search"
+              title={i18next.t('errors.searchIssues')}
+            >
+              <Search size={12} /> {i18next.t('errors.searchIssues')}
+            </button>
+            <button
+              type="button"
+              onClick={this.report}
+              className="btn-secondary errbnd-report"
+              title={i18next.t('reportBug.title')}
+            >
+              <Bug size={12} /> {i18next.t('errors.report')}
             </button>
           </div>
         </div>

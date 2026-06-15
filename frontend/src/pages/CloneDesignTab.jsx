@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  PanelLeftOpen, PanelLeftClose, Command, Globe, SlidersHorizontal, Volume2, User,
+  Command, Globe, SlidersHorizontal, Volume2, Plus,
   UploadCloud, Square, Mic, Save, UserSquare2, Settings2, ChevronUp, ChevronDown,
-  Sparkles, Play, Trash2, X,
+  Sparkles, Play, X, Wand2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
@@ -10,14 +10,19 @@ import SearchableSelect from '../components/SearchableSelect';
 import DemoPresetGrid from '../components/DemoPresetGrid';
 import ALL_LANGUAGES from '../languages.json';
 import { POPULAR_LANGS, PRESETS, TAGS, CATEGORIES } from '../utils/constants';
-import { Button, Input, Slider, Progress } from '../ui';
-import { API } from '../api/client';
+import {
+  PRESET_ICONS, PERSONALITY_ICONS, FALLBACK_VOICE_ICON, FALLBACK_PERSONALITY_ICON, stripVoiceEmoji,
+} from '../utils/voiceIcons';
+import { Button, Input, Slider, Progress, Segmented } from '../ui';
+import { useAppStore } from '../store';
+import { API, apiPost } from '../api/client';
+import { mergeDescribedAttrs, buildDesignInstruct } from '../utils/voiceInstruct';
 import { listEngines } from '../api/engines';
+import { claimPlayback, stopActivePlayback, usePlaybackSource } from '../utils/playback';
 import './CloneDesignTab.css';
 
 export default function CloneDesignTab(props) {
   const {
-    mode,
     textAreaRef,
     text, setText,
     language, setLanguage,
@@ -32,7 +37,6 @@ export default function CloneDesignTab(props) {
     denoise, setDenoise,
     postprocess, setPostprocess,
     showOverrides, setShowOverrides,
-    isSidebarCollapsed, setIsSidebarCollapsed,
     profiles,
     selectedProfile, setSelectedProfile,
     refAudio,
@@ -44,14 +48,72 @@ export default function CloneDesignTab(props) {
     vdStates, setVdStates,
     isGenerating, generationTime,
     applyPreset, insertTag,
-    handleSelectProfile, handleDeleteProfile,
-    handleSaveProfile, handleGenerate,
+    handleSaveProfile, handleSaveDesignProfile, handleGenerate,
     startRecording, stopRecording,
     ingestRefAudio,
   } = props;
 
   const { t } = useTranslation();
+  // "Define voice" method — 'audio' (was the Clone tab) | 'design' (was the
+  // Design tab). Lives in the store so navigation shims / profile selection
+  // can preset it (voice-studio-unification P4).
+  const defineMethod = useAppStore(s => s.defineMethod);
+  const setDefineMethod = useAppStore(s => s.setDefineMethod);
   const [activePersonality, setActivePersonality] = useState('');
+  const [insertOpen, setInsertOpen] = useState(false);
+
+  // Identity recipe line (10x §1.5): the non-Auto category picks as one
+  // readable string. All-Auto (nothing chosen yet) starts the chips expanded.
+  const identityPicks = Object.values(vdStates || {}).filter(v => v && v !== 'Auto');
+  const identityRecipe = identityPicks.length
+    ? identityPicks.join(' · ')
+    : t('clone.identity_auto', { defaultValue: 'Auto — the model decides' });
+  const [identityOpen, setIdentityOpen] = useState(() =>
+    !Object.values(vdStates || {}).some(v => v && v !== 'Auto'));
+
+  // ── "Describe your voice" (#317): free-text → design parameters ──────────
+  // Debounced call to the local deterministic mapper (POST /design/describe);
+  // the result overwrites the category controls live, and the user can still
+  // hand-tune any of them afterwards. Unmappable fragments are surfaced
+  // instead of silently dropped (the #115/#114 validator-feedback lesson).
+  const [describeText, setDescribeText] = useState('');
+  const [describeUnmatched, setDescribeUnmatched] = useState([]);
+  const [describeMatchedAny, setDescribeMatchedAny] = useState(true);
+
+  const onDescribeChange = (e) => {
+    const value = e.target.value;
+    setDescribeText(value);
+    if (!value.trim()) {
+      // Cleared: drop stale feedback immediately (controls stay as they are).
+      setDescribeUnmatched([]);
+      setDescribeMatchedAny(true);
+    }
+  };
+
+  useEffect(() => {
+    const q = describeText.trim();
+    if (!q) return undefined;
+    let cancelled = false;
+    const id = setTimeout(async () => {
+      try {
+        const res = await apiPost('/design/describe', { description: q });
+        if (cancelled) return;
+        setVdStates(mergeDescribedAttrs(res.attrs));
+        setDescribeUnmatched(res.unmatched || []);
+        setDescribeMatchedAny((res.matched || []).length > 0);
+        // The description now owns the design parameters — clear any stale
+        // personality instruct so the synthesize path can't merge conflicting
+        // tokens from two sources (the issue-#114 failure mode).
+        setActivePersonality('');
+        setInstruct('');
+      } catch {
+        // Backend unreachable mid-typing — leave the controls untouched;
+        // the next keystroke retries.
+      }
+    }, 450);
+    return () => { cancelled = true; clearTimeout(id); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [describeText]);
 
   // Fetch personality presets from backend
   const { data: personalities = [] } = useQuery({
@@ -87,8 +149,8 @@ export default function CloneDesignTab(props) {
   });
   const anyTtsReady = !!(enginesData?.tts?.backends || []).some(b => b.available);
 
-  // Demo coach-mark: when the user enters the Clone tab with the bundled
-  // demo profile (demo0001) freshly selected and the textarea is empty,
+  // Demo coach-mark: when the user is on the "From audio" method with the
+  // bundled demo profile (demo0001) freshly selected and the textarea is empty,
   // prefill a punchy starter prompt and show a one-line coach-mark above
   // the textarea. Both auto-dismiss as soon as the user types anything.
   // Tracked via localStorage so we don't re-prefill on every visit.
@@ -97,7 +159,7 @@ export default function CloneDesignTab(props) {
   const [showDemoCoachmark, setShowDemoCoachmark] = useState(false);
 
   useEffect(() => {
-    if (mode !== 'clone') return;
+    if (defineMethod !== 'audio') return;
     if (selectedProfile !== DEMO_PROFILE_ID) return;
     if (typeof window === 'undefined') return;
     if (localStorage.getItem('omnivoice.demoClonePrompted') === '1') return;
@@ -106,31 +168,78 @@ export default function CloneDesignTab(props) {
     setShowDemoCoachmark(true);
     localStorage.setItem('omnivoice.demoClonePrompted', '1');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, selectedProfile]);
+  }, [defineMethod, selectedProfile]);
 
   // "Hear demo" fallback: when no TTS engine is ready and the user is on
   // the demo profile, the Synthesize button is swapped for one that plays
   // the pre-rendered demo_clone_output.wav. This guarantees a working
   // "wow moment" on first launch before any model downloads finish.
   const showHearDemo =
-    mode === 'clone' && selectedProfile === DEMO_PROFILE_ID && !anyTtsReady;
+    defineMethod === 'audio' && selectedProfile === DEMO_PROFILE_ID && !anyTtsReady;
+
+  // Cmd/Ctrl+Enter synthesizes from anywhere in the workspace (10x spec 1.1).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== 'Enter') return;
+      e.preventDefault();
+      if (!isGenerating && !showHearDemo) handleGenerate();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGenerating, showHearDemo, handleGenerate]);
   const demoAudioRef = useRef(null);
+  const demoReleaseRef = useRef(null);
   const [demoAudioPlaying, setDemoAudioPlaying] = useState(false);
+
+  // Global playback state (#316): while a synthesized output (or another
+  // unmanaged blob playback) is audible, the footer CTA becomes a Stop
+  // button so the user can halt it immediately.
+  const playbackSource = usePlaybackSource();
+  const outputPlaying = playbackSource === 'output';
 
   const playDemoOutput = () => {
     const audio = demoAudioRef.current;
     if (!audio) return;
     if (demoAudioPlaying) {
-      audio.pause();
-      setDemoAudioPlaying(false);
+      stopActivePlayback();
       return;
     }
+    // Claim the global playback slot so this demo stops any other preview
+    // first — and can itself be stopped from anywhere (#316).
+    demoReleaseRef.current = claimPlayback(() => {
+      audio.pause();
+      setDemoAudioPlaying(false);
+    }, 'demo-output');
     audio.src = `${API}/demo_audio/demo_clone_output.wav`;
     audio.currentTime = 0;
     audio.play()
       .then(() => setDemoAudioPlaying(true))
-      .catch(() => setDemoAudioPlaying(false));
+      .catch(() => {
+        demoReleaseRef.current?.();
+        demoReleaseRef.current = null;
+        setDemoAudioPlaying(false);
+      });
   };
+
+  // 10x P4 a11y (spec §3): category chip groups are radiogroups with a
+  // roving tabindex — ArrowLeft/ArrowRight move focus AND selection within
+  // the group, per the WAI-ARIA radio-group pattern.
+  const onChipKeyDown = (e, key, options) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const cur = Math.max(0, options.indexOf(vdStates[key]));
+    const next = (cur + (e.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length;
+    setVdStates({ ...vdStates, [key]: options[next] });
+    e.currentTarget.closest('.chip-group')?.querySelectorAll('[role="radio"]')[next]?.focus();
+  };
+
+  // 10x P4 a11y (spec §3): once a generation has run, the persistent status
+  // region below announces its finish — not just its start.
+  const wasGeneratingRef = useRef(false);
+  useEffect(() => {
+    if (isGenerating) wasGeneratingRef.current = true;
+  }, [isGenerating]);
 
   // Partition personalities into legacy chips vs. new demo cards.
   // `is_demo: true` entries get the rich card grid; the rest keep their
@@ -152,39 +261,21 @@ export default function CloneDesignTab(props) {
   };
 
   return (
+    <div className="studio-def-col">
     <div className="clone-split-grid">
 
-      {/* ═══ LEFT COLUMN: prompt + language/steps ═══ */}
+      {/* ═══ SCRIPT — what should it say ═══ */}
       <div className="studio-column">
         <div className="studio-panel">
           <div className="label-row label-row--center">
-            <Button
-              variant="icon"
-              iconSize="sm"
-              active={isSidebarCollapsed}
-              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              title={t('clone.toggle_sidebar')}
-              className="label-row__kicker"
-            >
-              {isSidebarCollapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
-            </Button>
-            <Command className="label-icon" size={14} /> {t('clone.prompt')}
+            <Command className="label-icon" size={14} /> {t('clone.script', { defaultValue: 'Script' })}
           </div>
-          {/* Design-tab empty state: 7-card demo grid replaces the bare
-              attribute-preset buttons when the user has not yet typed
-              anything and no personality is active. As soon as they
-              interact, the grid steps aside for the standard form. */}
-          {mode === 'design' && !text && !activePersonality && demoPresets.length > 0 && (
+          {/* Design-tab empty state: 7-card demo grid until the user
+              interacts; then it steps aside for the standard form. */}
+          {defineMethod === 'design' && !text && !activePersonality && demoPresets.length > 0 && (
             <DemoPresetGrid presets={demoPresets} onUse={applyDemoPreset} />
           )}
-          {mode === 'design' && (text || activePersonality || demoPresets.length === 0) && (
-            <div className="preset-grid">
-              {PRESETS.map(p => (
-                <button key={p.id} className="preset-btn" onClick={() => applyPreset(p)}>{t(`clone.preset_${p.id}`, { defaultValue: p.name })}</button>
-              ))}
-            </div>
-          )}
-          {showDemoCoachmark && mode === 'clone' && selectedProfile === DEMO_PROFILE_ID && (
+          {showDemoCoachmark && defineMethod === 'audio' && selectedProfile === DEMO_PROFILE_ID && (
             <div className="clone-coachmark" role="note">
               <span className="clone-coachmark__icon">💡</span>
               <span className="clone-coachmark__msg">
@@ -200,84 +291,74 @@ export default function CloneDesignTab(props) {
               </button>
             </div>
           )}
-          <textarea
-            ref={textAreaRef}
-            className="input-base clone-text-area"
-            placeholder={mode === 'clone' ? t('clone.prompt_placeholder') : t('clone.design_placeholder')}
-            value={text}
-            onChange={e => {
-              setText(e.target.value);
-              if (showDemoCoachmark) setShowDemoCoachmark(false);
-            }}
-          />
-          <div className="tags-container">
-            {TAGS.map(tag => <button key={tag} className="tag-btn" onClick={() => insertTag(tag)}>{tag}</button>)}
+          <div className="clone-script-wrap">
+            <textarea
+              ref={textAreaRef}
+              className="input-base clone-text-area"
+              placeholder={defineMethod === 'audio' ? t('clone.prompt_placeholder') : t('clone.design_placeholder')}
+              value={text}
+              onChange={e => {
+                setText(e.target.value);
+                if (showDemoCoachmark) setShowDemoCoachmark(false);
+              }}
+            />
+            {/* Expression tokens live behind a popover — fourteen permanent
+                chips were renting the page's best pixels for an occasional
+                power feature (10x spec §1.4). */}
             <button
-              className="tag-btn clone-auto-extract-btn"
-              onClick={() => insertTag('[B EY1 S]')}
+              type="button"
+              className={`clone-insert-btn ${insertOpen ? 'is-open' : ''}`}
+              onClick={() => setInsertOpen(o => !o)}
+              aria-expanded={insertOpen}
+              aria-label={t('clone.insert_token', { defaultValue: 'Insert expression token' })}
             >
-              [CMU]
+              <Plus size={11} /> {t('clone.insert', { defaultValue: 'Insert' })} <ChevronDown size={10} />
             </button>
-          </div>
-        </div>
-
-        <div className="studio-panel clone-panel--overflow-visible">
-          <div className="grid-2">
-            <div>
-              <div className="label-row"><Globe className="label-icon" size={14} /> {t('clone.language')} ({ALL_LANGUAGES.length - 1})</div>
-              <SearchableSelect
-                value={language}
-                options={ALL_LANGUAGES}
-                popular={POPULAR_LANGS}
-                recentsKey="omnivoice.recents.genLang"
-                onChange={setLanguage}
-              />
-            </div>
-            <div>
-              <div className="label-row label-row--spread">
-                <span className="label-row label-row--flush">
-                  <SlidersHorizontal className="label-icon" size={14} /> {t('clone.steps')}
-                </span>
-                <span className="val-bubble">{steps}</span>
-              </div>
-              <input type="range" min="8" max="64" value={steps} onChange={e => setSteps(Number(e.target.value))} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ═══ RIGHT COLUMN: voice source + overrides/synth ═══ */}
-      <div className="studio-column">
-        <div className="studio-panel">
-        {mode === 'clone' ? (
-          <div>
-            <div className="label-row"><Volume2 className="label-icon" size={14} /> {t('clone.voice_source')}</div>
-
-            {/* ── VOICE PROFILES ── */}
-            {profiles.length > 0 && (
-              <div className="clone-profile-block">
-                <div className="label-row label-row--sm"><User size={12} /> {t('clone.saved_profiles')}</div>
-                <div className="preset-grid">
-                  {profiles.map(p => (
-                    <div
-                      key={p.id}
-                      className={`preset-btn clone-profile-card ${selectedProfile === p.id ? 'profile-active' : ''}`}
-                      onClick={() => handleSelectProfile(p)}
-                    >
-                      <User size={10} /> {p.name}
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteProfile(p.id); }}
-                        className="clone-profile-delete"
-                        aria-label={t('clone.delete_profile')}
-                      >
-                        <Trash2 size={10} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+            {insertOpen && (
+              <div className="clone-insert-backdrop" onClick={() => setInsertOpen(false)} />
+            )}
+            {insertOpen && (
+              <div className="clone-insert-pop" role="menu">
+                {TAGS.map(tag => (
+                  <button key={tag} className="tag-btn" role="menuitem"
+                    onClick={() => { insertTag(tag); setInsertOpen(false); }}>
+                    {tag}
+                  </button>
+                ))}
+                <button
+                  className="tag-btn clone-auto-extract-btn" role="menuitem"
+                  onClick={() => { insertTag('[B EY1 S]'); setInsertOpen(false); }}
+                >
+                  [CMU]
+                </button>
               </div>
             )}
+          </div>
+        </div>
+
+      </div>
+
+      {/* ═══ VOICE — who says it ═══ */}
+      <div className="studio-column">
+        <div className="studio-panel">
+        <div className="label-row label-row--spread">
+          <span className="label-row label-row--flush">
+            <Volume2 className="label-icon" size={14} /> {t('clone.voice_kicker', { defaultValue: 'Voice' })}
+          </span>
+          <Segmented
+            size="sm"
+            value={defineMethod}
+            onChange={setDefineMethod}
+            items={[
+              { value: 'audio', label: t('clone.define_from_audio', { defaultValue: 'From audio' }) },
+              { value: 'design', label: t('clone.define_by_design', { defaultValue: 'By design' }) },
+            ]}
+          />
+        </div>
+
+        {defineMethod === 'audio' ? (
+          <div>
+            {/* Saved voices now live in the right-side WorkspaceVoices panel. */}
 
             {!selectedProfile && (
               <div className="clone-drop-row">
@@ -371,29 +452,76 @@ export default function CloneDesignTab(props) {
           </div>
         ) : (
           <div>
-            <div className="label-row"><UserSquare2 className="label-icon" size={14} /> {t('voice.personality')}</div>
+            {/* ── Describe your voice (#317) — free text drives the controls.
+                The placeholder explains itself; no extra header (10x §1.2). ── */}
+            <div className="describe-voice-block">
+              <textarea
+                className="input-base describe-voice-area"
+                rows={2}
+                placeholder={t('clone.describe_placeholder')}
+                value={describeText}
+                onChange={onDescribeChange}
+              />
+              {describeText.trim() && !describeMatchedAny && (
+                <div className="describe-voice-feedback" role="status">
+                  {t('clone.describe_no_match')}
+                </div>
+              )}
+              {describeMatchedAny && describeUnmatched.length > 0 && (
+                <div className="describe-voice-feedback" role="status">
+                  {t('clone.describe_unmatched', { items: describeUnmatched.join(', ') })}
+                </div>
+              )}
+              <div className="describe-voice-hint">{t('clone.describe_hint')}</div>
+            </div>
 
-            {/* Personality presets — chip-only entries. Demo presets
-                render as full cards in the empty state above; including
-                them here too would duplicate the affordance. */}
-            {chipPersonalities.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div className="personality-label">{t('voice.pick_personality')}</div>
-                <div className="personality-strip">
-                  {chipPersonalities.map(p => (
+            {/* ONE preset system (10x §1.3): personalities + the old PROMPT
+                presets share a single scrollable "Starting points" lane —
+                both set vdStates + instruct; two widgets for one slot was
+                the confusion. */}
+            <div className="starting-points">
+              <div className="starting-points__label">{t('clone.starting_points', { defaultValue: 'Starting points' })}</div>
+              <div className="personality-strip starting-points__strip">
+                {chipPersonalities.map(p => {
+                  const Icon = PERSONALITY_ICONS[p.id] || FALLBACK_PERSONALITY_ICON;
+                  return (
                     <button
                       key={p.id}
                       type="button"
                       className={`personality-chip ${activePersonality === p.id ? 'active' : ''}`}
                       onClick={() => applyPersonality(p)}
                     >
-                      <span className="personality-chip__icon">{p.icon}</span>
-                      {t(`clone.personality_${p.id}`, { defaultValue: p.name })}
+                      <span className="personality-chip__icon"><Icon size={13} /></span>
+                      {stripVoiceEmoji(t(`clone.personality_${p.id}`, { defaultValue: p.name }))}
                     </button>
-                  ))}
-                </div>
+                  );
+                })}
+                {PRESETS.map(p => {
+                  const Icon = PRESET_ICONS[p.id] || FALLBACK_VOICE_ICON;
+                  return (
+                    <button key={p.id} type="button" className="personality-chip" onClick={() => applyPreset(p)}>
+                      <span className="personality-chip__icon"><Icon size={13} /></span>
+                      {stripVoiceEmoji(t(`clone.preset_${p.id}`, { defaultValue: p.name }))}
+                    </button>
+                  );
+                })}
               </div>
-            )}
+            </div>
+            {/* Identity recipe (10x §1.5): once any category is set, the
+                chip groups collapse to one quiet line — the current voice
+                recipe — and the describe box rewrites it live. All-Auto
+                (first run) starts expanded. */}
+            <button
+              type="button"
+              className="identity-line"
+              onClick={() => setIdentityOpen(o => !o)}
+              aria-expanded={identityOpen}
+            >
+              <span className="identity-line__kicker">{t('clone.identity', { defaultValue: 'Identity' })}</span>
+              <span className="identity-line__recipe">{identityRecipe}</span>
+              {identityOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+            {identityOpen && (
             <div className="clone-sliders-col">
               {Object.entries(CATEGORIES).map(([key, options]) => {
                 const many = options.length > 6;
@@ -403,7 +531,7 @@ export default function CloneDesignTab(props) {
                   return tl !== tKey ? tl : val;
                 };
                 return (
-                  <div key={key}>
+                  <div key={key} className={`clone-cat ${many ? 'clone-cat--select' : 'clone-cat--chips'}`}>
                     <div className="label-row label-row--sm">
                       {t(`clone.cat_${key}`)}
                       <span className="clone-slider-kicker">
@@ -419,19 +547,29 @@ export default function CloneDesignTab(props) {
                         {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                       </select>
                     ) : (
-                      <div className="chip-group">
-                        {options.map(opt => {
+                      <div className="chip-group" role="radiogroup" aria-label={t(`clone.cat_${key}`)}>
+                        {options.map((opt, i) => {
                           const optTKey = `clone.opt_${opt.replace(/[ -]/g, '_')}`;
                           const optTl = t(optTKey);
                           const optLabel = optTl !== optTKey ? optTl : opt;
+                          const checked = vdStates[key] === opt;
+                          // Roving tabindex: the checked chip is the group's
+                          // single tab stop (first chip if nothing matches).
+                          const roving = checked || (!options.includes(vdStates[key]) && i === 0);
                           return (
                             <button
                               key={opt}
                               type="button"
-                              className={`chip ${vdStates[key] === opt ? 'active' : ''}`}
+                              role="radio"
+                              aria-checked={checked}
+                              tabIndex={roving ? 0 : -1}
+                              className={`chip ${checked ? 'active' : ''}`}
                               onClick={() => setVdStates({ ...vdStates, [key]: opt })}
+                              onKeyDown={e => onChipKeyDown(e, key, options)}
                             >
-                              {opt === 'Auto' ? t('clone.opt_Auto') : optLabel}
+                              {opt === 'Auto'
+                                ? <span className="chip-auto"><FALLBACK_VOICE_ICON size={11} /> {stripVoiceEmoji(t('clone.opt_Auto'))}</span>
+                                : optLabel}
                             </button>
                           );
                         })}
@@ -441,16 +579,48 @@ export default function CloneDesignTab(props) {
                 );
               })}
             </div>
+            )}
+
+            {/* Save the current design as a reusable profile (0005): the
+                backend renders a deterministic identity sample (seed 42)
+                and stores the slider picks for later re-editing. */}
+            <div className="clone-save-profile">
+              {!showSaveProfile ? (
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  onClick={() => setShowSaveProfile(true)}
+                  leading={<Save size={12} />}
+                >
+                  {t('clone.save_design_as_profile', { defaultValue: 'Save design as profile' })}
+                </Button>
+              ) : (
+                <div className="clone-save-profile__row">
+                  <Input
+                    size="sm"
+                    placeholder={t('clone.profile_name')}
+                    value={profileName}
+                    onChange={e => setProfileName(e.target.value)}
+                  />
+                  <Button variant="subtle" size="sm"
+                    onClick={() => handleSaveDesignProfile(vdStates, buildDesignInstruct(vdStates, instruct), language)}>
+                    {t('clone.save')}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setShowSaveProfile(false)}>{t('clone.cancel')}</Button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         </div>
+      </div>
+    </div>
 
-        <div className="studio-panel clone-panel--overflow-visible">
-        <div className="override-toggle" onClick={() => setShowOverrides(!showOverrides)}>
-          <span><Settings2 size={14} className="clone-icon-inline" /> {t('clone.production_overrides')}</span>
-          {showOverrides ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </div>
+    {/* ═══ ACTION BAR — pinned to the column bottom (10x §1.1): generation
+        parameters live WITH the button; SYNTHESIZE never scrolls away.
+        Overrides expand upward, above the controls row. ═══ */}
+    <div className="studio-action-bar clone-panel--overflow-visible">
         {showOverrides && (
           <div className="override-content">
             <div className="grid-4">
@@ -494,6 +664,34 @@ export default function CloneDesignTab(props) {
           </div>
         )}
 
+        {/* Controls row: language · steps · overrides disclosure */}
+        <div className="studio-action-bar__row">
+          <div className="studio-action-bar__lang">
+            <Globe size={12} className="label-icon" />
+            <SearchableSelect
+              value={language}
+              options={ALL_LANGUAGES}
+              popular={POPULAR_LANGS}
+              recentsKey="omnivoice.recents.genLang"
+              onChange={setLanguage}
+            />
+          </div>
+          <label className="studio-action-bar__steps" title={t('clone.steps')}>
+            <SlidersHorizontal size={12} className="label-icon" />
+            <input type="range" min="8" max="64" value={steps} onChange={e => setSteps(Number(e.target.value))} />
+            <span className="val-bubble">{steps}</span>
+          </label>
+          <button
+            type="button"
+            className="studio-action-bar__overrides"
+            onClick={() => setShowOverrides(!showOverrides)}
+            aria-expanded={showOverrides}
+          >
+            <Settings2 size={13} /> {t('clone.production_overrides')}
+            {showOverrides ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+          </button>
+        </div>
+
         {showHearDemo ? (
           <>
             <Button
@@ -510,10 +708,26 @@ export default function CloneDesignTab(props) {
             </div>
             <audio
               ref={demoAudioRef}
-              onEnded={() => setDemoAudioPlaying(false)}
+              onEnded={() => {
+                setDemoAudioPlaying(false);
+                demoReleaseRef.current?.();
+                demoReleaseRef.current = null;
+              }}
               preload="none"
             />
           </>
+        ) : outputPlaying && !isGenerating ? (
+          /* Synthesized output is playing — the CTA becomes a Stop button
+             (#316) so playback can be halted immediately. */
+          <Button
+            variant="primary"
+            block
+            onClick={stopActivePlayback}
+            leading={<Square size={14} />}
+            className="clone-footer-cta"
+          >
+            {t('clone.stop_playback')}
+          </Button>
         ) : (
           <Button
             variant="primary"
@@ -534,8 +748,19 @@ export default function CloneDesignTab(props) {
             className="clone-footer-cta"
           />
         )}
+        {/* 10x P4 a11y (spec §3): persistent polite live region — screen
+            readers hear generation start AND finish in-workspace, without
+            relying on the FloatingPill. sr-only keeps it out of the
+            action-bar flex flow; static text avoids per-second re-announces
+            from the ticking "Synthesizing… (Ns)" button label. */}
+        <div className="sr-only" role="status" aria-live="polite">
+          {isGenerating
+            ? t('clone.generating_status', { defaultValue: 'Generating audio…' })
+            : wasGeneratingRef.current
+              ? t('clone.generating_done_status', { defaultValue: 'Generation finished' })
+              : null}
         </div>
-      </div>
+    </div>
     </div>
   );
 }

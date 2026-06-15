@@ -1,16 +1,16 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Globe, Fingerprint, Wand2, Film, FolderOpen, Settings2, ArrowLeftRight,
-  Library, FileText, BookOpen,
+  Globe, Fingerprint, Film, FolderOpen, Settings2, ArrowLeftRight,
+  Library, FileText, BookOpen, BookMarked,
 } from 'lucide-react';
 
 const ITEM_DEFS = [
   { id: 'launchpad',     Icon: Globe,       tKey: 'launchpad',   accent: '#f3a5b6' },
-  { id: 'clone',         Icon: Fingerprint, tKey: 'clone',       accent: '#d3869b' },
-  { id: 'design',        Icon: Wand2,       tKey: 'design',      accent: '#8ec07c' },
+  { id: 'studio',        Icon: Fingerprint, tKey: 'voice',       accent: '#d3869b' },
   { id: 'dub',           Icon: Film,        tKey: 'dub',         accent: '#fe8019' },
   { id: 'stories',       Icon: BookOpen,    tKey: 'stories',     accent: '#fabd2f' },
+  { id: 'audiobook',     Icon: BookMarked,  tKey: 'audiobook',   accent: '#8ec07c' },
   { id: 'gallery',       Icon: Library,     tKey: 'gallery',     accent: '#b8bb26' },
   { id: 'transcriptions',Icon: FileText,    tKey: 'transcripts', accent: '#d3869b' },
   { id: 'projects',      Icon: FolderOpen,  tKey: 'omnidrive',   accent: '#83a598' },
@@ -54,8 +54,8 @@ export default function NavRail({ mode, setMode, side = 'left', onFlipSide }) {
         ))}
         <button
           onClick={onFlipSide}
-          title={`Move rail to the ${side === 'left' ? 'right' : 'left'}`}
-          aria-label="Flip rail side"
+          title={side === 'left' ? t('nav.move_rail_right') : t('nav.move_rail_left')}
+          aria-label={t('nav.flip_rail')}
           className="rail-btn rail-flip"
         >
           <ArrowLeftRight size={15} />
