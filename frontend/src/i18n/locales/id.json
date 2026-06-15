@@ -24,6 +24,7 @@
     "engines": "Mesin",
     "capture": "Pintasan",
     "credentials": "Kredensial",
+    "updates": "Pembaruan",
     "logs": "Log",
     "about": "Tentang",
     "privacy": "Privasi",
@@ -73,7 +74,16 @@
     "shortcut_set": "Pintasan dikte disetel ke {{shortcut}}",
     "shortcut_register_failed": "Tidak dapat mendaftar: {{message}}",
     "shortcut_reset": "Atur ulang ke default",
-    "shortcut_reset_failed": "Penyetelan ulang gagal: {{message}}"
+    "shortcut_reset_failed": "Penyetelan ulang gagal: {{message}}",
+    "cancel": "Batalkan",
+    "hf_token_also_clear": "Hapus juga",
+    "hf_token_clear_btn": "Hapus token",
+    "hf_token_clear_confirm": "Hapus token HuggingFace dari sumber Aplikasi?",
+    "hf_token_clear_dialog": "Hapus token",
+    "hf_token_input": "Token HuggingFace",
+    "hf_token_sources": "Sumber token HF",
+    "hf_token_test_now": "Uji sekarang",
+    "hf_token_test_now_title": "Jalankan ulang whoami untuk setiap sumber"
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -103,7 +113,17 @@
     "region_russia": "Rusia (cermin)",
     "region_restricted": "Dibatasi (cermin)",
     "unknown_error": "Kesalahan tidak diketahui",
-    "retrying": "Mencoba lagi…"
+    "retrying": "Mencoba lagi…",
+    "hint_readme": "README.md hilang dari bundel. Ini sekarang diperbaiki otomatis — coba lagi seharusnya berhasil.",
+    "hint_python_mirror": "Jaringan tidak dapat menjangkau unduhan Python (rilis github.com). Ganti wilayah di Pengaturan → Jaringan (Tiongkok / Rusia / Terbatas lewat mirror), atau pasang Python 3.11+ di sistem agar aplikasi memakainya.",
+    "hint_uv_timeout": "Waktu jaringan habis saat mengunduh uv. Periksa koneksi internet Anda atau coba wilayah lain di Pengaturan → Jaringan.",
+    "hint_uv_sync": "Pemasangan dependensi gagal. \"Bersihkan & Coba Lagi\" akan menghapus venv yang ter-cache dan memulai dari awal.",
+    "hint_build_backend": "Kesalahan backend build Python. \"Bersihkan & Coba Lagi\" menghapus venv yang rusak agar dibangun ulang dari awal.",
+    "hint_ffmpeg": "Unduhan ffmpeg gagal. Ini tidak fatal — coba lagi atau pasang ffmpeg secara manual.",
+    "hint_port": "Port 3900 sudah digunakan. Tutup instans OmniVoice lain atau aplikasi yang memakai port itu.",
+    "hint_silent_crash": "Backend berhenti tanpa pesan kesalahan. \"Bersihkan & Coba Lagi\" sering memperbaiki masalah venv yang rusak.",
+    "hint_github_blocked": "Jaringan Anda mungkin memblokir GitHub. Pasang Python 3.11+ dari python.org (tambahkan ke PATH) lalu jalankan ulang, atau setel UV_PYTHON_INSTALL_MIRROR — lihat docs/install/troubleshooting.md.",
+    "hint_default": "Coba \"Coba Lagi\" dulu. Jika gagal lagi, \"Bersihkan & Coba Lagi\" akan membangun ulang lingkungan dari awal."
   },
   "stories": {
     "title": "Editor Cerita",
@@ -220,7 +240,7 @@
     "designed_voices": "Suara yang Dirancang",
     "dubbing_projects": "Proyek Sulih Suara",
     "empty_hint": "Belum ada apa pun di sini — pilih kartu di atas.",
-    "demo_callout": "👋 Coba suara demo — tekan Hasilkan untuk mendengarnya.",
+    "demo_callout": "Coba suara demo — tekan Hasilkan untuk mendengarnya.",
     "locked": "TERKUNCI",
     "open": "Buka",
     "try_it": "Cobalah",
@@ -274,7 +294,7 @@
     "preset_surprised_woman": "😲 Terkejut",
     "preset_elderly_story": "👴 Penatua",
     "preset_sichuan": "🌶️ 四川话",
-    "prompt_placeholder": "Apa yang seharusnya dikatakan oleh suara ini? ✍️",
+    "prompt_placeholder": "Apa yang seharusnya dikatakan oleh suara ini?",
     "design_placeholder": "Jelaskan suaranya, lalu ketikkan apa yang dikatakannya…",
     "speed": "Kecepatan",
     "tshift": "t_shift",
@@ -302,7 +322,17 @@
     "opt_high_pitch": "nada tinggi",
     "opt_very_high_pitch": "nada yang sangat tinggi",
     "opt_whisper": "berbisik",
-    "style_placeholder": "misalnya berbisik"
+    "style_placeholder": "misalnya berbisik",
+    "stop_playback": "Hentikan pemutaran",
+    "describe_label": "Deskripsikan suara Anda",
+    "describe_placeholder": "mis. a warm elderly British storyteller, slightly raspy",
+    "describe_hint": "Deskripsi Anda (dalam bahasa Inggris) mengatur kontrol di bawah — Anda tetap bisa menyetelnya setelahnya.",
+    "describe_unmatched": "Tidak dapat dipetakan: {{items}}",
+    "describe_no_match": "Belum ada ciri suara yang dikenali — coba kata seperti deep, elderly, atau British.",
+    "define_by_design": "Lewat desain",
+    "define_from_audio": "Dari audio",
+    "define_voice": "Tentukan suara",
+    "save_design_as_profile": "Simpan desain sebagai profil"
   },
   "about": {
     "app": "Aplikasi",
@@ -337,7 +367,17 @@
     "channel_stable": "Stabil",
     "channel_preview": "Pratinjau",
     "channel_set": "Saluran pembaruan disetel ke {{channel}}",
-    "channel_preview_hint": "Pratinjau mengikuti build main terbaru — fitur lebih baru, lebih sedikit diuji. Kembali ke stabil jika ada rilis stabil yang lebih baru."
+    "channel_preview_hint": "Pratinjau mengikuti build main terbaru — fitur lebih baru, lebih sedikit diuji. Kembali ke stabil jika ada rilis stabil yang lebih baru.",
+    "self_check": "Jalankan pemeriksaan mandiri",
+    "self_check_failed": "Pemeriksaan mandiri gagal: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Peringatan",
+    "self_check_fail": "Gagal",
+    "self_check_healthy": "Semua pemeriksaan lulus — instalasi ini tampak sehat.",
+    "self_check_attention": "{{count}} pemeriksaan gagal — lihat petunjuk di atas.",
+    "save_bundle": "Simpan bundel diagnostik",
+    "bundle_saved": "Bundel diagnostik tersimpan: {{filename}}",
+    "bundle_failed": "Tidak dapat membuat bundel diagnostik: {{message}}"
   },
   "privacy": {
     "desc": "Semuanya berjalan di <1>mesin ini</1>. Audio, video, dan transkrip Anda tidak pernah keluar dari komputer kecuali Anda secara eksplisit menggunakan penerjemah online (Google, DeepL, dll.) atau mendorong ke HuggingFace.",
@@ -436,9 +476,12 @@
     "mic_denied": "Akses mikrofon ditolak",
     "mic_denied_toast": "Akses mikrofon ditolak. {{hint}}",
     "mic_hint_mac": "macOS: buka Pengaturan Sistem → Privasi & Keamanan → Mikrofon dan aktifkan OmniVoice.",
-    "mic_hint_windows": "Windows: buka Pengaturan → Privasi & keamanan → Mikrofon dan izinkan OmniVoice.",
+    "mic_hint_windows": "Windows: buka Pengaturan → Privasi & keamanan → Mikrofon, aktifkan 'Akses mikrofon' dan 'Izinkan aplikasi desktop mengakses mikrofon Anda', lalu izinkan OmniVoice.",
     "mic_hint_linux": "Linux: periksa apakah pengguna Anda ada di grup audio dan WebView memiliki akses mikrofon.",
-    "transcription_failed": "Transkripsi gagal: {{message}}"
+    "transcription_failed": "Transkripsi gagal: {{message}}",
+    "mic_not_found": "Mikrofon tidak ditemukan. Hubungkan atau aktifkan mikrofon, lalu coba lagi.",
+    "mic_in_use": "Mikrofon sedang sibuk atau tidak tersedia. Tutup aplikasi lain yang mungkin menggunakannya, lalu coba lagi.",
+    "mic_error_generic": "Tidak dapat memulai mikrofon: {{message}}"
   },
   "logs": {
     "no_tauri_log": "Belum ada Tauri yang masuk ke disk — luncurkan melalui versi desktop untuk menghasilkannya",
@@ -564,7 +607,7 @@
     "prep_extract": "Mengekstrak audio…",
     "prep_demucs": "Memisahkan vokal / musik (Demucs)…",
     "prep_scene": "Mendeteksi potongan adegan…",
-    "prep_cached": "⚡ Menggunakan hasil cache…",
+    "prep_cached": "Menggunakan hasil cache…",
     "prep_preparing": "Mempersiapkan…",
     "prep_chip_download": "unduh",
     "prep_chip_extract": "ekstrak",
@@ -629,6 +672,8 @@
     "dual_subs_title": "Ekspor subtitle dengan teks terjemahan di atas dan teks asli dicetak miring di bawahnya.",
     "burn_subs": "Bakar subtitle",
     "burn_subs_title": "Render subtitle langsung ke aliran video MP4 (hardsubs). Menggunakan format subtitle ganda saat Subtitle ganda aktif.",
+    "timing_smart_fit": "Penyesuaian Cerdas",
+    "timing_smart_fit_title": "Membagi beban: sedikit mempercepat audio (nada dipertahankan, hingga 1,5×) dan sedikit memperlambat segmen video itu (hingga 2×) agar suara dengan tempo alami muat. Kelebihan di luar batas dipangkas dan ditandai. Ekspor mengenkode ulang video.",
     "default_track": "Lagu Bawaan:",
     "original_track": "Asli",
     "selected_dub": "{{code}} (Suara yang Dipilih)",
@@ -654,7 +699,20 @@
     "diagnostic_copied": "Diagnostik disalin",
     "copy_failed": "Penyalinan gagal",
     "open_docs": "Buka dokumen",
-    "copy_diagnostic": "Salin diagnostik"
+    "copy_diagnostic": "Salin diagnostik",
+    "dialect_label": "Dialek",
+    "dialect_default": "Bawaan",
+    "dialect_title": "Dialek regional dan kosakata untuk terjemahan (mis. Argentina → “vos sos” alih-alih “tú eres”). Diterapkan oleh mesin LLM (OpenAI/Ollama) dan kualitas Cinematic.",
+    "num_speakers_label": "Pembicara",
+    "num_speakers_auto": "Otomatis",
+    "num_speakers_help": "Berapa banyak pembicara dalam video ini? Biarkan kosong untuk deteksi otomatis. Tetapkan angka jika deteksi otomatis menggabungkan beberapa pembicara menjadi satu.",
+    "advanced": "Lanjutan",
+    "cinematic_needs_llm_hint": "Sinematik memerlukan LLM. Konfigurasikan di Pengaturan → Kredensial → titik akhir LLM (Ollama berjalan secara lokal, tanpa kunci).",
+    "generate_dub_multi": "Hasilkan {{count}} dub",
+    "pipeline": "Alur sulih suara",
+    "preview_language": "Bahasa pratinjau",
+    "target_language": "Sulih suara ke",
+    "transcript_after_extract": "Transkrip muncul setelah ekstraksi."
   },
   "glossary": {
     "title": "Glosarium",
@@ -740,6 +798,20 @@
     "fit_compressed_title": "Audio TTS menempati {{pct}}% dari slot — sangat terkompresi.",
     "fit_audio_title": "Audio pas di dalam slot.",
     "fit_ratio_title": "Audio TTS adalah {{pct}}% dari slot."
+  },
+  "timeline": {
+    "track_label": "Lini masa segmen",
+    "keyboard_hint": "Tombol panah memilih segmen · Enter mengalihkan mode edit · Delete menghapus · S menjepret ke awal ucapan terdekat",
+    "segment_aria": "Segmen {{index}}: {{start}} hingga {{end}}",
+    "overlap_warning": "Tumpang tindih dengan segmen di sebelahnya — kedua dialog akan berbunyi bersamaan",
+    "moved_announce": "Segmen {{index}} dipindahkan ke {{start}}",
+    "resized_announce": "Segmen {{index}}: {{start}} hingga {{end}}",
+    "deleted_announce": "Segmen {{index}} dihapus",
+    "snapped_announce": "Tepi dijepretkan ke awal ucapan pada {{time}}",
+    "edit_mode_on": "Mode edit: panah menggeser awal, Shift akhir, Alt seluruh segmen, Esc selesai",
+    "edit_mode_off": "Mode edit nonaktif",
+    "play_slot": "Putar bagian ini",
+    "preview_dub": "Pratinjau sulih suara di sini"
   },
   "voice": {
     "personality": "Kepribadian",
@@ -903,7 +975,15 @@
     "save_failed": "Tidak dapat menyimpan profil.",
     "confirm_delete": "Hapus \"{{name}}\"?",
     "trim_load_failed": "Tidak dapat memuat audio untuk pemangkasan.",
-    "delete": "Hapus"
+    "delete": "Hapus",
+    "community_empty": "Belum ada suara komunitas yang dimuat — sambungkan ke internet lalu buka kembali, atau jadilah yang pertama mengirimkannya.",
+    "community_explainer": "Preset desain dan suara rekaman yang dibagikan komunitas, dimuat dari omnivoice-gallery.",
+    "no_designer": "Suara rekaman — gunakan \"Gunakan suara\" sebagai gantinya.",
+    "no_preview": "Tidak ada pratinjau — tambahkan dengan \"Gunakan suara\" untuk mendengarnya.",
+    "submit_failed": "Tidak dapat membuka formulir pengiriman.",
+    "submit_preset": "Kirim preset",
+    "submit_voice": "Kirim suara",
+    "zone_community": "Komunitas"
   },
   "transcriptions": {
     "title": "Transkripsi",
@@ -956,7 +1036,9 @@
     "open": "Buka",
     "install_required_models": "Instal model yang diperlukan di atas untuk melanjutkan.",
     "try_dictation": "Coba dikte",
-    "next_try_dictation": "Berikutnya: Coba dikte"
+    "next_try_dictation": "Berikutnya: Coba dikte",
+    "step_aria": "Langkah {{num}}: {{label}}",
+    "step_completed": "selesai"
   },
   "donate": {
     "title": "Dukungan",
@@ -977,7 +1059,7 @@
     "back": "Kembali ke Studio",
     "badge": "Lisensi Komersial",
     "hero_title": "Kirimkan suara AI dalam produksi",
-    "hero_desc": "OmniVoice Studio tersedia sumbernya di bawah Lisensi Sumber Fungsional (FSL). Sebagian besar pengguna dapat mengevaluasi, membuat prototipe, dan bahkan menerapkan secara internal tanpa perjanjian komersial. Anda memerlukan lisensi komersial hanya jika Anda membuat produk atau layanan pesaing, atau jika kasus penggunaan Anda berada di luar batasan FSL.",
+    "hero_desc": "OmniVoice Studio adalah perangkat lunak bebas dan open source di bawah GNU Affero General Public License v3 (AGPL-3.0) — gratis digunakan, termasuk untuk penggunaan komersial dan bisnis internal. Lisensi komersial hanya diperlukan jika Anda ingin menyematkan OmniVoice Studio ke dalam produk atau layanan closed-source atau proprietary tanpa kewajiban copyleft AGPL-3.0.",
     "why_title": "Mengapa bisnis memilih OmniVoice",
     "pricing_title": "Harga",
     "faq_title": "Pertanyaan umum",
@@ -998,7 +1080,7 @@
     "benefit_source_desc": "Visibilitas penuh ke dalam tumpukan. Audit, fork, dan adaptasi sesuai ketentuan lisensi.",
     "benefit_lang": "646 bahasa",
     "benefit_lang_desc": "Transkripsikan, terjemahkan, dan sulih suara dalam 646 bahasa dengan kualitas setingkat manusia.",
-    "hero_note": "Penggunaan internal — bahkan dalam skala besar — ​​gratis di bawah FSL; lisensi komersial hanya diperlukan untuk menawarkan OmniVoice kepada orang lain sebagai produk atau layanan pesaing (API yang dihosting atau bayar per penggunaan, aplikasi yang dijual kembali atau diberi label putih). Tingkatan harga akan segera hadir — hubungi kami sementara ini."
+    "hero_note": "Penggunaan, self-hosting, dan penggunaan komersial semuanya gratis di bawah AGPL-3.0 — termasuk dalam skala besar. AGPL adalah lisensi copyleft jaringan: jika Anda memodifikasi OmniVoice dan menawarkan versi modifikasi itu kepada orang lain melalui jaringan, Anda harus membagikan kode sumber modifikasi Anda dengan ketentuan yang sama. Lisensi komersial menghapus kewajiban copyleft tersebut untuk penerapan proprietary closed-source. Paket harga segera hadir — sementara itu, hubungi kami."
   },
   "exportModal": {
     "export": "Ekspor",
@@ -1047,6 +1129,7 @@
     "current_target": "Target saat ini ({{code}})",
     "all_selected_dubs": "Semua sulih suara yang dipilih ({{count}})",
     "subs_note": "Subjudul dihasilkan dari teks segmen sebagaimana adanya — edit tabel segmen sebelum mengekspor jika Anda melihat kesalahan ketik.",
+    "retime_note": "Pengaturan ulang waktu video per segmen mengodekan ulang seluruh video saat ekspor — perkirakan sekitar 0,5–2× durasi video pada CPU.",
     "pkg_clips_title": "Klip per segmen (.zip)",
     "pkg_clips_body": "Setiap segmen yang dihasilkan sebagai WAV bernomor di dalam zip — baik untuk peninjauan, postingan sulih suara, atau pembuatan kumpulan data.",
     "pkg_clips_cta": "Ekspor klip zip",
@@ -1097,7 +1180,8 @@
     "script_french": "Non-Inggris (Prancis)",
     "aria_pause": "Jeda {{label}}",
     "aria_hear": "Dengarkan {{label}}",
-    "aria_replay": "Putar ulang {{label}} melalui transcriber"
+    "aria_replay": "Putar ulang {{label}} melalui transcriber",
+    "dictation_lede_hotkey_only": "Tahan pintasan di atas di mana saja di desktop, bicara, lepaskan — teks masuk ke aplikasi yang sedang fokus. Tekan sekarang untuk memverifikasi."
   },
   "direction": {
     "title": "Arah untuk segmen #{{id}}",
@@ -1122,7 +1206,10 @@
     "title": "Tab ini menemui hambatan.",
     "desc": "Jangan khawatir — aplikasi lainnya masih berfungsi. Anda dapat berpindah tab, atau coba lagi di bawah.",
     "tryAgain": "Coba lagi",
-    "openDocs": "Buka dokumen untuk kesalahan ini"
+    "openDocs": "Buka dokumen untuk kesalahan ini",
+    "report": "Laporkan bug ini",
+    "searchIssues": "Cari masalah serupa",
+    "unexpected": "Kesalahan tak terduga: {{message}}"
   },
   "keyboard": {
     "title": "Pintasan keyboard",
@@ -1278,7 +1365,8 @@
     "dub_label": "sulih suara",
     "save_label": "Simpan",
     "lock_identity": "Kunci identitas suara",
-    "in_folder": "di {{folder}}"
+    "in_folder": "di {{folder}}",
+    "search": "Cari…"
   },
   "trimmer": {
     "title": "Pangkas audio referensi",
@@ -1411,13 +1499,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Apakah saya memerlukan lisensi untuk alat internal?",
-    "a_internal_tools": "Penggunaan internal oleh karyawan dan kontraktor Anda adalah Tujuan yang Diizinkan berdasarkan FSL — tidak diperlukan lisensi. Lisensi komersial diperlukan saat Anda membuat OmniVoice tersedia bagi orang lain sebagai bagian dari produk atau layanan pesaing (dijual kembali, SaaS yang dihosting, label putih).",
+    "a_internal_tools": "Tidak. Penggunaan oleh karyawan dan kontraktor Anda — termasuk memodifikasi dan self-hosting secara internal — gratis di bawah AGPL-3.0. Lisensi komersial hanya diperlukan jika Anda menyematkan OmniVoice ke dalam produk atau layanan closed-source atau proprietary dan tidak ingin mematuhi kewajiban berbagi kode sumber AGPL.",
     "q_try_before": "Bisakah saya mencoba sebelum melakukan?",
-    "a_try_before": "Ya. Aplikasi lengkapnya gratis untuk diunduh dan dijalankan secara lokal untuk evaluasi di bawah FSL. Saat Anda siap mendiskusikan penerapan komersial, kirimkan email kepada kami dan kami akan membahas detailnya bersama-sama.",
+    "a_try_before": "Ya. Aplikasi lengkap gratis untuk diunduh, dijalankan, dan di-host sendiri di bawah AGPL-3.0 — tanpa perjanjian apa pun. Saat Anda siap membahas lisensi komersial (penggunaan proprietary), kirim email kepada kami dan kita akan menyelesaikan detailnya bersama.",
     "q_watermark": "Bagaimana dengan tanda airnya?",
-    "a_watermark": "Tanda air AudioSeal yang tidak terlihat tertanam secara default. Pemegang lisensi komersial dapat menonaktifkannya di Pengaturan → Privasi. Penggunaan gratis/pribadi selalu menyertakan tanda air.",
-    "q_apache": "Apakah sumbernya pernah menjadi Apache 2.0?",
-    "a_apache": "Ya. Setiap rilis dikonversi secara otomatis ke Lisensi Apache, Versi 2.0 pada ulang tahun kedua penerbitannya. Itu berarti rilis hari ini adalah Apache 2.0 dalam dua tahun, kami tidak perlu mengambil tindakan apa pun — FSL menjaminnya tanpa dapat ditarik kembali."
+    "a_watermark": "Tanda air AudioSeal yang tidak terlihat tertanam secara default untuk semua orang. Pemegang lisensi komersial dapat menonaktifkannya di Pengaturan → Privasi."
   },
   "gallery_extra": {
     "save_prompt": "Masukkan nama untuk profil suara ini:",
@@ -1452,6 +1538,7 @@
     "segments_clean": "Segmen sudah bersih",
     "cleanup_failed": "Pembersihan gagal: {{message}}",
     "cinematic_no_llm": "Kualitas sinematik memerlukan LLM — setel TRANSLATE_BASE_URL + TRANSLATE_API_KEY (Ollama berfungsi secara lokal). Kembali ke Fast.",
+    "dialect_not_applied": "Dialek terpilih memerlukan LLM — ganti Engine ke OpenAI/Ollama atau pilih kualitas Cinematic.",
     "translate_errors": "{{errorCount}}/{{totalCount}} segmen gagal: {{firstError}}",
     "translated_segments": "Diterjemahkan {{count}} segmen → {{lang}}",
     "translated_cinematic_suffix": "(Sinematik)",
@@ -1597,5 +1684,90 @@
     "none": "Tidak ada rilis yang ditemukan",
     "load_error": "Tidak dapat memuat rilis (offline?)",
     "retry_load": "Coba lagi"
+  },
+  "firstrun": {
+    "loading": "Menyiapkan penyiapan…",
+    "title": "Siapkan OmniVoice Studio",
+    "subtitle": "Belum ada yang terpasang — tinjau ke mana semuanya disimpan, lalu mulai. Bisa diubah nanti di Pengaturan.",
+    "language": "Bahasa",
+    "mode_title": "Mode pemasangan",
+    "mode_installed": "Terpasang",
+    "mode_installed_desc": "Menggunakan folder sistem standar. Disarankan untuk sebagian besar pengguna.",
+    "mode_portable": "Portabel",
+    "mode_portable_desc": "Semuanya berada dalam satu folder di samping aplikasi — pindahkan utuh ke disk atau mesin lain.",
+    "mode_portable_unavailable": "Tidak tersedia: folder di samping aplikasi tidak dapat ditulisi.",
+    "storage_title": "Penyimpanan",
+    "portable_folder": "Folder portabel",
+    "portable_folder_desc": "Lingkungan, model, dan data suara Anda — satu folder, sepenuhnya dapat dipindah.",
+    "env_dir": "Lingkungan aplikasi",
+    "env_dir_desc": "Runtime Python dan pustaka AI.",
+    "data_dir": "Data suara & proyek",
+    "data_dir_desc": "Suara Anda, sulih suara, keluaran, dan basis data proyek.",
+    "models_dir": "Cache model",
+    "models_dir_desc": "Model AI yang diunduh — bagian terbesar dan paling mudah dipindah.",
+    "needs": "butuh ~{{size}}",
+    "free": "{{size}} kosong",
+    "checking": "memeriksa…",
+    "not_writable": "tidak dapat ditulisi",
+    "change": "Ubah…",
+    "compute_title": "Komputasi",
+    "compute_label": "GPU / akselerator",
+    "compute_auto": "Otomatis (NVIDIA CUDA / Apple MPS / CPU)",
+    "compute_rocm": "GPU AMD (ROCm, Linux)",
+    "channel_label": "Saluran pembaruan",
+    "channel_stable": "Stabil",
+    "channel_preview": "Pratinjau (main terbaru)",
+    "network_title": "Jaringan",
+    "region_label": "Wilayah unduhan",
+    "mirrors_title": "Mirror kustom (lanjutan)",
+    "mirror_pypi": "URL indeks PyPI",
+    "mirror_hf": "Endpoint Hugging Face",
+    "mirror_python": "Mirror unduhan Python",
+    "insufficient_space": "Ruang tidak cukup: tata letak ini butuh ~{{need}} pada satu disk, hanya tersedia {{free}}. Pilih lokasi lain.",
+    "blocked_not_writable": "Folder yang dipilih tidak dapat ditulisi — pilih lokasi lain.",
+    "total_required": "Total disk yang dibutuhkan: ~{{size}} (unduhan sekali saat pertama dipakai)",
+    "start": "Mulai pemasangan",
+    "starting": "Memulai…",
+    "compute_detected": "Terdeteksi",
+    "compute_match": "cocok dengan mesin ini",
+    "compute_auto_desc": "Memilih backend terbaik mesin ini saat berjalan — CUDA di NVIDIA, MPS di Apple Silicon, selain itu CPU.",
+    "compute_rocm_desc": "Memasang wheel PyTorch ROCm untuk kartu grafis AMD di Linux. Biarkan Auto jika ragu.",
+    "channel_stable_desc": "Hanya rilis teruji — pembaruan tiba setelah validasi komunitas.",
+    "channel_preview_desc": "Build bergulir dari main terbaru — mesin dan perbaikan baru lebih dulu, sesekali ada sisi kasar.",
+    "installing_title": "Memasang",
+    "activity_title": "Aktivitas",
+    "stage_setup": "Penyiapan",
+    "stage_models": "Model & mesin",
+    "chip_required": "wajib",
+    "chip_optional": "opsional",
+    "chip_engine": "mesin",
+    "lib_download": "Unduh",
+    "lib_downloading": "mengunduh…",
+    "lib_use": "Pakai",
+    "lib_active": "aktif",
+    "lib_in_settings": "pasang nanti di Pengaturan",
+    "lib_show_all": "Tampilkan {{count}} model opsional",
+    "trust_line": "Semuanya berjalan dan tersimpan di mesin ini — tanpa akun, tanpa cloud, tanpa telemetri.",
+    "resume_note": "Unduhan yang terputus dilanjutkan otomatis — menutup aplikasi aman.",
+    "eta_left": "sisa ~{{eta}}",
+    "first_sound_text": "Selamat datang di studio Anda. Setiap kata yang Anda dengar baru saja dihasilkan di mesin ini.",
+    "first_sound_done": "Suara tadi? Dihasilkan beberapa detik lalu, secara lokal. Selamat datang.",
+    "hf_token_title": "Token Hugging Face (opsional)",
+    "hf_token_hint": "Membuka model terbatas — mis. diarisasi pembicara untuk sulih suara multi-suara (pyannote). Token akun gratis; tetap di mesin ini.",
+    "hf_token_save": "Simpan",
+    "hf_token_saving": "menyimpan…",
+    "hf_token_saved": "Token Hugging Face tersimpan",
+    "hf_token_error": "Gagal menyimpan token — coba lagi atau atur nanti di Pengaturan → Kredensial."
+  },
+  "history": {
+    "dub_title": "Riwayat sulih suara",
+    "empty": "Belum ada apa pun di sini — hasil generasi Anda akan muncul di sebelah kanan.",
+    "empty_dub": "Sulih suara Anda akan muncul di sini.",
+    "title": "Riwayat"
+  },
+  "recording": {
+    "cleaned_loaded": "Rekaman dibersihkan & dimuat!",
+    "loaded_raw": "Rekaman dimuat (mentah — penghilang derau tidak tersedia)",
+    "too_short": "Rekaman terlalu pendek"
   }
 }

@@ -24,6 +24,7 @@
     "engines": "Công cụ",
     "capture": "Phím tắt",
     "credentials": "Xác thực",
+    "updates": "Cập nhật",
     "logs": "Nhật ký",
     "about": "Giới thiệu",
     "privacy": "Bảo mật",
@@ -73,7 +74,16 @@
     "shortcut_set": "Phím tắt đọc chính tả được đặt thành {{shortcut}}",
     "shortcut_register_failed": "Không thể đăng ký: {{message}}",
     "shortcut_reset": "Đặt lại về mặc định",
-    "shortcut_reset_failed": "Đặt lại không thành công: {{message}}"
+    "shortcut_reset_failed": "Đặt lại không thành công: {{message}}",
+    "cancel": "Hủy",
+    "hf_token_also_clear": "Đồng thời xóa",
+    "hf_token_clear_btn": "Xóa token",
+    "hf_token_clear_confirm": "Xóa token HuggingFace từ nguồn Ứng dụng?",
+    "hf_token_clear_dialog": "Xóa token",
+    "hf_token_input": "Token HuggingFace",
+    "hf_token_sources": "Nguồn token HF",
+    "hf_token_test_now": "Kiểm tra ngay",
+    "hf_token_test_now_title": "Chạy lại whoami cho mọi nguồn"
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -103,7 +113,17 @@
     "region_russia": "Nga (gương)",
     "region_restricted": "Bị hạn chế (gương)",
     "unknown_error": "Lỗi không xác định",
-    "retrying": "Đang thử lại…"
+    "retrying": "Đang thử lại…",
+    "hint_readme": "README.md bị thiếu trong gói. Lỗi này hiện được tự động sửa — thử lại sẽ hoạt động.",
+    "hint_python_mirror": "Mạng không truy cập được bản tải Python (bản phát hành github.com). Hãy đổi khu vực trong Cài đặt → Mạng (Trung Quốc / Nga / Hạn chế đi qua máy chủ gương), hoặc cài Python 3.11+ trên hệ thống để ứng dụng dùng bản đó.",
+    "hint_uv_timeout": "Hết thời gian chờ mạng khi tải uv. Kiểm tra kết nối internet hoặc thử khu vực khác trong Cài đặt → Mạng.",
+    "hint_uv_sync": "Cài đặt phụ thuộc thất bại. \"Dọn dẹp & Thử lại\" sẽ xóa venv trong bộ nhớ đệm và bắt đầu lại.",
+    "hint_build_backend": "Lỗi backend build của Python. \"Dọn dẹp & Thử lại\" sẽ xóa venv hỏng để xây dựng lại từ đầu.",
+    "hint_ffmpeg": "Tải ffmpeg thất bại. Không nghiêm trọng — thử lại hoặc tự cài ffmpeg thủ công.",
+    "hint_port": "Cổng 3900 đang được sử dụng. Hãy đóng các phiên bản OmniVoice khác hoặc ứng dụng đang dùng cổng đó.",
+    "hint_silent_crash": "Backend bị lỗi mà không có thông báo. \"Dọn dẹp & Thử lại\" thường khắc phục được sự cố venv bị hỏng.",
+    "hint_github_blocked": "Mạng của bạn có thể đang chặn GitHub. Cài Python 3.11+ từ python.org (thêm vào PATH) rồi khởi động lại, hoặc đặt UV_PYTHON_INSTALL_MIRROR — xem docs/install/troubleshooting.md.",
+    "hint_default": "Hãy thử \"Thử lại\" trước. Nếu vẫn lỗi, \"Dọn dẹp & Thử lại\" sẽ xây dựng lại môi trường từ đầu."
   },
   "stories": {
     "title": "Biên tập truyện",
@@ -220,7 +240,7 @@
     "designed_voices": "Giọng nói được thiết kế",
     "dubbing_projects": "Dự án lồng tiếng",
     "empty_hint": "Chưa có gì ở đây - hãy chọn một thẻ ở trên.",
-    "demo_callout": "👋 Thử giọng nói demo — nhấn Tạo để nghe.",
+    "demo_callout": "Thử giọng nói demo — nhấn Tạo để nghe.",
     "locked": "ĐÃ KHÓA",
     "open": "Mở",
     "try_it": "Hãy thử nó",
@@ -274,7 +294,7 @@
     "preset_surprised_woman": "😲 Ngạc nhiên",
     "preset_elderly_story": "👴 Người cao tuổi",
     "preset_sichuan": "🌶️ 四川话",
-    "prompt_placeholder": "Giọng nói này nên nói gì? ✍️",
+    "prompt_placeholder": "Giọng nói này nên nói gì?",
     "design_placeholder": "Mô tả giọng nói, sau đó nhập nội dung nó nói…",
     "speed": "Tốc độ",
     "tshift": "t_shift",
@@ -302,7 +322,17 @@
     "opt_high_pitch": "cao độ",
     "opt_very_high_pitch": "âm vực rất cao",
     "opt_whisper": "thì thầm",
-    "style_placeholder": "ví dụ: thì thầm"
+    "style_placeholder": "ví dụ: thì thầm",
+    "stop_playback": "Dừng phát",
+    "describe_label": "Mô tả giọng nói của bạn",
+    "describe_placeholder": "vd. a warm elderly British storyteller, slightly raspy",
+    "describe_hint": "Mô tả của bạn (bằng tiếng Anh) sẽ thiết lập các điều khiển bên dưới — bạn vẫn có thể tinh chỉnh sau.",
+    "describe_unmatched": "Không thể ánh xạ: {{items}}",
+    "describe_no_match": "Chưa nhận ra đặc điểm giọng nói nào — hãy thử các từ như deep, elderly hoặc British.",
+    "define_by_design": "Theo thiết kế",
+    "define_from_audio": "Từ âm thanh",
+    "define_voice": "Xác định giọng nói",
+    "save_design_as_profile": "Lưu thiết kế dưới dạng hồ sơ"
   },
   "about": {
     "app": "ứng dụng",
@@ -337,7 +367,17 @@
     "channel_stable": "Ổn định",
     "channel_preview": "Xem trước",
     "channel_set": "Đã đặt kênh cập nhật thành {{channel}}",
-    "channel_preview_hint": "Bản xem trước theo dõi bản dựng main mới nhất — tính năng mới hơn, ít được kiểm thử hơn. Quay lại bản ổn định nếu có bản phát hành ổn định mới hơn."
+    "channel_preview_hint": "Bản xem trước theo dõi bản dựng main mới nhất — tính năng mới hơn, ít được kiểm thử hơn. Quay lại bản ổn định nếu có bản phát hành ổn định mới hơn.",
+    "self_check": "Chạy tự kiểm tra",
+    "self_check_failed": "Tự kiểm tra thất bại: {{message}}",
+    "self_check_ok": "Ổn",
+    "self_check_warn": "Cảnh báo",
+    "self_check_fail": "Thất bại",
+    "self_check_healthy": "Tất cả kiểm tra đều đạt — bản cài đặt này có vẻ ổn.",
+    "self_check_attention": "{{count}} kiểm tra thất bại — xem gợi ý ở trên.",
+    "save_bundle": "Lưu gói chẩn đoán",
+    "bundle_saved": "Đã lưu gói chẩn đoán: {{filename}}",
+    "bundle_failed": "Không thể tạo gói chẩn đoán: {{message}}"
   },
   "privacy": {
     "desc": "Mọi thứ đều chạy trên <1>máy này</1>. Âm thanh, video và bản ghi của bạn không bao giờ rời khỏi máy tính của bạn trừ khi bạn sử dụng một cách rõ ràng một trình dịch trực tuyến (Google, DeepL, v.v.) hoặc đẩy tới HuggingFace.",
@@ -436,9 +476,12 @@
     "mic_denied": "Quyền truy cập micrô bị từ chối",
     "mic_denied_toast": "Quyền truy cập micrô bị từ chối. {{hint}}",
     "mic_hint_mac": "macOS: mở Cài đặt hệ thống → Quyền riêng tư & bảo mật → Micrô và bật OmniVoice.",
-    "mic_hint_windows": "Windows: mở Cài đặt → Quyền riêng tư & bảo mật → Micrô và bật OmniVoice.",
+    "mic_hint_windows": "Windows: mở Cài đặt → Quyền riêng tư & bảo mật → Micrô, bật 'Quyền truy cập micrô' và 'Cho phép ứng dụng máy tính truy cập micrô của bạn', sau đó cho phép OmniVoice.",
     "mic_hint_linux": "Linux: kiểm tra xem người dùng của bạn có thuộc nhóm âm thanh hay không và WebView có quyền truy cập micrô.",
-    "transcription_failed": "Phiên âm không thành công: {{message}}"
+    "transcription_failed": "Phiên âm không thành công: {{message}}",
+    "mic_not_found": "Không tìm thấy micrô. Hãy kết nối hoặc bật micrô rồi thử lại.",
+    "mic_in_use": "Micrô đang bận hoặc không khả dụng. Hãy đóng các ứng dụng khác có thể đang sử dụng micrô rồi thử lại.",
+    "mic_error_generic": "Không thể khởi động micrô: {{message}}"
   },
   "logs": {
     "no_tauri_log": "Chưa có bản đăng nhập Tauri nào trên đĩa - khởi chạy thông qua bản dựng máy tính để bàn để tạo một bản ghi",
@@ -564,7 +607,7 @@
     "prep_extract": "Đang trích xuất âm thanh…",
     "prep_demucs": "Tách biệt vocal/nhạc (Demucs)…",
     "prep_scene": "Đang phát hiện các đoạn cắt cảnh…",
-    "prep_cached": "⚡ Sử dụng kết quả được lưu trong bộ nhớ đệm…",
+    "prep_cached": "Sử dụng kết quả được lưu trong bộ nhớ đệm…",
     "prep_preparing": "Đang chuẩn bị…",
     "prep_chip_download": "tải về",
     "prep_chip_extract": "chiết xuất",
@@ -629,6 +672,8 @@
     "dual_subs_title": "Xuất phụ đề với văn bản dịch ở trên và bản gốc in nghiêng bên dưới.",
     "burn_subs": "Ghi phụ đề",
     "burn_subs_title": "Hiển thị phụ đề trực tiếp vào luồng video MP4 (hardsub). Sử dụng định dạng phụ đề kép khi phụ đề kép được bật.",
+    "timing_smart_fit": "Khớp thông minh",
+    "timing_smart_fit_title": "Chia đôi gánh nặng: tăng nhẹ tốc độ âm thanh (giữ cao độ, tối đa 1,5×) và làm chậm nhẹ đoạn video đó (tối đa 2×) để lời thoại ở nhịp tự nhiên vừa khít. Phần vượt giới hạn sẽ bị cắt và được đánh dấu. Xuất sẽ mã hóa lại video.",
     "default_track": "Bản nhạc mặc định:",
     "original_track": "Bản gốc",
     "selected_dub": "{{code}} (Lồng tiếng được chọn)",
@@ -654,7 +699,20 @@
     "diagnostic_copied": "Đã sao chép chẩn đoán",
     "copy_failed": "Sao chép không thành công",
     "open_docs": "Mở tài liệu",
-    "copy_diagnostic": "Sao chép chẩn đoán"
+    "copy_diagnostic": "Sao chép chẩn đoán",
+    "dialect_label": "Phương ngữ",
+    "dialect_default": "Mặc định",
+    "dialect_title": "Phương ngữ và từ vựng vùng miền cho bản dịch (vd. Argentina → “vos sos” thay vì “tú eres”). Áp dụng bởi các engine LLM (OpenAI/Ollama) và chất lượng Cinematic.",
+    "num_speakers_label": "Người nói",
+    "num_speakers_auto": "Tự động",
+    "num_speakers_help": "Video này có bao nhiêu người nói? Để trống để tự động phát hiện. Đặt một con số nếu tính năng tự động gộp nhiều người nói thành một.",
+    "advanced": "Nâng cao",
+    "cinematic_needs_llm_hint": "Điện ảnh cần có LLM. Cấu hình trong Cài đặt → Xác thực → Điểm cuối LLM (Ollama chạy cục bộ, không cần khóa).",
+    "generate_dub_multi": "Tạo {{count}} bản lồng tiếng",
+    "pipeline": "Quy trình lồng tiếng",
+    "preview_language": "Ngôn ngữ xem trước",
+    "target_language": "Lồng tiếng sang",
+    "transcript_after_extract": "Bản chép lời sẽ xuất hiện sau khi trích xuất."
   },
   "glossary": {
     "title": "Thuật ngữ",
@@ -740,6 +798,20 @@
     "fit_compressed_title": "Âm thanh TTS chiếm {{pct}}% dung lượng khe — bị nén rất nhiều.",
     "fit_audio_title": "Âm thanh vừa vặn bên trong khe cắm.",
     "fit_ratio_title": "Âm thanh TTS chiếm {{pct}}% dung lượng khe."
+  },
+  "timeline": {
+    "track_label": "Dòng thời gian phân đoạn",
+    "keyboard_hint": "Phím mũi tên chọn phân đoạn · Enter bật/tắt chế độ chỉnh sửa · Delete xóa · S hít vào điểm bắt đầu giọng nói gần nhất",
+    "segment_aria": "Phân đoạn {{index}}: {{start}} đến {{end}}",
+    "overlap_warning": "Chồng lấn phân đoạn liền kề — cả hai lời thoại sẽ phát cùng lúc",
+    "moved_announce": "Phân đoạn {{index}} đã chuyển đến {{start}}",
+    "resized_announce": "Phân đoạn {{index}}: {{start}} đến {{end}}",
+    "deleted_announce": "Đã xóa phân đoạn {{index}}",
+    "snapped_announce": "Cạnh đã hít vào điểm bắt đầu giọng nói tại {{time}}",
+    "edit_mode_on": "Chế độ chỉnh sửa: mũi tên dịch điểm đầu, Shift điểm cuối, Alt cả phân đoạn, Esc kết thúc",
+    "edit_mode_off": "Đã tắt chế độ chỉnh sửa",
+    "play_slot": "Phát đoạn này",
+    "preview_dub": "Nghe thử lồng tiếng tại đây"
   },
   "voice": {
     "personality": "Tính cách",
@@ -903,7 +975,15 @@
     "save_failed": "Không thể lưu hồ sơ.",
     "confirm_delete": "Xóa \"{{name}}\"?",
     "trim_load_failed": "Không thể tải âm thanh để cắt.",
-    "delete": "Xóa"
+    "delete": "Xóa",
+    "community_empty": "Chưa tải được giọng nói cộng đồng nào — hãy kết nối internet rồi mở lại, hoặc trở thành người đầu tiên gửi một giọng nói.",
+    "community_explainer": "Các cài đặt trước được thiết kế và giọng nói ghi âm do cộng đồng chia sẻ, được tải từ omnivoice-gallery.",
+    "no_designer": "Giọng nói ghi âm — hãy dùng \"Sử dụng giọng nói\" thay thế.",
+    "no_preview": "Không có bản xem trước — thêm bằng \"Sử dụng giọng nói\" để nghe thử.",
+    "submit_failed": "Không thể mở biểu mẫu gửi.",
+    "submit_preset": "Gửi cài đặt trước",
+    "submit_voice": "Gửi giọng nói",
+    "zone_community": "Cộng đồng"
   },
   "transcriptions": {
     "title": "Phiên âm",
@@ -956,7 +1036,9 @@
     "open": "Mở",
     "install_required_models": "Cài đặt các mô hình cần thiết ở trên để tiếp tục.",
     "try_dictation": "Thử đọc chính tả",
-    "next_try_dictation": "Tiếp theo: Thử đọc chính tả"
+    "next_try_dictation": "Tiếp theo: Thử đọc chính tả",
+    "step_aria": "Bước {{num}}: {{label}}",
+    "step_completed": "đã hoàn thành"
   },
   "donate": {
     "title": "Hỗ trợ",
@@ -977,7 +1059,7 @@
     "back": "Quay lại Studio",
     "badge": "Giấy phép thương mại",
     "hero_title": "Vận chuyển giọng nói AI trong quá trình sản xuất",
-    "hero_desc": "OmniVoice Studio có sẵn nguồn theo Giấy phép Nguồn Chức năng (FSL). Hầu hết người dùng có thể đánh giá, tạo nguyên mẫu và thậm chí triển khai nội bộ mà không cần thỏa thuận thương mại. Bạn chỉ cần giấy phép thương mại nếu bạn đang xây dựng một sản phẩm hoặc dịch vụ cạnh tranh hoặc nếu trường hợp sử dụng của bạn nằm ngoài ranh giới của FSL.",
+    "hero_desc": "OmniVoice Studio là phần mềm tự do, mã nguồn mở theo giấy phép GNU Affero General Public License v3 (AGPL-3.0) — miễn phí sử dụng, bao gồm cả mục đích thương mại và sử dụng nội bộ doanh nghiệp. Bạn chỉ cần giấy phép thương mại nếu muốn nhúng OmniVoice Studio vào sản phẩm hoặc dịch vụ mã nguồn đóng hay độc quyền mà không chịu các nghĩa vụ copyleft của AGPL-3.0.",
     "why_title": "Tại sao doanh nghiệp chọn OmniVoice",
     "pricing_title": "Định giá",
     "faq_title": "Câu hỏi thường gặp",
@@ -998,7 +1080,7 @@
     "benefit_source_desc": "Hiển thị đầy đủ vào ngăn xếp. Kiểm tra, phân nhánh và điều chỉnh theo các điều khoản cấp phép.",
     "benefit_lang": "646 ngôn ngữ",
     "benefit_lang_desc": "Phiên âm, dịch và lồng tiếng trên 646 ngôn ngữ với chất lượng ngang tầm con người.",
-    "hero_note": "Việc sử dụng nội bộ — ngay cả ở quy mô lớn — đều miễn phí theo FSL; giấy phép thương mại chỉ được yêu cầu để cung cấp OmniVoice cho người khác dưới dạng sản phẩm hoặc dịch vụ cạnh tranh (API được lưu trữ hoặc trả tiền cho mỗi lần sử dụng, ứng dụng được bán lại hoặc được gắn nhãn trắng). Sắp có mức giá - hãy liên hệ trong thời gian chờ đợi."
+    "hero_note": "Sử dụng, tự lưu trữ và dùng cho mục đích thương mại đều miễn phí theo AGPL-3.0 — kể cả ở quy mô lớn. AGPL là giấy phép copyleft qua mạng: nếu bạn chỉnh sửa OmniVoice và cung cấp phiên bản chỉnh sửa đó cho người khác qua mạng, bạn phải chia sẻ mã nguồn đã chỉnh sửa theo cùng điều khoản. Giấy phép thương mại sẽ gỡ bỏ các nghĩa vụ copyleft này cho các triển khai độc quyền, mã nguồn đóng. Các gói giá sẽ sớm ra mắt — trong lúc đó hãy liên hệ với chúng tôi."
   },
   "exportModal": {
     "export": "Xuất khẩu",
@@ -1047,6 +1129,7 @@
     "current_target": "Mục tiêu hiện tại ({{code}})",
     "all_selected_dubs": "Tất cả các bản lồng tiếng đã chọn ({{count}})",
     "subs_note": "Phụ đề được tạo từ văn bản phân đoạn nguyên trạng — hãy chỉnh sửa bảng phân đoạn trước khi xuất nếu bạn phát hiện lỗi chính tả.",
+    "retime_note": "Việc căn lại thời gian video theo từng phân đoạn sẽ mã hóa lại toàn bộ video khi xuất — dự kiến mất khoảng 0,5–2× thời lượng video trên CPU.",
     "pkg_clips_title": "Clip theo từng đoạn (.zip)",
     "pkg_clips_body": "Mỗi phân đoạn được tạo dưới dạng WAV được đánh số bên trong một tệp zip — phù hợp để đánh giá, đăng bài lồng tiếng hoặc xây dựng tập dữ liệu.",
     "pkg_clips_cta": "Xuất clip zip",
@@ -1097,7 +1180,8 @@
     "script_french": "Không phải tiếng Anh (tiếng Pháp)",
     "aria_pause": "Tạm dừng {{label}}",
     "aria_hear": "Nghe _V_0__",
-    "aria_replay": "Phát lại {{label}} thông qua người ghi âm"
+    "aria_replay": "Phát lại {{label}} thông qua người ghi âm",
+    "dictation_lede_hotkey_only": "Giữ phím tắt ở trên tại bất kỳ đâu trên màn hình, nói rồi thả — văn bản sẽ vào ứng dụng đang được chọn. Nhấn ngay để kiểm tra."
   },
   "direction": {
     "title": "Hướng cho đoạn #{{id}}",
@@ -1122,7 +1206,10 @@
     "title": "Tab này gặp trở ngại.",
     "desc": "Đừng lo lắng — phần còn lại của ứng dụng vẫn hoạt động. Bạn có thể chuyển đổi tab hoặc thử lại bên dưới.",
     "tryAgain": "Thử lại",
-    "openDocs": "Mở tài liệu cho lỗi này"
+    "openDocs": "Mở tài liệu cho lỗi này",
+    "report": "Báo cáo lỗi này",
+    "searchIssues": "Tìm các vấn đề tương tự",
+    "unexpected": "Lỗi không mong muốn: {{message}}"
   },
   "keyboard": {
     "title": "Phím tắt",
@@ -1278,7 +1365,8 @@
     "dub_label": "lồng tiếng",
     "save_label": "Lưu",
     "lock_identity": "Khóa nhận dạng giọng nói",
-    "in_folder": "trong {{folder}}"
+    "in_folder": "trong {{folder}}",
+    "search": "Tìm kiếm…"
   },
   "trimmer": {
     "title": "Cắt âm thanh tham chiếu",
@@ -1411,13 +1499,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Tôi có cần giấy phép cho các công cụ nội bộ không?",
-    "a_internal_tools": "Việc sử dụng nội bộ của nhân viên và nhà thầu của bạn là Mục đích được phép theo FSL — không cần giấy phép. Cần có giấy phép thương mại khi bạn cung cấp OmniVoice cho người khác như một phần của sản phẩm hoặc dịch vụ cạnh tranh (bán lại, SaaS được lưu trữ, nhãn trắng).",
+    "a_internal_tools": "Không. Việc sử dụng bởi nhân viên và nhà thầu của bạn — bao gồm chỉnh sửa và tự lưu trữ nội bộ — là miễn phí theo AGPL-3.0. Giấy phép thương mại chỉ cần thiết nếu bạn nhúng OmniVoice vào sản phẩm hoặc dịch vụ mã nguồn đóng hay độc quyền và không muốn tuân thủ nghĩa vụ chia sẻ mã nguồn của AGPL.",
     "q_try_before": "Tôi có thể thử trước khi cam kết không?",
-    "a_try_before": "Vâng. Ứng dụng đầy đủ được tải xuống và chạy cục bộ miễn phí để đánh giá theo FSL. Khi bạn sẵn sàng thảo luận về việc triển khai thương mại, hãy gửi email cho chúng tôi và chúng ta sẽ cùng nhau giải quyết các chi tiết.",
+    "a_try_before": "Có. Toàn bộ ứng dụng có thể tải xuống, chạy và tự lưu trữ miễn phí theo AGPL-3.0 — không cần bất kỳ thỏa thuận nào. Khi bạn sẵn sàng trao đổi về giấy phép thương mại (sử dụng độc quyền), hãy gửi email cho chúng tôi và chúng ta sẽ cùng thống nhất chi tiết.",
     "q_watermark": "Còn hình mờ thì sao?",
-    "a_watermark": "Hình mờ AudioSeal vô hình được nhúng theo mặc định. Người được cấp phép thương mại có thể tắt nó trong Cài đặt → Quyền riêng tư. Sử dụng miễn phí/cá nhân luôn bao gồm hình mờ.",
-    "q_apache": "Nguồn có bao giờ trở thành Apache 2.0 không?",
-    "a_apache": "Vâng. Mỗi bản phát hành sẽ tự động chuyển đổi sang Giấy phép Apache, Phiên bản 2.0 vào ngày kỷ niệm thứ hai ngày xuất bản. Điều đó có nghĩa là bản phát hành hôm nay là Apache 2.0 sau hai năm nữa, chúng tôi không cần thực hiện hành động nào — FSL đảm bảo điều đó không thể hủy bỏ."
+    "a_watermark": "Hình mờ AudioSeal vô hình được nhúng theo mặc định cho tất cả mọi người. Người được cấp phép thương mại có thể tắt nó trong Cài đặt → Quyền riêng tư."
   },
   "gallery_extra": {
     "save_prompt": "Nhập tên cho cấu hình giọng nói này:",
@@ -1452,6 +1538,7 @@
     "segments_clean": "Phân khúc đã sạch",
     "cleanup_failed": "Dọn dẹp không thành công: {{message}}",
     "cinematic_no_llm": "Chất lượng điện ảnh cần có LLM — đặt TRANSLATE_BASE_URL + TRANSLATE_API_KEY (Ollama hoạt động cục bộ). Trở lại Nhanh.",
+    "dialect_not_applied": "Phương ngữ đã chọn cần LLM để áp dụng — chuyển Engine sang OpenAI/Ollama hoặc chọn chất lượng Cinematic.",
     "translate_errors": "{{errorCount}}/{{totalCount}} phân đoạn không thành công: {{firstError}}",
     "translated_segments": "Đã dịch _V_0__ phân đoạn → {{lang}}",
     "translated_cinematic_suffix": "(Điện ảnh)",
@@ -1597,5 +1684,90 @@
     "none": "Không tìm thấy bản phát hành nào",
     "load_error": "Không thể tải bản phát hành (ngoại tuyến?)",
     "retry_load": "Thử lại"
+  },
+  "firstrun": {
+    "loading": "Đang chuẩn bị thiết lập…",
+    "title": "Thiết lập OmniVoice Studio",
+    "subtitle": "Chưa có gì được cài đặt — hãy xem lại nơi lưu mọi thứ rồi bắt đầu. Có thể thay đổi sau trong Cài đặt.",
+    "language": "Ngôn ngữ",
+    "mode_title": "Chế độ cài đặt",
+    "mode_installed": "Cài đặt",
+    "mode_installed_desc": "Dùng các thư mục hệ thống tiêu chuẩn. Khuyến nghị cho đa số người dùng.",
+    "mode_portable": "Di động",
+    "mode_portable_desc": "Mọi thứ nằm trong một thư mục cạnh ứng dụng — di chuyển nguyên khối sang ổ đĩa hoặc máy khác.",
+    "mode_portable_unavailable": "Không khả dụng: thư mục cạnh ứng dụng không ghi được.",
+    "storage_title": "Lưu trữ",
+    "portable_folder": "Thư mục di động",
+    "portable_folder_desc": "Môi trường, mô hình và dữ liệu giọng nói của bạn — một thư mục, di chuyển trọn vẹn.",
+    "env_dir": "Môi trường ứng dụng",
+    "env_dir_desc": "Python runtime và các thư viện AI.",
+    "data_dir": "Dữ liệu giọng nói & dự án",
+    "data_dir_desc": "Giọng nói, lồng tiếng, tệp xuất và cơ sở dữ liệu dự án của bạn.",
+    "models_dir": "Bộ nhớ đệm mô hình",
+    "models_dir_desc": "Các mô hình AI đã tải — phần lớn nhất và dễ di dời nhất.",
+    "needs": "cần ~{{size}}",
+    "free": "còn trống {{size}}",
+    "checking": "đang kiểm tra…",
+    "not_writable": "không ghi được",
+    "change": "Thay đổi…",
+    "compute_title": "Tính toán",
+    "compute_label": "GPU / bộ tăng tốc",
+    "compute_auto": "Tự động (NVIDIA CUDA / Apple MPS / CPU)",
+    "compute_rocm": "GPU AMD (ROCm, Linux)",
+    "channel_label": "Kênh cập nhật",
+    "channel_stable": "Ổn định",
+    "channel_preview": "Xem trước (main mới nhất)",
+    "network_title": "Mạng",
+    "region_label": "Khu vực tải xuống",
+    "mirrors_title": "Mirror tùy chỉnh (nâng cao)",
+    "mirror_pypi": "URL chỉ mục PyPI",
+    "mirror_hf": "Endpoint Hugging Face",
+    "mirror_python": "Mirror tải Python",
+    "insufficient_space": "Không đủ dung lượng: bố cục này cần ~{{need}} trên cùng một ổ đĩa, chỉ còn {{free}}. Hãy chọn vị trí khác.",
+    "blocked_not_writable": "Một thư mục đã chọn không ghi được — hãy chọn vị trí khác.",
+    "total_required": "Tổng dung lượng cần: ~{{size}} (tải một lần khi dùng lần đầu)",
+    "start": "Bắt đầu cài đặt",
+    "starting": "Đang khởi động…",
+    "compute_detected": "Đã phát hiện",
+    "compute_match": "khớp với máy này",
+    "compute_auto_desc": "Chọn backend tốt nhất của máy này khi chạy — CUDA trên NVIDIA, MPS trên Apple Silicon, còn lại dùng CPU.",
+    "compute_rocm_desc": "Cài wheel PyTorch ROCm cho card đồ họa AMD trên Linux. Nếu không chắc, hãy để Tự động.",
+    "channel_stable_desc": "Chỉ các bản phát hành đã kiểm thử — cập nhật đến sau khi cộng đồng xác nhận.",
+    "channel_preview_desc": "Bản dựng liên tục từ main mới nhất — engine và bản sửa mới nhất trước tiên, đôi khi còn thô.",
+    "installing_title": "Đang cài đặt",
+    "activity_title": "Hoạt động",
+    "stage_setup": "Thiết lập",
+    "stage_models": "Mô hình & engine",
+    "chip_required": "bắt buộc",
+    "chip_optional": "tùy chọn",
+    "chip_engine": "engine",
+    "lib_download": "Tải xuống",
+    "lib_downloading": "đang tải…",
+    "lib_use": "Dùng",
+    "lib_active": "đang dùng",
+    "lib_in_settings": "cài sau trong Cài đặt",
+    "lib_show_all": "Hiện {{count}} mô hình tùy chọn",
+    "trust_line": "Mọi thứ chạy và lưu trên máy này — không tài khoản, không đám mây, không telemetry.",
+    "resume_note": "Tải xuống bị gián đoạn sẽ tự tiếp tục — đóng ứng dụng vẫn an toàn.",
+    "eta_left": "còn ~{{eta}}",
+    "first_sound_text": "Chào mừng đến với studio của bạn. Mỗi từ bạn đang nghe vừa được tạo trên chính máy này.",
+    "first_sound_done": "Giọng nói đó? Vừa được tạo vài giây trước, ngay trên máy. Chào mừng.",
+    "hf_token_title": "Token Hugging Face (tùy chọn)",
+    "hf_token_hint": "Mở khóa các mô hình bị giới hạn — ví dụ tách người nói cho lồng tiếng nhiều giọng (pyannote). Token tài khoản miễn phí; chỉ lưu trên máy này.",
+    "hf_token_save": "Lưu",
+    "hf_token_saving": "đang lưu…",
+    "hf_token_saved": "Đã lưu token Hugging Face",
+    "hf_token_error": "Không thể lưu token — thử lại hoặc đặt sau trong Cài đặt → Thông tin xác thực."
+  },
+  "history": {
+    "dub_title": "Lịch sử lồng tiếng",
+    "empty": "Chưa có gì ở đây — các bản tạo của bạn sẽ xuất hiện ở bên phải.",
+    "empty_dub": "Các bản lồng tiếng của bạn sẽ xuất hiện tại đây.",
+    "title": "Lịch sử"
+  },
+  "recording": {
+    "cleaned_loaded": "Đã làm sạch và tải bản ghi âm!",
+    "loaded_raw": "Đã tải bản ghi âm (thô — không có khử nhiễu)",
+    "too_short": "Bản ghi âm quá ngắn"
   }
 }

@@ -8,12 +8,13 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Search, Download, Play, Pause, Trash2, X, Loader, Star,
-  Wand2, UserPlus, Sparkles, RotateCcw, Grid, List, Upload, Scissors, Store, Send,
+  Wand2, UserPlus, Sparkles, RotateCcw, Grid, List, Upload, Scissors, Store, Send, Package,
 } from 'lucide-react';
 import { Button, Input } from '../ui';
 import { useArchetypeCategories, useArchetypes, useGalleryVoices, useCommunityItems } from '../api/hooks';
 import { archetypePreviewUrl, useArchetypeAsProfile } from '../api/archetypes';
 import { addCommunityItem, communitySubmitUrl } from '../api/community';
+import { importPersona } from '../api/profiles';
 import { openExternal } from '../api/external';
 import {
   searchYoutube, downloadYoutubeClip, deleteGalleryVoice,
@@ -23,6 +24,7 @@ import AudioTrimmer from '../components/AudioTrimmer';
 import { useAppStore } from '../store';
 import { apiUrl } from '../api/client';
 import { isTauri } from '../utils/media';
+import { claimPlayback, stopActivePlayback } from '../utils/playback';
 import { askConfirm } from '../utils/dialog';
 import { ArchetypeAvatar, ArchetypeIcon, AccentFlag, NowPlaying, USE_CASE_COLOR } from '../utils/archetypeIcons';
 import './VoiceGallery.css';
@@ -65,6 +67,8 @@ export default function VoiceGallery() {
   const viewMode = useAppStore((s) => s.galleryViewMode);
   const setViewMode = useAppStore((s) => s.setGalleryViewMode);
   const setMode = useAppStore((s) => s.setMode);
+  const setDefineMethod = useAppStore((s) => s.setDefineMethod);
+  const setPendingProfileId = useAppStore((s) => s.setPendingProfileId);
   const setInstruct = useAppStore((s) => s.setInstruct);
   const setVdStates = useAppStore((s) => s.setVdStates);
   const vdStates = useAppStore((s) => s.vdStates);
@@ -81,12 +85,16 @@ export default function VoiceGallery() {
     noticeTimer.current = window.setTimeout(() => setNotice(null), 3500);
   };
 
+  const releaseRef = useRef(null);
+
   const stopPlayback = () => {
     if (audioRef.current) {
       try { audioRef.current.pause(); } catch { /* noop */ }
       audioRef.current = null;
     }
     setPlayingId(null);
+    releaseRef.current?.();
+    releaseRef.current = null;
   };
 
   useEffect(() => () => stopPlayback(), []);
@@ -95,6 +103,9 @@ export default function VoiceGallery() {
   const playUrl = async (fullUrl, id) => {
     if (playingId === id) { stopPlayback(); return; }
     stopPlayback();
+    // Also stop any playback owned by other components (#316) so the new
+    // preview never overlaps a Design-tab preview or a synthesized output.
+    stopActivePlayback();
     setLoadingPreviewId(id);
     try {
       // no-store: preview audio is re-rendered server-side when an archetype is
@@ -111,16 +122,34 @@ export default function VoiceGallery() {
         const src = ctx.createBufferSource();
         src.buffer = decoded;
         src.connect(ctx.destination);
-        src.onended = () => setPlayingId((cur) => (cur === id ? null : cur));
+        src.onended = () => {
+          setPlayingId((cur) => (cur === id ? null : cur));
+          releaseRef.current?.();
+          releaseRef.current = null;
+        };
         src.start();
         audioRef.current = { pause: () => { try { src.stop(); } catch { /* noop */ } ctx.close(); } };
       } else {
         const url = URL.createObjectURL(blob);
         const el = new Audio(url);
-        el.onended = () => { setPlayingId((cur) => (cur === id ? null : cur)); URL.revokeObjectURL(url); };
+        el.onended = () => {
+          setPlayingId((cur) => (cur === id ? null : cur));
+          URL.revokeObjectURL(url);
+          releaseRef.current?.();
+          releaseRef.current = null;
+        };
         await el.play();
         audioRef.current = el;
       }
+      // Register with the global single-playback manager (#316) so any other
+      // component starting audio stops this preview first.
+      releaseRef.current = claimPlayback(() => {
+        if (audioRef.current) {
+          try { audioRef.current.pause(); } catch { /* noop */ }
+          audioRef.current = null;
+        }
+        setPlayingId(null);
+      }, 'gallery-preview');
     } catch (e) {
       stopPlayback();
       flash(t('gallery.preview_failed', { defaultValue: 'Preview unavailable — the voice engine may still be loading.' }));
@@ -171,7 +200,11 @@ export default function VoiceGallery() {
           onUse={async (a) => {
             try {
               const r = await useArchetypeAsProfile(a.id, a.name);
-              flash(t('gallery.saved_as_profile', { defaultValue: 'Added "{{name}}" to your voices.', name: r.name }));
+              // Hand the new profile to the synthesis view and jump there so the
+              // user lands ready-to-generate instead of hunting for it in the list.
+              setPendingProfileId(r.profile_id);
+              setMode('studio');
+              setDefineMethod('audio');
             } catch (e) {
               flash(t('gallery.use_failed', { defaultValue: 'Could not create that voice — the engine may be loading.' }));
             }
@@ -179,7 +212,8 @@ export default function VoiceGallery() {
           onDesign={(a) => {
             setVdStates({ ...vdStates, ...a.attrs });
             setInstruct('');
-            setMode('design');
+            setMode('studio');
+            setDefineMethod('design');
           }}
         />
       ) : zone === 'community' ? (
@@ -191,7 +225,7 @@ export default function VoiceGallery() {
           toggleFavorite={toggleFavorite}
           onPlayAudio={(url, id) => playUrl(url, id)}
           flash={flash}
-          onDesign={(instruct) => { setVdStates({ ...vdStates }); setInstruct(instruct); setMode('design'); }}
+          onDesign={(instruct) => { setVdStates({ ...vdStates }); setInstruct(instruct); setMode('studio'); setDefineMethod('design'); }}
         />
       ) : (
         <ImportsZone
@@ -258,7 +292,9 @@ function ArchetypesZone({
   return (
     <div className="gallery-content gallery-scroll">
       <div className="facet-bar">
-        <div className="use-case-chips">
+        {/* Three filter lanes (categories · facets · toggles), each its own
+            horizontally-scrollable portion; the view toggle is pinned right. */}
+        <div className="facet-group facet-group--cats use-case-chips">
           <button className={`category-chip ${!filters.use_case ? 'selected' : ''}`} onClick={() => setFilter('use_case', null)}>
             {t('gallery.all', { defaultValue: 'All' })}
           </button>
@@ -275,7 +311,7 @@ function ArchetypesZone({
           ))}
         </div>
 
-        <div className="facet-selects">
+        <div className="facet-group facet-group--facets facet-selects">
           {['gender', 'age', 'pitch', 'accent', 'lang'].map((dim) => (
             <select
               key={dim}
@@ -287,6 +323,9 @@ function ArchetypesZone({
               {FACETS[dim].map((opt) => <option key={opt} value={opt}>{facetLabel(opt)}</option>)}
             </select>
           ))}
+        </div>
+
+        <div className="facet-group facet-group--toggles">
           <label className="facet-toggle">
             <input
               type="checkbox"
@@ -302,10 +341,11 @@ function ArchetypesZone({
           <button className="facet-reset" onClick={() => { resetFilters(); setFavOnly(false); }}>
             <RotateCcw size={12} /> {t('gallery.reset', { defaultValue: 'Reset' })}
           </button>
-          <div className="view-toggle">
-            <button className={viewMode === 'grid' ? 'active' : ''} onClick={() => setViewMode('grid')} title="Grid"><Grid size={14} /></button>
-            <button className={viewMode === 'list' ? 'active' : ''} onClick={() => setViewMode('list')} title="List"><List size={14} /></button>
-          </div>
+        </div>
+
+        <div className="view-toggle">
+          <button className={viewMode === 'grid' ? 'active' : ''} onClick={() => setViewMode('grid')} title="Grid"><Grid size={14} /></button>
+          <button className={viewMode === 'list' ? 'active' : ''} onClick={() => setViewMode('list')} title="List"><List size={14} /></button>
         </div>
       </div>
 
@@ -487,10 +527,38 @@ function ImportsZone({ t, playingId, loadingPreviewId, onPlayGallery, flash }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [trimming, setTrimming] = useState(null); // { voice, file }
   const fileRef = useRef(null);
+  const personaRef = useRef(null);
+  const [importingPersona, setImportingPersona] = useState(false);
 
   const voicesQ = useGalleryVoices();
   const voices = voicesQ.data || [];
   const reload = () => voicesQ.refetch();
+
+  // Import a portable .ovsvoice (or legacy .omnivoice) persona bundle (#29).
+  const handlePersonaImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportingPersona(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await importPersona(fd);
+      reload();
+      flash(t('gallery.persona_imported', {
+        defaultValue: 'Imported "{{name}}"{{unverified}}.', name: res.name,
+        unverified: res.verified_own_voice ? '' : t('gallery.persona_unverified_suffix', { defaultValue: ' (unverified)' }),
+      }));
+    } catch (err) {
+      const code = String(err?.message || err);
+      const msg = code.includes('413')
+        ? t('gallery.persona_too_large', { defaultValue: 'That bundle is too large (max 100 MB).' })
+        : t('gallery.persona_import_failed', { defaultValue: 'Could not import that persona bundle.' });
+      flash(msg);
+    } finally {
+      setImportingPersona(false);
+      if (personaRef.current) personaRef.current.value = '';
+    }
+  };
 
   const isUrl = /^https?:\/\//i.test(query.trim());
 
@@ -624,6 +692,12 @@ function ImportsZone({ t, playingId, loadingPreviewId, onPlayGallery, flash }) {
           <input ref={fileRef} type="file" accept="audio/*,video/*" hidden onChange={handleUpload} />
           <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()} title={t('gallery.upload', { defaultValue: 'Upload file' })}>
             <Upload size={14} />
+          </Button>
+          <input ref={personaRef} type="file" accept=".ovsvoice,.omnivoice" hidden onChange={handlePersonaImport} />
+          <Button variant="ghost" size="sm" disabled={importingPersona}
+            onClick={() => personaRef.current?.click()}
+            title={t('gallery.import_persona', { defaultValue: 'Import a .ovsvoice persona bundle' })}>
+            {importingPersona ? <Loader size={14} className="spin" /> : <Package size={14} />}
           </Button>
         </div>
       </div>

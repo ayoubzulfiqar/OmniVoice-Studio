@@ -13,8 +13,8 @@ import './DubSegmentRow.css';
 const CHAR_BUDGET_RATIO = 1.3;
 const SENTENCE_END = /[.!?。！？]/;
 
-function rowClass(isActive, isDone, selected, isPlaying) {
-  return `segment-row${isActive ? ' segment-active' : ''}${isDone ? ' segment-done' : ''}${selected ? ' segment-selected' : ''}${isPlaying ? ' segment-playing' : ''}`;
+function rowClass(isActive, isDone, selected, isPlaying, timelineSelected) {
+  return `segment-row${isActive ? ' segment-active' : ''}${isDone ? ' segment-done' : ''}${selected ? ' segment-selected' : ''}${isPlaying ? ' segment-playing' : ''}${timelineSelected ? ' segment-timeline-selected' : ''}`;
 }
 
 // Best split point for the Scissors menu when the user hasn't placed a cursor —
@@ -49,7 +49,7 @@ function parseTime(s) {
 function DubSegmentRow({
   seg, idx, style, disabled, isActive, isDone, isPlaying, previewLoading, selected,
   profiles, speakerClones, onEditField, onDelete, onRestore, onPreview, onSelect, onSplit, onMerge, canMerge,
-  onDirect, onSeek,
+  onDirect, onSeek, timelineSelected,
 }) {
   const { t } = useTranslation();
   const textInputRef = useRef(null);
@@ -133,7 +133,7 @@ function DubSegmentRow({
   };
 
   return (
-    <div style={style} className={rowClass(isActive, isDone, selected, isPlaying)} onClick={handleRowClick}>
+    <div style={style} className={rowClass(isActive, isDone, selected, isPlaying, timelineSelected)} onClick={handleRowClick}>
       <input
         type="checkbox"
         checked={!!selected}
@@ -186,6 +186,17 @@ function DubSegmentRow({
             title={fitBadge.title}
           >
             <fitBadge.Icon size={8} /> {fitBadge.label}
+          </span>
+        )}
+        {seg.qc_flagged && (
+          // Wave 3.3: second-pass ASR heard something different from the
+          // target text for this line — worth a re-listen / re-dub.
+          <span
+            className="seg-sync-badge"
+            style={{ color: '#fb4934' }}
+            title={t('segment.qc_verify_title', { heard: seg.qc_recognized || '' })}
+          >
+            <AlertCircle size={8} /> {t('segment.qc_verify')}
           </span>
         )}
         {seg.rate_ratio != null && Math.abs(seg.rate_ratio - 1.0) > 0.03 && (
@@ -388,6 +399,7 @@ export default memo(DubSegmentRow, (prev, next) => (
   prev.isActive === next.isActive &&
   prev.isDone === next.isDone &&
   prev.isPlaying === next.isPlaying &&
+  prev.timelineSelected === next.timelineSelected &&
   prev.previewLoading === next.previewLoading &&
   prev.onDirect === next.onDirect &&
   prev.onSeek === next.onSeek &&

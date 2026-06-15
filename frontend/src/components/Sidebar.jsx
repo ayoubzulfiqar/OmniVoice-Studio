@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   FolderOpen, History, DownloadCloud, Film, Save, ChevronDown, ChevronUp,
   Fingerprint, Wand2, Lock, Unlock, Trash2, Check, Clock, Play, Loader,
@@ -9,6 +9,7 @@ import { API } from '../api/client';
 import { clearDubHistory } from '../api/dub';
 import { clearHistory as clearGenHistory } from '../api/generate';
 import { Button } from '../ui';
+import WaveformPlayer from './WaveformPlayer';
 import { useAppStore } from '../store';
 import { useTranslation } from 'react-i18next';
 import './Sidebar.css';
@@ -19,6 +20,30 @@ const SIDEBAR_TABS = [
   { id: 'history',   icon: History,      accent: '#d3869b' },
   { id: 'downloads', icon: DownloadCloud, accent: '#8ec07c' },
 ];
+
+/**
+ * Mounts the WaveSurfer-backed player only once its row scrolls into view.
+ * The history list can hold ~50 items; eagerly mounting a WaveformPlayer per
+ * row would spin up that many WaveSurfer instances, each fetching + decoding
+ * its audio file, in the always-mounted sidebar.
+ */
+function LazyWaveformPlayer({ height = 36, className = '', ...rest }) {
+  const holderRef = useRef(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (visible) return;
+    const el = holderRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') { setVisible(true); return; }
+    const obs = new IntersectionObserver(
+      (entries) => { if (entries.some(e => e.isIntersecting)) setVisible(true); },
+      { rootMargin: '120px' },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [visible]);
+  if (visible) return <WaveformPlayer height={height} className={className} {...rest} />;
+  return <div ref={holderRef} className={className} style={{ height }} aria-hidden="true" />;
+}
 
 function timeAgo(ms) {
   const diff = Date.now() - ms;
@@ -56,6 +81,9 @@ export default function Sidebar(props) {
 
   // Phase 2.2 — read UI + dub state straight from the store.
   const mode               = useAppStore(s => s.mode);
+  // Voice ('studio') workspace's define method — scopes which profiles show
+  // ('audio' = reference clones, 'design' = designed voices).
+  const defineMethod       = useAppStore(s => s.defineMethod);
   const isSidebarCollapsed = useAppStore(s => s.isSidebarCollapsed);
   const dubStep            = useAppStore(s => s.dubStep);
   const activeProjectId    = useAppStore(s => s.activeProjectId);
@@ -90,7 +118,7 @@ export default function Sidebar(props) {
   };
 
   const tabCount = {
-    projects: mode === 'dub' ? studioProjects.length : (mode === 'clone' ? profiles.filter(p => !p.instruct).length : profiles.filter(p => !!p.instruct).length),
+    projects: mode === 'dub' ? studioProjects.length : (defineMethod === 'audio' ? profiles.filter(p => !p.instruct).length : profiles.filter(p => !!p.instruct).length),
     history: history.length + dubHistory.length,
     downloads: exportHistory.length,
   };
@@ -170,7 +198,7 @@ export default function Sidebar(props) {
                 className="sidebar__section-title"
                 onClick={() => setIsSidebarProjectsCollapsed(!isSidebarProjectsCollapsed)}
               >
-                <span>{mode === 'dub' ? t('sidebar.dub_projects') : (mode === 'clone' ? t('sidebar.voice_clones') : t('sidebar.designed_voices'))}</span>
+                <span>{mode === 'dub' ? t('sidebar.dub_projects') : (defineMethod === 'audio' ? t('sidebar.voice_clones') : t('sidebar.designed_voices'))}</span>
                 {isSidebarProjectsCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
               </div>
             )}
@@ -222,18 +250,18 @@ export default function Sidebar(props) {
                   </>
                 )}
 
-                {(mode === 'clone' || mode === 'design') && (
+                {mode === 'studio' && (
                   <>
-                    {filteredProfiles.filter(p => mode === "clone" ? !p.instruct : !!p.instruct).length === 0 ? (
+                    {filteredProfiles.filter(p => defineMethod === 'audio' ? !p.instruct : !!p.instruct).length === 0 ? (
                       <EmptyState
-                        icon={mode === 'clone' ? Fingerprint : Wand2}
-                        title={`${mode === 'clone' ? t('sidebar.no_clones') : t('sidebar.no_designs')}`}
-                        hint={mode === 'clone' ? t('sidebar.no_clones_hint') : t('sidebar.no_designs_hint')}
+                        icon={defineMethod === 'audio' ? Fingerprint : Wand2}
+                        title={`${defineMethod === 'audio' ? t('sidebar.no_clones') : t('sidebar.no_designs')}`}
+                        hint={defineMethod === 'audio' ? t('sidebar.no_clones_hint') : t('sidebar.no_designs_hint')}
                       />
                     ) : (
-                      (mode === 'clone' ? filteredProfiles.filter(p => !p.instruct) : filteredProfiles.filter(p => !!p.instruct)).map(proj => {
-                        const accent = proj.is_locked ? '#b8bb26' : (mode === 'clone' ? '#d3869b' : '#8ec07c');
-                        const KindIcon = proj.is_locked ? Lock : (mode === 'clone' ? Fingerprint : Wand2);
+                      (defineMethod === 'audio' ? filteredProfiles.filter(p => !p.instruct) : filteredProfiles.filter(p => !!p.instruct)).map(proj => {
+                        const accent = proj.is_locked ? '#b8bb26' : (defineMethod === 'audio' ? '#d3869b' : '#8ec07c');
+                        const KindIcon = proj.is_locked ? Lock : (defineMethod === 'audio' ? Fingerprint : Wand2);
                         return (
                           <div key={proj.id}
                             className={`history-item ${selectedProfile === proj.id ? 'project-active' : ''}`}
@@ -242,7 +270,7 @@ export default function Sidebar(props) {
                           >
                             <div className="history-row-head">
                               <span className="history-kind" style={{ color: accent, borderColor: `${accent}40` }}>
-                                <KindIcon size={9} /> {proj.is_locked ? t('sidebar.locked') : (mode === 'clone' ? t('sidebar.clone_label') : t('sidebar.design_label'))}
+                                <KindIcon size={9} /> {proj.is_locked ? t('sidebar.locked') : (defineMethod === 'audio' ? t('sidebar.clone_label') : t('sidebar.design_label'))}
                               </span>
                               {proj.is_locked ? <span className="history-meta history-meta--locked">{t('sidebar.consistent')}</span> : null}
                             </div>
@@ -304,7 +332,7 @@ export default function Sidebar(props) {
               </IconTile>
             ))}
 
-            {isSidebarCollapsed && (mode === 'clone' || mode === 'design') && (mode === 'clone' ? filteredProfiles.filter(p => !p.instruct) : filteredProfiles.filter(p => !!p.instruct)).map(proj => (
+            {isSidebarCollapsed && mode === 'studio' && (defineMethod === 'audio' ? filteredProfiles.filter(p => !p.instruct) : filteredProfiles.filter(p => !!p.instruct)).map(proj => (
               <IconTile
                 key={proj.id}
                 title={`Select: ${proj.name}`}
@@ -312,7 +340,7 @@ export default function Sidebar(props) {
                 active={selectedProfile === proj.id}
                 rotSeed={proj.id}
               >
-                {mode === 'clone' ? <Fingerprint size={18} /> : <Wand2 size={18} />}
+                {defineMethod === 'audio' ? <Fingerprint size={18} /> : <Wand2 size={18} />}
                 {proj.is_locked && <Lock size={8} className="sidebar__icon-tile__lock" />}
               </IconTile>
             ))}
@@ -377,7 +405,13 @@ export default function Sidebar(props) {
                         ? <div className="history-subtitle history-subtitle--seed">seed {item.seed}</div>
                         : null}
                       {item.audio_path ? (
-                        <audio controls src={`${API}/audio/${item.audio_path}`} className="history-audio" />
+                        <LazyWaveformPlayer
+                          src={`${API}/audio/${item.audio_path}`}
+                          source="history"
+                          height={36}
+                          compact
+                          className="history-audio"
+                        />
                       ) : null}
                       {item.audio_path ? (
                         <div className="history-actions">

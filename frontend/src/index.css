@@ -179,17 +179,36 @@ samp,
 
 #root {
   display: flex;
-  justify-content: center;
+  /* Anchor top-left so the full-viewport .app-container renders from the corner. */
+  justify-content: flex-start;
   padding: 0;
   width: 100%;
   min-height: 100vh;
   height: 100vh;
+  overflow: hidden;
 }
 
 /* ═══ LAYOUT ═══ */
 .app-container {
-  width: 100%;
-  max-width: 100vw;
+  /* UI scale (#21 black-band fix — PERMANENT): scale via `zoom`, and the shell
+     ALWAYS occupies the full viewport (`100vw`/`100vh`, NOT `calc(…/scale)`).
+     Why this never black-bands on any engine:
+       • Chromium (macOS/Windows): `zoom` magnifies AND fills — standard browser
+         zoom (the same `style={{zoom:uiScale}}` the bootstrap/wizard wrappers
+         already use here).
+       • WebKitGTK (Linux): `zoom` is a no-op → the UI renders at 1.0× but the
+         shell is still a plain `100vw × 100vh` element → it FILLS the window.
+     The previous approach paired `width: calc(100vw/scale)` with `transform:
+     scale(var(--ui-scale))`; on WebKitGTK the transform wasn't magnifying the
+     shrunk shell, so `calc(100vw/1.3)` (the default scale) left ~⅓ of the
+     window black. Dropping the `/scale` shrink makes a missed magnification
+     degrade to "unscaled but full", never to "shrunk + black band".
+     ⚠️ Do NOT reintroduce `width: calc(100vw / var(--ui-scale))` or
+     `transform: scale(var(--ui-scale))` here — a regression test
+     (src/test/appShellScale.test.js) fails CI if either pattern returns. */
+  width: 100vw;
+  zoom: var(--ui-scale, 1);
+  max-width: none;
   display: grid;
   /* [rail 48px] [sidebar 180–220] [main 1fr] */
   grid-template-columns: 48px minmax(180px, 220px) minmax(0, 4fr);
@@ -199,9 +218,21 @@ samp,
      sidebar + main column always stop exactly at the footer's top edge.
      The footer itself (position:fixed) writes `--logs-footer-height` on
      :root whenever it toggles collapsed/expanded or the user resizes. */
-  height: calc(100% - var(--logs-footer-height, 28px));
+  /* Full window height: the nav rail must run top-to-bottom regardless of the
+     footer's state. Content columns (not the grid) yield to the fixed footer
+     via padding-bottom below, so expanding the logs panel never compresses
+     the side menubar. */
+  height: 100vh;
   overflow: hidden;
   transition: grid-template-columns var(--transition-smooth);
+}
+/* Keep scrollable content clear of the fixed footer. The footer writes its
+   current height (pre-zoom px — same coordinate space as these children) to
+   --logs-footer-height whenever it collapses/expands/resizes. */
+.app-container > .main-content,
+.app-container > .history-panel {
+  padding-bottom: var(--logs-footer-height, 28px);
+  box-sizing: border-box;
 }
 .app-container.sidebar-collapsed {
   grid-template-columns: 48px 46px minmax(0, 4fr);
@@ -229,6 +260,12 @@ samp,
 .app-container.rail-right > .history-panel { grid-column: 1; }
 .app-container.rail-right > .main-content { grid-column: 2; }
 .app-container.rail-right.sidebar-hidden > .main-content { grid-column: 1; }
+/* sidebar-hidden collapses the template to 2 columns — the rail must move to
+   column 2, or it overflows into a phantom column and leaves the reserved
+   48px slot as a dead black gap beside it. */
+.app-container.rail-right.sidebar-hidden > .nav-rail { grid-column: 2; }
+/* …and the same off-by-one under sidebar-collapsed's 3-column template. */
+.app-container.rail-right.sidebar-collapsed > .history-panel { grid-column: 1; }
 .app-container > .nav-rail {
   grid-column: 1;
   grid-row: 2;
@@ -254,21 +291,29 @@ samp,
 .app-container > .main-content > * { position: relative; z-index: 1; }
 .app-container > div { min-width: 0; }
 
-/* ≤1100: auto-collapse sidebar, keep nav + main */
-@media (max-width: 1100px) {
-  .app-container { grid-template-columns: 48px minmax(0, 1fr) !important; }
-  .app-container > .history-panel { display: none !important; }
-  .app-container > .main-content { grid-column: 2 !important; }
-  .app-container.rail-right { grid-template-columns: minmax(0, 1fr) 48px !important; }
-  .app-container.rail-right > .main-content { grid-column: 1 !important; }
-}
+/* Responsive collapse driven by the shell's OWN width (`shell-narrow`/`shell-mini`
+   set in App.jsx from app-container.clientWidth = 100vw/--ui-scale), NOT a
+   viewport @media query. A `@media (max-width)` fires on raw 100vw and so
+   collapses at the wrong threshold whenever --ui-scale ≠ 1 (the layout box is
+   100vw/scale), which crammed the content into a left sliver with a black band.
+   These class rules respond to the actual scaled layout width on every engine. */
 
-/* ≤600: hide nav rail too, full-width main */
-@media (max-width: 600px) {
-  .app-container { grid-template-columns: minmax(0, 1fr) !important; }
-  .app-container > .nav-rail { display: none; }
-  .app-container > .main-content { grid-column: 1 !important; }
-}
+/* ≤1100 effective: auto-collapse the projects/history panel, keep nav + main */
+.app-container.shell-narrow,
+.app-container.shell-mini { grid-template-columns: 48px minmax(0, 1fr) !important; }
+.app-container.shell-narrow > .history-panel,
+.app-container.shell-mini > .history-panel { display: none !important; }
+.app-container.shell-narrow > .main-content,
+.app-container.shell-mini > .main-content { grid-column: 2 !important; }
+.app-container.shell-narrow.rail-right,
+.app-container.shell-mini.rail-right { grid-template-columns: minmax(0, 1fr) 48px !important; }
+.app-container.shell-narrow.rail-right > .main-content,
+.app-container.shell-mini.rail-right > .main-content { grid-column: 1 !important; }
+
+/* ≤600 effective: hide the nav rail too, full-width main */
+.app-container.shell-mini { grid-template-columns: minmax(0, 1fr) !important; }
+.app-container.shell-mini > .nav-rail { display: none; }
+.app-container.shell-mini > .main-content { grid-column: 1 !important; }
 
 /* ═══ PANELS — flat chrome ═══ */
 .glass-panel {
@@ -526,13 +571,12 @@ samp,
 
 /* ≤1080: hide RAM/CPU text, keep VRAM + status + flush */
 @media (max-width: 1080px) {
-  .hq-stats > span:nth-child(1),
-  .hq-stats > span:nth-child(2) { display: none; }
+  .hq-stats > span:not(.hq-stats__status-wrap):not(.hq-stats__sep) { display: none; }
 }
 
 /* ≤960: shrink breadcrumb, hide S/M/L scale picker */
 @media (max-width: 960px) {
-  .hq-view-title { padding: 4px 10px; gap: 5px; }
+  .hq-view-title { gap: 5px; }
   .hq-view-label { font-size: 0.78rem; }
   .hq-scale { display: none; }
 }
@@ -556,7 +600,6 @@ samp,
 @media (max-width: 600px) {
   .header-area { padding-left: 12px; padding-right: 4px; }
   .header-area > div:nth-child(2) { display: none; }
-  .hq-view-title { padding: 3px 8px; }
 }
 
 /* Prevent clusters overlapping: clip content inside grid cells */
@@ -995,6 +1038,20 @@ a:focus:not(:focus-visible),
 input:focus:not(:focus-visible),
 select:focus:not(:focus-visible) { outline: none; box-shadow: none; }
 
+/* 10x P4 (spec §3 a11y gate): one consistent, fully-opaque ring on the
+   studio's 10x controls — shared rule, not per-component restyles. */
+.identity-line:focus-visible,
+.clone-insert-btn:focus-visible,
+.personality-chip:focus-visible,
+.chip:focus-visible,
+.wh__chip:focus-visible,
+.dub-lang-pill:focus-visible,
+.wf-player__btn:focus-visible,
+.studio-action-bar__overrides:focus-visible {
+  outline: 2px solid var(--chrome-accent);
+  outline-offset: 1px;
+}
+
 /* ═══ LAUNCHPAD — chrome frame + restrained motion ═══ */
 .launchpad {
   flex: 1; display: flex; flex-direction: column; overflow-y: auto;
@@ -1431,7 +1488,9 @@ select:focus:not(:focus-visible) { outline: none; box-shadow: none; }
   border-color: var(--chrome-accent-border);
   color: var(--chrome-accent);
 }
-.personality-chip__icon { font-size: 0.9rem; }
+.personality-chip__icon { display: inline-flex; align-items: center; }
+.chip-group .chip .chip-auto,
+.chip-auto { display: inline-flex; align-items: center; gap: 3px; }
 .personality-label {
   font-family: var(--chrome-font-mono);
   font-size: var(--chrome-label-size);
@@ -2248,12 +2307,8 @@ div[role="dialog"].audio-trimmer {
     grid-template-columns: 1fr !important;
     grid-template-rows: auto 1fr !important;
   }
-  .clone-split-grid {
-    grid-template-columns: 1fr !important;
-  }
-  .clone-split-grid .studio-column:first-child {
-    max-height: 45vh;
-  }
+  /* .clone-split-grid is single-column at every width now (spec §1 restack —
+     see CloneDesignTab.css); no narrow-viewport override needed. */
 }
 
 /* ── Grid utilities collapse ── */
@@ -2271,8 +2326,8 @@ div[role="dialog"].audio-trimmer {
   .lp-hero { padding: 24px 20px 16px; }
   .lp-hero h1 { font-size: 1.8rem; }
   .lp-hero p { font-size: 0.85rem; }
-  .lp-actions { padding: 0 20px 16px; gap: 12px; flex-wrap: wrap; }
-  .lp-action-card { min-width: 0; flex: 1 1 200px; padding: 14px 12px; }
+  .lp-actions { padding: 0 20px 16px; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  .lp-action-card { min-width: 0; padding: 14px 12px; }
   .lp-action-card:nth-child(1),
   .lp-action-card:nth-child(2),
   .lp-action-card:nth-child(3) { transform: none; }
@@ -2281,10 +2336,10 @@ div[role="dialog"].audio-trimmer {
 @media (max-width: 640px) {
   .lp-hero h1 { font-size: 1.4rem; }
   .lp-hero p { font-size: 0.78rem; max-width: 100%; }
-  .lp-actions { flex-direction: column; padding: 0 12px 12px; }
+  .lp-actions { grid-template-columns: 1fr; padding: 0 12px 12px; }
   .lp-action-card { min-height: auto; padding: 12px 10px; }
   .lp-action-card h3 { font-size: 0.88rem; }
-  .lp-action-card .card-desc { font-size: 0.68rem; -webkit-line-clamp: 2; }
+  .lp-action-card .card-desc { font-size: 0.68rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
   .lp-action-card .card-icon { width: 28px; height: 28px; }
   .lp-section { padding: 0 12px 16px; }
 }
@@ -2334,9 +2389,18 @@ div[role="dialog"].audio-trimmer {
   .segment-header { padding: 2px 4px; font-size: 0.58rem; }
 }
 
-/* ── Waveform timeline — reduce height on small screens ── */
+/* ── Waveform timeline — reduce height on small screens ──
+   Track geometry shrinks with the container: 3 tracks of 18px so the
+   region row (track 3) stays inside the 60px box. */
 @media (max-width: 800px) {
   .waveform-container { height: 60px !important; }
+  .waveform-track-bg { height: 18px; }
+  .waveform-track-bg:nth-child(2) { top: 18px; }
+  .waveform-track-bg:nth-child(3) { top: 36px; }
+  .waveform-container [data-id^="wavesurfer-region"] {
+    top: 36px !important;
+    height: 18px !important;
+  }
 }
 
 /* ── Tabs — scroll instead of squish on narrow ── */
@@ -2358,7 +2422,7 @@ div[role="dialog"].audio-trimmer {
 
 /* ── Compare modal — stack on narrow ── */
 @media (max-width: 800px) {
-  .compare-grid {
+  .ui-compare__grid {
     grid-template-columns: 1fr !important;
   }
 }
@@ -2384,4 +2448,45 @@ div[role="dialog"].audio-trimmer {
 }
 .capture-pill-host > * {
   pointer-events: auto;
+}
+
+/* ── Icon refinement — thinner, crisper strokes app-wide ──────────────────
+   Lucide ships stroke-width 2 on a 24px grid; rendered at our 11–16px
+   sizes that weight reads heavy and clunky. stroke-width is an SVG
+   presentation attribute (lowest cascade priority), so this single rule
+   re-weights every lucide icon app-wide without touching call sites.
+   geometricPrecision favors smooth anti-aliased curves over the default
+   renderer's stroke snapping, which blurs at small raster sizes.
+   Hand-rolled SVGs (logo mark, batch spinner) don't carry the .lucide
+   class and keep their bespoke weights. */
+svg.lucide {
+  stroke-width: 1.5;
+  shape-rendering: geometricPrecision;
+}
+
+/* ── Native file inputs — themed "Choose file" chip ───────────────────────
+   Every in-app file input is currently hidden behind a themed label, but
+   any visible <input type="file"> (future panels, the LAN/share web view,
+   dev surfaces) must not render the OS-default grey button. Mirrors
+   .ui-btn--subtle (ui/Button.css). */
+input[type="file"] {
+  color: var(--chrome-fg-muted);
+  font-size: var(--text-xs);
+}
+input[type="file"]::file-selector-button {
+  margin-right: 8px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--chrome-fg-muted);
+  background: transparent;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--chrome-radius-pill);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+input[type="file"]::file-selector-button:hover {
+  background: var(--chrome-hover-bg);
+  color: var(--chrome-fg);
+  border-color: var(--chrome-border-strong);
 }

@@ -4,6 +4,25 @@ For headless servers, dedicated GPUs, or "I want one command" deployments.
 The docker image bundles the backend; the UI is served over HTTP and you open
 it in a normal browser.
 
+**Official images:** [`ghcr.io/debpalash/omnivoice-studio`](https://github.com/debpalash/OmniVoice-Studio/pkgs/container/omnivoice-studio)
+and [`palashdeb/omnivoice-studio` on Docker Hub](https://hub.docker.com/r/palashdeb/omnivoice-studio) — same images, same tags.
+
+> **Image ↔ version mapping**
+>
+> | Tag | What you get |
+> |-----|--------------|
+> | `:latest` | **Rolling preview** — latest commit on `main` (always one patch ahead of the last release). This is the preview channel; pin `:stable` for production. |
+> | `:stable` | Most recent versioned release (updated on every `v*` git tag) |
+> | `:0.3.6` | Exact release version |
+> | `:0.3` | Latest patch within the 0.3 minor |
+> | `:main` | Alias of the same rolling `main` build as `:latest` |
+> | `:sha-xxxxxxx` | Specific commit (produced by manual workflow dispatch) |
+>
+> Versioning rule: `main` always carries *last release + 1 patch*, so `:latest`
+> (preview) version-sorts above `:stable` — upgrades flow naturally.
+>
+> **Note on the update-channel toggle:** The update-channel UI (Settings → About → Update channel) is part of the Tauri desktop app's built-in auto-updater. It does **not** apply to the Docker image — the Docker image is the headless web-server build. To update your Docker deployment, pull the new image tag and recreate the container (`docker compose pull && docker compose up -d`).
+
 ## Pull and run (CPU)
 
 ```bash
@@ -15,6 +34,12 @@ docker run -d --name omnivoice \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   ghcr.io/debpalash/omnivoice-studio:latest
 ```
+
+> **Docker Hub mirror:** the same images are published to
+> `palashdeb/omnivoice-studio` on Docker Hub with identical tags — swap the
+> image for `palashdeb/omnivoice-studio:latest` if you prefer Docker Hub.
+> Tag semantics (`:latest` = rolling main preview, `:stable`/`:X.Y.Z` =
+> releases) are the same on both registries.
 
 Open [http://localhost:3900](http://localhost:3900). The first run downloads
 ~2.4 GB of model weights — follow `docker logs -f omnivoice` to watch.
@@ -100,6 +125,21 @@ Two paths are worth persisting across container restarts:
 
 ## Troubleshooting
 
+- **Container reports 0.2.7 but image is tagged 0.3.x:** This was a workflow bug
+  (fixes #249, #251) — the `:latest` tag was not being updated on release tag
+  pushes. Pull the image again after the fix is merged: `docker pull ghcr.io/debpalash/omnivoice-studio:latest`.
+  The running version is now shown in **Settings → About → Version** (read live
+  from the backend), so the web UI no longer displays a dash in Docker.
+- **Checking which version is running:** `docker exec omnivoice python -c "import importlib.metadata; print(importlib.metadata.version('omnivoice'))"`, or hit the `/health` endpoint — it returns `{"status": "ok", "device": ..., "version": "0.3.x"}`.
+- **"Loopback origin required" errors (and a blank version):** the desktop
+  build restricts the `/system/*` and `/api/settings/*` routes to a loopback
+  origin, but Docker's NAT makes every request look non-loopback, so the gate
+  used to 403 the whole admin UI (issue #261). The image now ships with
+  `OMNIVOICE_SERVER_MODE=1`, which relaxes that gate for the headless
+  deployment — exposure is instead governed by your `-p` port mapping (keep the
+  `127.0.0.1:` prefix to stay local) plus the optional share PIN. If you front
+  the container with your own auth proxy on loopback, set `OMNIVOICE_SERVER_MODE=0`
+  to re-enable the strict gate.
 - **Media-preview 404 in LAN mode:** see the [LAN access](#lan-access) section
   above — the `window.location.host` fix shipped in v0.3.
 - **GPU not detected:** verify `docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi` succeeds first.

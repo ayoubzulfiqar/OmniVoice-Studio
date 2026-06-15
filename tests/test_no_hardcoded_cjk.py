@@ -37,7 +37,11 @@ _SKIP_EXT = {
 }
 
 # The translation layer: locale JSON + native language names (LANGUAGES).
-_ALLOWED_PREFIXES = ("frontend/src/i18n/",)
+# Plus design-spec docs under docs/specs/, which legitimately quote functional
+# CJK (test-fixture descriptions, model/engine identifiers like CosyVoice
+# speaker IDs, multilingual sample text) — they are documentation, not shipped
+# UI strings, so they belong on the same footing as the allowlisted docs below.
+_ALLOWED_PREFIXES = ("frontend/src/i18n/", "docs/specs/")
 
 # Functional / data / documentation files where CJK is intentional and required.
 _ALLOWED_FILES = {
@@ -50,6 +54,7 @@ _ALLOWED_FILES = {
     "examples/README.md",                         # multilingual example payloads
     # Text-processing (CJK punctuation inside sentence/clause-splitting regexes)
     "backend/services/segmentation.py",
+    "backend/services/sentence_chunker.py",       # streaming-TTS terminator tables (Patter port, Wave 1.4)
     "backend/services/subtitle_segmenter.py",
     "frontend/src/components/DubSegmentRow.jsx",
     "frontend/src/components/StoriesEditor.jsx",
@@ -59,6 +64,7 @@ _ALLOWED_FILES = {
     "backend/services/tts_backend.py",            # CosyVoice speaker IDs
     "backend/core/personalities.py",              # Chinese-dialect showcase preset
     "backend/core/archetypes.py",                 # Chinese-dialect + JA/KO multilingual preview sample text
+    "backend/core/describe_voice.py",             # pinyin → Chinese-dialect token mapping (model vocabulary, #317)
     "frontend/src/utils/constants.js",            # Chinese-dialect picker names
     "omnivoice/models/omnivoice.py",              # instruct-mode vocabulary
     "omnivoice/utils/duration.py",

@@ -24,6 +24,7 @@
     "engines": "配音引擎",
     "capture": "鍵盤設定",
     "credentials": "金鑰憑證",
+    "updates": "更新",
     "logs": "系統日誌",
     "about": "關於軟體",
     "privacy": "隱私政策",
@@ -73,7 +74,16 @@
     "shortcut_set": "聽寫快捷鍵設定為 {{shortcut}}",
     "shortcut_register_failed": "無法註冊：{{message}}",
     "shortcut_reset": "重設為預設值",
-    "shortcut_reset_failed": "重置失敗：{{message}}"
+    "shortcut_reset_failed": "重置失敗：{{message}}",
+    "cancel": "取消",
+    "hf_token_also_clear": "一併清除",
+    "hf_token_clear_btn": "清除代幣",
+    "hf_token_clear_confirm": "確定要清除 App 來源的 HuggingFace 代幣嗎？",
+    "hf_token_clear_dialog": "清除代幣",
+    "hf_token_input": "HuggingFace 代幣",
+    "hf_token_sources": "HF 代幣來源",
+    "hf_token_test_now": "立即測試",
+    "hf_token_test_now_title": "對每個來源重新執行 whoami"
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -103,7 +113,17 @@
     "region_russia": "俄羅斯（鏡子）",
     "region_restricted": "受限（鏡像）",
     "unknown_error": "未知錯誤",
-    "retrying": "正在重試..."
+    "retrying": "正在重試...",
+    "hint_readme": "安裝包中缺少 README.md。此問題現已自動修復 — 重試應該可以成功。",
+    "hint_python_mirror": "網路無法連線到 Python 下載(github.com 發行版)。請在設定 → 網路中切換地區(中國 / 俄羅斯 / 受限會經由鏡像),或在系統中安裝 Python 3.11+ 讓應用程式直接使用。",
+    "hint_uv_timeout": "下載 uv 時網路逾時。請檢查網路連線,或在設定 → 網路中嘗試其他地區。",
+    "hint_uv_sync": "相依套件安裝失敗。「清理並重試」會刪除快取的 venv 並重新開始。",
+    "hint_build_backend": "Python 建置後端發生錯誤。「清理並重試」會移除損壞的 venv,從頭重新建置。",
+    "hint_ffmpeg": "ffmpeg 下載失敗。這不是致命問題 — 可以重試,或手動安裝 ffmpeg。",
+    "hint_port": "連接埠 3900 已被佔用。請關閉其他 OmniVoice 實例或佔用該連接埠的應用程式。",
+    "hint_silent_crash": "後端在沒有錯誤訊息的情況下當機。「清理並重試」通常能解決 venv 損壞的問題。",
+    "hint_github_blocked": "您的網路可能封鎖了 GitHub。請從 python.org 安裝 Python 3.11+(加入 PATH)後重新啟動,或設定 UV_PYTHON_INSTALL_MIRROR — 參見 docs/install/troubleshooting.md。",
+    "hint_default": "請先嘗試「重試」。若再次失敗,「清理並重試」會從頭重建執行環境。"
   },
   "stories": {
     "title": "故事編輯器",
@@ -220,7 +240,7 @@
     "designed_voices": "設計的聲音",
     "dubbing_projects": "配音項目",
     "empty_hint": "這裡還沒有任何內容——選擇上面的一張卡片。",
-    "demo_callout": "👋 嘗試示範語音 - 點擊「生成」即可聽到它。",
+    "demo_callout": "嘗試示範語音 - 點擊「生成」即可聽到它。",
     "locked": "鎖定",
     "open": "打開",
     "try_it": "嘗試一下",
@@ -274,7 +294,7 @@
     "preset_surprised_woman": "😲 驚訝",
     "preset_elderly_story": "👴長輩",
     "preset_sichuan": "🌶️四川話",
-    "prompt_placeholder": "這個聲音該說什麼？ ✍️",
+    "prompt_placeholder": "這個聲音該說什麼？",
     "design_placeholder": "描述聲音，然後輸入它所說的內容...",
     "speed": "速度",
     "tshift": "t_shift",
@@ -302,7 +322,17 @@
     "opt_high_pitch": "高音",
     "opt_very_high_pitch": "非常高的音調",
     "opt_whisper": "耳語",
-    "style_placeholder": "例如耳語"
+    "style_placeholder": "例如耳語",
+    "stop_playback": "停止播放",
+    "describe_label": "描述你想要的聲音",
+    "describe_placeholder": "例如：a warm elderly British storyteller, slightly raspy",
+    "describe_hint": "你的描述（英文）會自動設定下方的控制項，之後仍可手動微調。",
+    "describe_unmatched": "無法辨識：{{items}}",
+    "describe_no_match": "尚未辨識出聲音特徵——試試 deep、elderly 或 British 等詞。",
+    "define_by_design": "以設計",
+    "define_from_audio": "從音訊",
+    "define_voice": "定義聲音",
+    "save_design_as_profile": "將設計另存為語音設定檔"
   },
   "about": {
     "app": "應用程式",
@@ -337,7 +367,17 @@
     "channel_stable": "穩定版",
     "channel_preview": "預覽版",
     "channel_set": "更新通道已設定為 {{channel}}",
-    "channel_preview_hint": "預覽版追蹤最新的 main 組建——功能較新，但測試較少。若穩定版較新，則回退至穩定版。"
+    "channel_preview_hint": "預覽版追蹤最新的 main 組建——功能較新，但測試較少。若穩定版較新，則回退至穩定版。",
+    "self_check": "執行自我檢查",
+    "self_check_failed": "自我檢查失敗：{{message}}",
+    "self_check_ok": "正常",
+    "self_check_warn": "警告",
+    "self_check_fail": "未通過",
+    "self_check_healthy": "所有檢查均已通過 — 此安裝看起來運作正常。",
+    "self_check_attention": "{{count}} 項檢查未通過 — 請參閱上方提示。",
+    "save_bundle": "儲存診斷套件",
+    "bundle_saved": "診斷套件已儲存：{{filename}}",
+    "bundle_failed": "無法建立診斷套件：{{message}}"
   },
   "privacy": {
     "desc": "一切都在<1>這台機器</1>上運作。除非您明確使用線上翻譯器（Google、DeepL 等）或推送到 HuggingFace，否則您的音訊、視訊和文字記錄永遠不會離開您的電腦。",
@@ -436,9 +476,12 @@
     "mic_denied": "麥克風存取被拒絕",
     "mic_denied_toast": "麥克風存取被拒絕。 {{hint}}",
     "mic_hint_mac": "macOS：開啟系統設定 → 隱私和安全 → 麥克風並啟用 OmniVoice。",
-    "mic_hint_windows": "Windows：開啟設定 → 隱私和安全性 → 麥克風並允許 OmniVoice。",
+    "mic_hint_windows": "Windows：開啟 設定 → 隱私權與安全性 → 麥克風，開啟「麥克風存取權」和「允許桌面應用程式存取您的麥克風」，然後允許 OmniVoice。",
     "mic_hint_linux": "Linux：檢查您的使用者是否在音訊群組中且 WebView 是否具有麥克風存取權限。",
-    "transcription_failed": "轉錄失敗：{{message}}"
+    "transcription_failed": "轉錄失敗：{{message}}",
+    "mic_not_found": "找不到麥克風。請連接或啟用麥克風後再試一次。",
+    "mic_in_use": "麥克風使用中或無法使用。請關閉可能正在使用它的其他應用程式後再試一次。",
+    "mic_error_generic": "無法啟動麥克風：{{message}}"
   },
   "logs": {
     "no_tauri_log": "磁碟上尚未有 Tauri 登入 — 透過桌面建置啟動以產生一個",
@@ -564,7 +607,7 @@
     "prep_extract": "正在提取音訊...",
     "prep_demucs": "分離人聲/音樂（Demucs）...",
     "prep_scene": "偵測場景切換...",
-    "prep_cached": "⚡ 使用快取結果...",
+    "prep_cached": "使用快取結果...",
     "prep_preparing": "正在準備…",
     "prep_chip_download": "下載",
     "prep_chip_extract": "萃取物",
@@ -629,6 +672,8 @@
     "dual_subs_title": "匯出字幕，翻譯文字位於頂部，原始斜體位於下方。",
     "burn_subs": "燒錄字幕",
     "burn_subs_title": "將字幕直接渲染到 MP4 視訊串流中（硬字幕）。當雙字幕開啟時使用雙字幕格式。",
+    "timing_smart_fit": "智慧適配",
+    "timing_smart_fit_title": "兩邊各退一步：音訊稍微加速（保持音高，最高 1.5×），該片段的影片稍微放慢（最高 2×），讓自然語速的配音剛好放得下。超出上限的部分會被裁剪並標記。匯出時會重新編碼影片。",
     "default_track": "預設曲目：",
     "original_track": "原創",
     "selected_dub": "{{code}}（精選配音）",
@@ -654,7 +699,20 @@
     "diagnostic_copied": "診斷複製",
     "copy_failed": "複製失敗",
     "open_docs": "開啟文件",
-    "copy_diagnostic": "複製診斷"
+    "copy_diagnostic": "複製診斷",
+    "dialect_label": "方言",
+    "dialect_default": "預設",
+    "dialect_title": "翻譯所用的地區方言與詞彙（例如 阿根廷 → “vos sos” 而非 “tú eres”）。由 LLM 引擎（OpenAI/Ollama）與 Cinematic 品質套用。",
+    "num_speakers_label": "說話者",
+    "num_speakers_auto": "自動",
+    "num_speakers_help": "這段影片中有幾位說話者？留空則自動偵測。若自動偵測將多位說話者合併為一人，請手動指定人數。",
+    "advanced": "進階",
+    "cinematic_needs_llm_hint": "電影品質需要 LLM。請在 設定 → 金鑰憑證 → LLM 端點 中設定（Ollama 可在本機執行，無需金鑰）。",
+    "generate_dub_multi": "生成 {{count}} 個配音",
+    "pipeline": "配音流程",
+    "preview_language": "預覽語言",
+    "target_language": "配音成",
+    "transcript_after_extract": "擷取完成後將顯示逐字稿。"
   },
   "glossary": {
     "title": "詞彙表",
@@ -740,6 +798,20 @@
     "fit_compressed_title": "TTS 音訊佔插槽的 {{pct}}% — 被嚴重壓縮。",
     "fit_audio_title": "音訊適合插槽內。",
     "fit_ratio_title": "TTS 音訊佔插槽的 {{pct}}%。"
+  },
+  "timeline": {
+    "track_label": "片段時間軸",
+    "keyboard_hint": "方向鍵選擇片段 · Enter 切換編輯模式 · Delete 刪除 · S 吸附到最近的語音起點",
+    "segment_aria": "片段 {{index}}：{{start}} 至 {{end}}",
+    "overlap_warning": "與相鄰片段重疊 — 兩句台詞將同時播放",
+    "moved_announce": "片段 {{index}} 已移動到 {{start}}",
+    "resized_announce": "片段 {{index}}：{{start}} 至 {{end}}",
+    "deleted_announce": "片段 {{index}} 已刪除",
+    "snapped_announce": "邊緣已吸附到 {{time}} 處的語音起點",
+    "edit_mode_on": "編輯模式：方向鍵微調起點，Shift 調整終點，Alt 移動整個片段，Esc 結束",
+    "edit_mode_off": "已離開編輯模式",
+    "play_slot": "播放此區間",
+    "preview_dub": "在此預聽配音"
   },
   "voice": {
     "personality": "個性",
@@ -903,7 +975,15 @@
     "save_failed": "無法儲存個人資料。",
     "confirm_delete": "刪除“{{name}}”？",
     "trim_load_failed": "無法載入音訊進行修剪。",
-    "delete": "刪除"
+    "delete": "刪除",
+    "community_empty": "尚未載入任何社群語音 — 請連上網路後重新開啟，或成為第一個投稿的人。",
+    "community_explainer": "由社群分享的設計預設與錄製語音，從 omnivoice-gallery 載入。",
+    "no_designer": "錄製的語音 — 請改用「使用語音」。",
+    "no_preview": "沒有預覽 — 透過「使用語音」加入後即可試聽。",
+    "submit_failed": "無法開啟投稿表單。",
+    "submit_preset": "投稿預設",
+    "submit_voice": "投稿語音",
+    "zone_community": "社群"
   },
   "transcriptions": {
     "title": "轉錄",
@@ -956,7 +1036,9 @@
     "open": "打開",
     "install_required_models": "安裝上面所需的模型以繼續。",
     "try_dictation": "試著聽寫",
-    "next_try_dictation": "下一步：嘗試聽寫"
+    "next_try_dictation": "下一步：嘗試聽寫",
+    "step_aria": "第 {{num}} 步:{{label}}",
+    "step_completed": "已完成"
   },
   "donate": {
     "title": "支援",
@@ -977,7 +1059,7 @@
     "back": "返回工作室",
     "badge": "商業許可",
     "hero_title": "在生產中傳送人工智慧聲音",
-    "hero_desc": "OmniVoice Studio 可根據功能來源許可證 (FSL) 取得原始碼。大多數用戶可以在沒有商業協議的情況下進行評估、原型設計甚至內部部署。只有當您正在建立競爭產品或服務，或您的用例超出 FSL 範圍時，您才需要商業許可證。",
+    "hero_desc": "OmniVoice Studio 是基於 GNU Affero 通用公眾授權條款第 3 版（AGPL-3.0）的自由開源軟體——可免費使用，包括商業用途與企業內部用途。只有當您想在不承擔 AGPL-3.0 著佐權（copyleft）義務的情況下，將 OmniVoice Studio 嵌入閉源或專有產品/服務時，才需要商業授權。",
     "why_title": "為什麼企業選擇 OmniVoice",
     "pricing_title": "定價",
     "faq_title": "常見問題",
@@ -998,7 +1080,7 @@
     "benefit_source_desc": "對堆疊的完全可見性。在許可條款範圍內進行審核、分叉和調整。",
     "benefit_lang": "646 種語言",
     "benefit_lang_desc": "以人類層次的品質轉錄、翻譯和配音 646 種語言。",
-    "hero_note": "根據 FSL，內部使用（即使是大規模使用）也是免費的；僅需要商業許可證才能將 OmniVoice 作為競爭產品或服務（託管或按使用付費的 API、轉售或白標應用程式）提供給其他人。定價等級即將推出 - 請同時聯絡我們。"
+    "hero_note": "使用、自行架設與商業用途在 AGPL-3.0 下皆免費——包括大規模使用。AGPL 是網路著佐權授權條款：如果您修改 OmniVoice 並透過網路向他人提供該修改版本，就必須以相同條款公開您修改後的原始碼。商業授權可為專有閉源部署免除這些著佐權義務。定價方案即將推出——在此期間歡迎與我們聯繫。"
   },
   "exportModal": {
     "export": "出口",
@@ -1047,6 +1129,7 @@
     "current_target": "目前目標 ({{code}})",
     "all_selected_dubs": "所有選定的配音 ({{count}})",
     "subs_note": "字幕原樣從片段文字產生 - 如果您發現拼字錯誤，請在匯出之前編輯片段表。",
+    "retime_note": "按片段重新調整影片時長需要在匯出時對整部影片重新編碼——在 CPU 上大約需要影片長度的 0.5–2 倍。",
     "pkg_clips_title": "每段剪輯 (.zip)",
     "pkg_clips_body": "每個產生的片段都是 zip 內編號的 WAV — 適合審閱、配音貼文或資料集建構。",
     "pkg_clips_cta": "匯出剪輯 zip",
@@ -1097,7 +1180,8 @@
     "script_french": "非英語（法語）",
     "aria_pause": "暫停{{label}}",
     "aria_hear": "聽到{{label}}",
-    "aria_replay": "透過轉錄器重播 {{label}}"
+    "aria_replay": "透過轉錄器重播 {{label}}",
+    "dictation_lede_hotkey_only": "在桌面任意位置按住上方快速鍵說話，放開後文字會輸入到目前聚焦的應用程式。現在按一下即可驗證是否生效。"
   },
   "direction": {
     "title": "段 #{{id}} 的方向",
@@ -1122,7 +1206,10 @@
     "title": "這個選項卡遇到了障礙。",
     "desc": "別擔心——應用程式的其餘部分仍然有效。您可以切換選項卡，或在下面重試。",
     "tryAgain": "再試一次",
-    "openDocs": "開啟此錯誤的文檔"
+    "openDocs": "開啟此錯誤的文檔",
+    "report": "回報此錯誤",
+    "searchIssues": "搜尋類似問題",
+    "unexpected": "未預期的錯誤：{{message}}"
   },
   "keyboard": {
     "title": "鍵盤快速鍵",
@@ -1278,7 +1365,8 @@
     "dub_label": "配音",
     "save_label": "儲存",
     "lock_identity": "鎖定語音身份",
-    "in_folder": "在 {{folder}} 中"
+    "in_folder": "在 {{folder}} 中",
+    "search": "搜尋…"
   },
   "trimmer": {
     "title": "修剪參考音訊",
@@ -1411,13 +1499,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "我需要內部工具的授權嗎？",
-    "a_internal_tools": "您的員工和承包商的內部使用是 FSL 允許的目的 — 無需許可。當您將 OmniVoice 作為競爭產品或服務（轉售、託管 SaaS、白標）的一部分提供給其他人時，需要商業許可證。",
+    "a_internal_tools": "不需要。您的員工與承包商的使用——包括內部修改與自行架設——在 AGPL-3.0 下是免費的。只有當您將 OmniVoice 嵌入閉源或專有產品/服務，且不願遵守 AGPL 的原始碼公開義務時，才需要商業授權。",
     "q_try_before": "我可以在提交之前嘗試一下嗎？",
-    "a_try_before": "是的。完整的應用程式可免費下載並在本地運行，以便在 FSL 下進行評估。當您準備好討論商業部署時，請給我們發送電子郵件，我們將共同解決細節問題。",
+    "a_try_before": "可以。完整應用程式可在 AGPL-3.0 下免費下載、執行與自行架設——無需任何協議。當您準備討論商業（專有用途）授權時，請寄信給我們，我們會一起確認細節。",
     "q_watermark": "水印呢？",
-    "a_watermark": "預設嵌入不可見的 AudioSeal 水印。商業許可持有者可以在「設定」→「隱私權」中停用它。免費/個人使用始終包含浮水印。",
-    "q_apache": "原始碼會變成 Apache 2.0 嗎？",
-    "a_apache": "是的。每個版本都會在其發布兩週年時自動轉換為 Apache 授權 2.0 版。這意味著今天發布的版本是兩年後的 Apache 2.0，我們不需要採取任何行動 - FSL 保證它不可撤銷。"
+    "a_watermark": "預設為所有人嵌入不可見的 AudioSeal 浮水印。商業授權持有者可以在「設定」→「隱私權」中停用它。"
   },
   "gallery_extra": {
     "save_prompt": "輸入此語音設定檔的名稱：",
@@ -1452,6 +1538,7 @@
     "segments_clean": "段已經乾淨",
     "cleanup_failed": "清理失敗：{{message}}",
     "cinematic_no_llm": "电影质量需要 LLM — 设置 TRANSLATE_BASE_URL + TRANSLATE_API_KEY（Ollama 在本地工作）。回落到快速。",
+    "dialect_not_applied": "所選方言需要 LLM 才能套用 — 請將引擎切換為 OpenAI/Ollama，或選擇 Cinematic 品質。",
     "translate_errors": "{{errorCount}}/{{totalCount}} 段失敗：{{firstError}}",
     "translated_segments": "翻譯的 {{count}} 段 → {{lang}}",
     "translated_cinematic_suffix": "（電影）",
@@ -1597,5 +1684,90 @@
     "none": "未找到任何版本",
     "load_error": "無法載入版本（離線？）",
     "retry_load": "重試"
+  },
+  "firstrun": {
+    "loading": "正在準備安裝精靈…",
+    "title": "設定 OmniVoice Studio",
+    "subtitle": "尚未安裝任何內容——先確認各項儲存位置，再開始安裝。之後可在設定中變更。",
+    "language": "語言",
+    "mode_title": "安裝模式",
+    "mode_installed": "標準安裝",
+    "mode_installed_desc": "使用系統標準資料夾。建議大多數使用者採用。",
+    "mode_portable": "可攜模式",
+    "mode_portable_desc": "所有內容都放在應用程式旁的一個資料夾——可整體移動到其他磁碟或電腦。",
+    "mode_portable_unavailable": "無法使用：應用程式旁的資料夾不可寫入。",
+    "storage_title": "儲存",
+    "portable_folder": "可攜資料夾",
+    "portable_folder_desc": "執行環境、模型與您的語音資料——一個資料夾，可整體搬移。",
+    "env_dir": "應用程式環境",
+    "env_dir_desc": "Python 執行環境與 AI 函式庫。",
+    "data_dir": "語音資料與專案",
+    "data_dir_desc": "您的聲音、配音、輸出檔與專案資料庫。",
+    "models_dir": "模型快取",
+    "models_dir_desc": "已下載的 AI 模型——體積最大、最適合放到其他磁碟。",
+    "needs": "約需 {{size}}",
+    "free": "可用 {{size}}",
+    "checking": "檢查中…",
+    "not_writable": "不可寫入",
+    "change": "變更…",
+    "compute_title": "運算",
+    "compute_label": "GPU / 加速器",
+    "compute_auto": "自動（NVIDIA CUDA / Apple MPS / CPU）",
+    "compute_rocm": "AMD 顯示卡（ROCm，Linux）",
+    "channel_label": "更新頻道",
+    "channel_stable": "穩定版",
+    "channel_preview": "預覽版（最新 main）",
+    "network_title": "網路",
+    "region_label": "下載區域",
+    "mirrors_title": "自訂鏡像（進階）",
+    "mirror_pypi": "PyPI 索引網址",
+    "mirror_hf": "Hugging Face 端點",
+    "mirror_python": "Python 下載鏡像",
+    "insufficient_space": "磁碟空間不足：此配置需要同一磁碟約 {{need}}，目前僅剩 {{free}}。請更換位置。",
+    "blocked_not_writable": "所選資料夾不可寫入——請更換位置。",
+    "total_required": "共需磁碟空間：約 {{size}}（首次使用時一次性下載）",
+    "start": "開始安裝",
+    "starting": "正在啟動…",
+    "compute_detected": "已偵測",
+    "compute_match": "與本機相符",
+    "compute_auto_desc": "執行時自動選擇本機最佳後端——NVIDIA 用 CUDA、Apple 晶片用 MPS，否則用 CPU。",
+    "compute_rocm_desc": "為 Linux 上的 AMD 顯示卡安裝 PyTorch ROCm 版本。不確定時請保持「自動」。",
+    "channel_stable_desc": "僅推送經過測試的正式版本——經社群驗證後才更新。",
+    "channel_preview_desc": "來自最新 main 分支的滾動建置——最先獲得新引擎與修復，偶有小問題。",
+    "installing_title": "正在安裝",
+    "activity_title": "活動日誌",
+    "stage_setup": "設定",
+    "stage_models": "模型與引擎",
+    "chip_required": "必需",
+    "chip_optional": "可選",
+    "chip_engine": "引擎",
+    "lib_download": "下載",
+    "lib_downloading": "下載中…",
+    "lib_use": "使用",
+    "lib_active": "目前",
+    "lib_in_settings": "稍後在設定中安裝",
+    "lib_show_all": "顯示 {{count}} 個可選模型",
+    "trust_line": "一切都在這台裝置上執行與保存——無需帳號、無雲端、無遙測。",
+    "resume_note": "下載中斷後會自動續傳——關閉應用程式也沒關係。",
+    "eta_left": "剩餘約 {{eta}}",
+    "first_sound_text": "歡迎來到你的工作室。你聽到的每一個字，都是剛剛在這台裝置上生成的。",
+    "first_sound_done": "剛才的聲音？幾秒前在本機生成。歡迎加入。",
+    "hf_token_title": "Hugging Face 權杖（可選）",
+    "hf_token_hint": "解鎖受限模型——例如多語者配音的語者分離（pyannote）。免費帳號權杖，僅保存在本機。",
+    "hf_token_save": "儲存",
+    "hf_token_saving": "儲存中…",
+    "hf_token_saved": "Hugging Face 權杖已儲存",
+    "hf_token_error": "權杖儲存失敗——請重試，或稍後在設定 → 憑證中設定。"
+  },
+  "history": {
+    "dub_title": "配音歷史",
+    "empty": "這裡還沒有任何內容 — 你的生成結果將顯示在右側。",
+    "empty_dub": "你的配音將顯示在這裡。",
+    "title": "歷史"
+  },
+  "recording": {
+    "cleaned_loaded": "錄音已清理並載入！",
+    "loaded_raw": "錄音已載入（原始 — 無法降噪）",
+    "too_short": "錄音太短"
   }
 }

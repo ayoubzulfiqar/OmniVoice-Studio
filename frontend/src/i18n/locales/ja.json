@@ -24,6 +24,7 @@
     "engines": "エンジン",
     "capture": "キャプチャ",
     "credentials": "資格情報",
+    "updates": "アップデート",
     "logs": "ログ",
     "about": "情報",
     "privacy": "プライバシー",
@@ -73,7 +74,16 @@
     "shortcut_set": "ディクテーションのショートカットが {{shortcut}} に設定されました",
     "shortcut_register_failed": "登録できませんでした: {{message}}",
     "shortcut_reset": "デフォルトにリセットする",
-    "shortcut_reset_failed": "リセットに失敗しました: {{message}}"
+    "shortcut_reset_failed": "リセットに失敗しました: {{message}}",
+    "cancel": "キャンセル",
+    "hf_token_also_clear": "あわせてクリア",
+    "hf_token_clear_btn": "トークンをクリア",
+    "hf_token_clear_confirm": "アプリに保存された HuggingFace トークンをクリアしますか?",
+    "hf_token_clear_dialog": "トークンをクリア",
+    "hf_token_input": "HuggingFace トークン",
+    "hf_token_sources": "HF トークンのソース",
+    "hf_token_test_now": "今すぐテスト",
+    "hf_token_test_now_title": "すべてのソースで whoami を再実行します"
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -104,7 +114,17 @@
     "region_russia": "ロシア（鏡）",
     "region_restricted": "制限付き（ミラー）",
     "unknown_error": "不明なエラー",
-    "retrying": "再試行中…"
+    "retrying": "再試行中…",
+    "hint_readme": "バンドルに README.md がありませんでした。現在は自動修正されます — 再試行すれば動作するはずです。",
+    "hint_python_mirror": "ネットワークが Python のダウンロード(github.com のリリース)に到達できませんでした。設定 → ネットワークで地域を切り替える(中国 / ロシア / 制限付きはミラー経由)か、システムに Python 3.11+ をインストールしてアプリにそちらを使わせてください。",
+    "hint_uv_timeout": "uv のダウンロードでネットワークがタイムアウトしました。インターネット接続を確認するか、設定 → ネットワークで別の地域を試してください。",
+    "hint_uv_sync": "依存関係のインストールに失敗しました。「クリーンアップして再試行」はキャッシュされた venv を削除して最初からやり直します。",
+    "hint_build_backend": "Python ビルドバックエンドのエラーです。「クリーンアップして再試行」は壊れた venv を削除してゼロから再構築します。",
+    "hint_ffmpeg": "ffmpeg のダウンロードに失敗しました。致命的ではありません — 再試行するか、ffmpeg を手動でインストールしてください。",
+    "hint_port": "ポート 3900 は既に使用中です。他の OmniVoice インスタンスや、そのポートを使うアプリを終了してください。",
+    "hint_silent_crash": "バックエンドがエラーメッセージなしでクラッシュしました。「クリーンアップして再試行」で venv の破損が直ることがよくあります。",
+    "hint_github_blocked": "ネットワークが GitHub をブロックしている可能性があります。python.org から Python 3.11+ をインストール(PATH に追加)して再起動するか、UV_PYTHON_INSTALL_MIRROR を設定してください — docs/install/troubleshooting.md を参照。",
+    "hint_default": "まず「再試行」を試してください。再び失敗する場合、「クリーンアップして再試行」が環境をゼロから再構築します。"
   },
   "stories": {
     "title": "ストーリーエディター",
@@ -221,7 +241,7 @@
     "designed_voices": "デザインされた声",
     "dubbing_projects": "吹き替えプロジェクト",
     "empty_hint": "ここにはまだ何もありません。上のカードを選択してください。",
-    "demo_callout": "👋 デモ音声をお試しください — [生成] をクリックして聞いてください。",
+    "demo_callout": "デモ音声をお試しください — [生成] をクリックして聞いてください。",
     "locked": "ロックされています",
     "open": "開く",
     "try_it": "試してみてください",
@@ -275,7 +295,7 @@
     "preset_surprised_woman": "😲びっくり",
     "preset_elderly_story": "👴長老",
     "preset_sichuan": "🌶️四川话",
-    "prompt_placeholder": "この声は何と言えばいいのでしょうか？ ✍️",
+    "prompt_placeholder": "この声は何と言えばいいのでしょうか？",
     "design_placeholder": "音声を説明し、その内容を入力します…",
     "speed": "速度",
     "tshift": "t_シフト",
@@ -303,7 +323,17 @@
     "opt_high_pitch": "高音",
     "opt_very_high_pitch": "とても高いピッチ",
     "opt_whisper": "ささやき声",
-    "style_placeholder": "例:ささやき声"
+    "style_placeholder": "例:ささやき声",
+    "stop_playback": "再生を停止",
+    "describe_label": "声を言葉で説明",
+    "describe_placeholder": "例: a warm elderly British storyteller, slightly raspy",
+    "describe_hint": "説明（英語）が下のコントロールを設定します。後から微調整もできます。",
+    "describe_unmatched": "対応付けできません: {{items}}",
+    "describe_no_match": "まだ声の特徴を認識できていません。deep、elderly、British などの単語を試してください。",
+    "define_by_design": "デザインで",
+    "define_from_audio": "音声から",
+    "define_voice": "音声の定義",
+    "save_design_as_profile": "デザインをプロファイルとして保存"
   },
   "about": {
     "app": "アプリ",
@@ -338,7 +368,17 @@
     "channel_stable": "安定版",
     "channel_preview": "プレビュー",
     "channel_set": "アップデートチャンネルを {{channel}} に設定しました",
-    "channel_preview_hint": "プレビューは最新の main ビルドを追跡します。新機能をいち早く利用できますが、テストは少なめです。安定版が先行している場合は安定版にフォールバックします。"
+    "channel_preview_hint": "プレビューは最新の main ビルドを追跡します。新機能をいち早く利用できますが、テストは少なめです。安定版が先行している場合は安定版にフォールバックします。",
+    "self_check": "セルフチェックを実行",
+    "self_check_failed": "セルフチェックに失敗しました: {{message}}",
+    "self_check_ok": "正常",
+    "self_check_warn": "警告",
+    "self_check_fail": "失敗",
+    "self_check_healthy": "すべてのチェックに合格 — このインストールは正常のようです。",
+    "self_check_attention": "{{count}} 件のチェックが失敗しました — 上のヒントをご覧ください。",
+    "save_bundle": "診断バンドルを保存",
+    "bundle_saved": "診断バンドルを保存しました: {{filename}}",
+    "bundle_failed": "診断バンドルを作成できませんでした: {{message}}"
   },
   "privacy": {
     "desc": "すべては<1>このマシン</1> 上で実行されます。オンライン翻訳者 (Google、DeepL など) を明示的に使用するか、HuggingFace にプッシュしない限り、オーディオ、ビデオ、およびトランスクリプトがコンピューターから流出することはありません。",
@@ -437,9 +477,12 @@
     "mic_denied": "マイクアクセスが拒否されました",
     "mic_denied_toast": "マイクへのアクセスが拒否されました。 {{hint}}",
     "mic_hint_mac": "macOS: [システム設定] → [プライバシーとセキュリティ] → [マイク] を開き、OmniVoice を有効にします。",
-    "mic_hint_windows": "Windows: [設定] → [プライバシーとセキュリティ] → [マイク] を開き、OmniVoice を許可します。",
+    "mic_hint_windows": "Windows: 設定 → プライバシーとセキュリティ → マイクを開き、「マイクへのアクセス」と「デスクトップ アプリがマイクにアクセスできるようにする」をオンにして、OmniVoice を許可してください。",
     "mic_hint_linux": "Linux: ユーザーがオーディオ グループに属していること、および WebView にマイク アクセスがあることを確認してください。",
-    "transcription_failed": "転写に失敗しました: {{message}}"
+    "transcription_failed": "転写に失敗しました: {{message}}",
+    "mic_not_found": "マイクが見つかりません。マイクを接続または有効にして、もう一度お試しください。",
+    "mic_in_use": "マイクが使用中か利用できません。マイクを使用している可能性のある他のアプリを閉じて、もう一度お試しください。",
+    "mic_error_generic": "マイクを起動できませんでした: {{message}}"
   },
   "logs": {
     "no_tauri_log": "ディスク上にまだ Tauri ログがありません — デスクトップ ビルド経由で起動してログを作成します",
@@ -565,7 +608,7 @@
     "prep_extract": "音声を抽出中…",
     "prep_demucs": "ボーカル/音楽（Demucs）を分離中…",
     "prep_scene": "シーンカットを検出中…",
-    "prep_cached": "⚡ キャッシュされた結果を使用しています…",
+    "prep_cached": "キャッシュされた結果を使用しています…",
     "prep_preparing": "準備中…",
     "prep_chip_download": "ダウンロード",
     "prep_chip_extract": "抜粋",
@@ -630,6 +673,8 @@
     "dual_subs_title": "翻訳されたテキストが上に表示され、元のテキストが下に斜体で表示された字幕をエクスポートします。",
     "burn_subs": "字幕を書き込む",
     "burn_subs_title": "字幕を MP4 ビデオ ストリームに直接レンダリングします (ハードサブ)。デュアル字幕がオンの場合は、デュアル字幕形式を使用します。",
+    "timing_smart_fit": "スマートフィット",
+    "timing_smart_fit_title": "両方を少しずつ調整します。音声をわずかに速め（ピッチ維持、最大1.5倍）、そのセグメントの映像をわずかに遅くする（最大2倍）ことで、自然な話速のまま収めます。上限を超えた分はトリミングされ、フラグが付きます。書き出し時に映像を再エンコードします。",
     "default_track": "デフォルトのトラック:",
     "original_track": "オリジナル",
     "selected_dub": "{{code}} (選択されたダブ)",
@@ -655,7 +700,20 @@
     "diagnostic_copied": "診断がコピーされました",
     "copy_failed": "コピーに失敗しました",
     "open_docs": "ドキュメントを開く",
-    "copy_diagnostic": "コピー診断"
+    "copy_diagnostic": "コピー診断",
+    "dialect_label": "方言",
+    "dialect_default": "デフォルト",
+    "dialect_title": "翻訳に使う地域の方言と語彙（例: アルゼンチン → “tú eres” ではなく “vos sos”）。LLM エンジン（OpenAI/Ollama）と Cinematic 品質で適用されます。",
+    "num_speakers_label": "話者",
+    "num_speakers_auto": "自動",
+    "num_speakers_help": "この動画の話者は何人ですか？空欄で自動検出します。自動検出が複数の話者を1人にまとめてしまう場合は人数を指定してください。",
+    "advanced": "詳細設定",
+    "cinematic_needs_llm_hint": "映画的品質には LLM が必要です。設定 → 資格情報 → LLM エンドポイントで設定してください（Ollama はローカルで動作し、キーは不要です）。",
+    "generate_dub_multi": "{{count}} 件のダブを生成",
+    "pipeline": "ダビングパイプライン",
+    "preview_language": "プレビュー言語",
+    "target_language": "吹き替え先",
+    "transcript_after_extract": "文字起こしは抽出後に表示されます。"
   },
   "glossary": {
     "title": "用語集",
@@ -741,6 +799,20 @@
     "fit_compressed_title": "TTS オーディオはスロットの {{pct}}% であり、高度に圧縮されています。",
     "fit_audio_title": "オーディオはスロット内に収まります。",
     "fit_ratio_title": "TTS オーディオはスロットの {{pct}}% です。"
+  },
+  "timeline": {
+    "track_label": "セグメントタイムライン",
+    "keyboard_hint": "矢印キーでセグメントを選択 · Enterで編集モード切替 · Deleteで削除 · Sで最寄りの発話開始位置にスナップ",
+    "segment_aria": "セグメント {{index}}: {{start}} から {{end}}",
+    "overlap_warning": "隣のセグメントと重なっています — 両方のセリフが同時に再生されます",
+    "moved_announce": "セグメント {{index}} を {{start}} に移動しました",
+    "resized_announce": "セグメント {{index}}: {{start}} から {{end}}",
+    "deleted_announce": "セグメント {{index}} を削除しました",
+    "snapped_announce": "エッジを {{time}} の発話開始位置にスナップしました",
+    "edit_mode_on": "編集モード: 矢印で開始位置、Shiftで終了位置、Altでセグメント全体を移動、Escで終了",
+    "edit_mode_off": "編集モードを終了しました",
+    "play_slot": "この区間を再生",
+    "preview_dub": "ここで吹き替えをプレビュー"
   },
   "voice": {
     "personality": "性格",
@@ -904,7 +976,15 @@
     "save_failed": "プロフィールを保存できませんでした。",
     "confirm_delete": "「{{name}}」を削除しますか?",
     "trim_load_failed": "トリミングするオーディオをロードできませんでした。",
-    "delete": "削除"
+    "delete": "削除",
+    "community_empty": "コミュニティの音声はまだ読み込まれていません — インターネットに接続して開き直すか、最初の投稿者になりましょう。",
+    "community_explainer": "コミュニティが共有したデザイン済みプリセットと録音音声です。omnivoice-gallery から読み込まれます。",
+    "no_designer": "録音された音声です — 代わりに「音声を使用する」をお使いください。",
+    "no_preview": "プレビューはありません — 「音声を使用する」で追加すると聞けます。",
+    "submit_failed": "投稿フォームを開けませんでした。",
+    "submit_preset": "プリセットを投稿",
+    "submit_voice": "音声を投稿",
+    "zone_community": "コミュニティ"
   },
   "transcriptions": {
     "title": "転写",
@@ -957,7 +1037,9 @@
     "open": "開く",
     "install_required_models": "続行するには、上記の必要なモデルをインストールしてください。",
     "try_dictation": "ディクテーションを試してみる",
-    "next_try_dictation": "次へ: ディクテーションを試してみる"
+    "next_try_dictation": "次へ: ディクテーションを試してみる",
+    "step_aria": "ステップ {{num}}: {{label}}",
+    "step_completed": "完了"
   },
   "donate": {
     "title": "サポート",
@@ -978,7 +1060,7 @@
     "back": "スタジオに戻る",
     "badge": "商用ライセンス",
     "hero_title": "本番環境で AI 音声を出荷",
-    "hero_desc": "OmniVoice Studio は、Functional Source License (FSL) に基づいてソース提供されています。ほとんどのユーザーは、商業契約なしで評価、プロトタイプを作成し、さらには社内で導入することができます。商用ライセンスが必要になるのは、競合する製品やサービスを構築している場合、またはユースケースが FSL の境界外にある場合のみです。",
+    "hero_desc": "OmniVoice Studio は GNU Affero General Public License v3（AGPL-3.0）の下で提供される自由なオープンソースソフトウェアです。商用利用や社内業務利用を含め、無料でご利用いただけます。商用ライセンスが必要になるのは、AGPL-3.0 のコピーレフト義務なしに OmniVoice Studio をクローズドソースまたはプロプライエタリな製品・サービスに組み込みたい場合のみです。",
     "why_title": "企業が OmniVoice を選ぶ理由",
     "pricing_title": "価格設定",
     "faq_title": "よくある質問",
@@ -999,7 +1081,7 @@
     "benefit_source_desc": "スタックを完全に可視化します。ライセンス条項内で監査、フォーク、適応を行います。",
     "benefit_lang": "646の言語",
     "benefit_lang_desc": "人間レベルの品質で 646 言語の文字起こし、翻訳、吹き替えを行います。",
-    "hero_note": "FSL では、内部使用は大規模であっても無料です。商用ライセンスは、OmniVoice を競合製品またはサービス (ホスト型 API または従量制 API、再販またはホワイトラベル アプリ) として他者に提供する場合にのみ必要です。価格帯は近日中に公開される予定です。それまでにお問い合わせください。"
+    "hero_note": "利用、セルフホスティング、商用利用はすべて AGPL-3.0 の下で無料です（大規模利用も含む）。AGPL はネットワーク・コピーレフト型ライセンスです。OmniVoice を改変し、その改変版をネットワーク経由で他者に提供する場合、改変したソースコードを同じ条件で公開する必要があります。商用ライセンスを取得すると、プロプライエタリ／クローズドソースの展開についてこのコピーレフト義務が免除されます。料金プランは近日公開予定です。それまでの間はお問い合わせください。"
   },
   "exportModal": {
     "export": "エクスポート",
@@ -1048,6 +1130,7 @@
     "current_target": "現在の目標 ({{code}})",
     "all_selected_dubs": "選択されたすべてのダブ ({{count}})",
     "subs_note": "字幕はセグメント テキストからそのまま生成されます。タイプミスを見つけた場合は、エクスポートする前にセグメント テーブルを編集してください。",
+    "retime_note": "セグメント単位の動画リタイミングでは、エクスポート時に動画全体を再エンコードします。CPU では動画の長さの約 0.5～2 倍の時間がかかります。",
     "pkg_clips_title": "セグメントごとのクリップ (.zip)",
     "pkg_clips_body": "生成されたすべてのセグメントは、zip 内の番号付き WAV として保存されます。レビュー、ナレーション投稿、またはデータセット構築に適しています。",
     "pkg_clips_cta": "クリップをzip形式でエクスポート",
@@ -1098,7 +1181,8 @@
     "script_french": "英語以外（フランス語）",
     "aria_pause": "一時停止 {{label}}",
     "aria_hear": "{{label}} を聞いてください",
-    "aria_replay": "文字起こしを通じて {{label}} を再生する"
+    "aria_replay": "文字起こしを通じて {{label}} を再生する",
+    "dictation_lede_hotkey_only": "デスクトップのどこでも上のショートカットを押しながら話し、離すとフォーカス中のアプリにテキストが入力されます。今押して動作を確認しましょう。"
   },
   "direction": {
     "title": "セグメント #{{id}} の方向",
@@ -1123,7 +1207,10 @@
     "title": "このタブは問題に遭遇しました。",
     "desc": "心配しないでください。アプリの残りの部分は引き続き動作します。タブを切り替えるか、以下でもう一度お試しください。",
     "tryAgain": "もう一度試してください",
-    "openDocs": "このエラーのドキュメントを開く"
+    "openDocs": "このエラーのドキュメントを開く",
+    "report": "このバグを報告",
+    "searchIssues": "類似の問題を検索",
+    "unexpected": "予期しないエラー: {{message}}"
   },
   "keyboard": {
     "title": "キーボードショートカット",
@@ -1279,7 +1366,8 @@
     "dub_label": "ダブ",
     "save_label": "保存",
     "lock_identity": "音声 ID をロックする",
-    "in_folder": "{{folder}} に"
+    "in_folder": "{{folder}} に",
+    "search": "検索…"
   },
   "trimmer": {
     "title": "リファレンスオーディオをトリミングする",
@@ -1412,13 +1500,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "内部ツールにはライセンスが必要ですか?",
-    "a_internal_tools": "従業員および請負業者による内部使用は、FSL の下で許可された目的であり、ライセンスは必要ありません。 OmniVoice を競合製品またはサービス (再販、ホスト型 SaaS、ホワイトラベル) の一部として他者が利用できるようにする場合は、商用ライセンスが必要です。",
+    "a_internal_tools": "いいえ。従業員や委託先による利用（社内での改変やセルフホスティングを含む）は AGPL-3.0 の下で無料です。商用ライセンスが必要なのは、OmniVoice をクローズドソースまたはプロプライエタリな製品・サービスに組み込み、AGPL のソースコード公開義務に従いたくない場合のみです。",
     "q_try_before": "コミットする前に試してみることはできますか?",
-    "a_try_before": "はい。完全なアプリは、FSL に基づいて評価のために無料でダウンロードしてローカルで実行できます。商用展開について話し合う準備ができたら、メールでご連絡ください。詳細については一緒に検討させていただきます。",
+    "a_try_before": "はい。アプリ全体を AGPL-3.0 の下で無料でダウンロード・実行・セルフホストでき、契約は不要です。商用（プロプライエタリ利用）ライセンスについて相談する準備ができましたら、メールでご連絡ください。詳細を一緒に詰めていきましょう。",
     "q_watermark": "透かしについてはどうですか？",
-    "a_watermark": "デフォルトでは、目に見えない AudioSeal ウォーターマークが埋め込まれています。商用ライセンシーは、「設定」→「プライバシー」で無効にすることができます。無料/個人使用には必ずウォーターマークが含まれます。",
-    "q_apache": "ソースが Apache 2.0 になることはありますか?",
-    "a_apache": "はい。各リリースは、公開から 2 年目に自動的に Apache License バージョン 2.0 に変換されます。つまり、今日のリリースは 2 年後の Apache 2.0 であり、私たちからのアクションは必要ありません。FSL はそれを取り消し不能に保証します。"
+    "a_watermark": "目に見えない AudioSeal ウォーターマークは、デフォルトで全員に埋め込まれます。商用ライセンシーは「設定」→「プライバシー」で無効にできます。"
   },
   "gallery_extra": {
     "save_prompt": "この音声プロファイルの名前を入力してください:",
@@ -1453,6 +1539,7 @@
     "segments_clean": "セグメントはすでにクリーンになっています",
     "cleanup_failed": "クリーンアップに失敗しました: {{message}}",
     "cinematic_no_llm": "映画のような品質には LLM が必要です — TRANSLATE_BASE_URL + TRANSLATE_API_KEY を設定します (Ollama はローカルで動作します)。 Fast に戻ります。",
+    "dialect_not_applied": "選択した方言の適用には LLM が必要です — エンジンを OpenAI/Ollama に切り替えるか、Cinematic 品質を選んでください。",
     "translate_errors": "{{errorCount}}/{{totalCount}} セグメントが失敗しました: {{firstError}}",
     "translated_segments": "{{count}} セグメント → {{lang}} を翻訳しました",
     "translated_cinematic_suffix": "(映画的)",
@@ -1598,5 +1685,90 @@
     "none": "リリースが見つかりませんでした",
     "load_error": "リリースをロードできませんでした (オフライン?)",
     "retry_load": "再試行"
+  },
+  "firstrun": {
+    "loading": "セットアップを準備中…",
+    "title": "OmniVoice Studio のセットアップ",
+    "subtitle": "まだ何もインストールされていません。保存先を確認してから開始してください。後で設定から変更できます。",
+    "language": "言語",
+    "mode_title": "インストール方式",
+    "mode_installed": "標準インストール",
+    "mode_installed_desc": "システム標準のフォルダーを使用します。ほとんどの方におすすめです。",
+    "mode_portable": "ポータブル",
+    "mode_portable_desc": "すべてをアプリの隣の 1 つのフォルダーに保存します。別のディスクや PC へまるごと移動できます。",
+    "mode_portable_unavailable": "利用不可：アプリの隣のフォルダーに書き込めません。",
+    "storage_title": "ストレージ",
+    "portable_folder": "ポータブルフォルダー",
+    "portable_folder_desc": "実行環境・モデル・音声データを 1 つのフォルダーにまとめ、丸ごと移動できます。",
+    "env_dir": "アプリ実行環境",
+    "env_dir_desc": "Python ランタイムと AI ライブラリ。",
+    "data_dir": "音声データとプロジェクト",
+    "data_dir_desc": "あなたの声、吹き替え、出力ファイル、プロジェクトのデータベース。",
+    "models_dir": "モデルキャッシュ",
+    "models_dir_desc": "ダウンロードした AI モデル。最も容量が大きく、移動に向いています。",
+    "needs": "約 {{size}} 必要",
+    "free": "空き {{size}}",
+    "checking": "確認中…",
+    "not_writable": "書き込み不可",
+    "change": "変更…",
+    "compute_title": "コンピュート",
+    "compute_label": "GPU / アクセラレーター",
+    "compute_auto": "自動（NVIDIA CUDA / Apple MPS / CPU）",
+    "compute_rocm": "AMD GPU（ROCm、Linux）",
+    "channel_label": "更新チャンネル",
+    "channel_stable": "安定版",
+    "channel_preview": "プレビュー（最新 main）",
+    "network_title": "ネットワーク",
+    "region_label": "ダウンロード地域",
+    "mirrors_title": "カスタムミラー（上級者向け）",
+    "mirror_pypi": "PyPI インデックス URL",
+    "mirror_hf": "Hugging Face エンドポイント",
+    "mirror_python": "Python ダウンロードミラー",
+    "insufficient_space": "空き容量が不足しています：この構成は同一ディスクに約 {{need}} 必要ですが、{{free}} しかありません。別の場所を選んでください。",
+    "blocked_not_writable": "選択したフォルダーに書き込めません。別の場所を選んでください。",
+    "total_required": "必要なディスク容量：約 {{size}}（初回のみダウンロード）",
+    "start": "インストールを開始",
+    "starting": "開始しています…",
+    "compute_detected": "検出済み",
+    "compute_match": "このマシンに一致",
+    "compute_auto_desc": "実行時にこのマシン最適のバックエンドを選択します。NVIDIA は CUDA、Apple シリコンは MPS、それ以外は CPU。",
+    "compute_rocm_desc": "Linux 上の AMD GPU 向けに PyTorch ROCm ホイールをインストールします。不明な場合は「自動」のままに。",
+    "channel_stable_desc": "テスト済みリリースのみ。コミュニティ検証後に更新が届きます。",
+    "channel_preview_desc": "最新 main のローリングビルド。新エンジンや修正をいち早く入手できますが、粗削りな場合があります。",
+    "installing_title": "インストール中",
+    "activity_title": "アクティビティ",
+    "stage_setup": "セットアップ",
+    "stage_models": "モデルとエンジン",
+    "chip_required": "必須",
+    "chip_optional": "任意",
+    "chip_engine": "エンジン",
+    "lib_download": "ダウンロード",
+    "lib_downloading": "ダウンロード中…",
+    "lib_use": "使用",
+    "lib_active": "使用中",
+    "lib_in_settings": "後で設定からインストール",
+    "lib_show_all": "任意モデル {{count}} 件を表示",
+    "trust_line": "すべてこのマシン上で動作・保存されます。アカウント不要、クラウドなし、テレメトリーなし。",
+    "resume_note": "中断したダウンロードは自動的に再開されます。アプリを閉じても安全です。",
+    "eta_left": "残り約 {{eta}}",
+    "first_sound_text": "あなたのスタジオへようこそ。いま聞こえている言葉はすべて、たった今このマシンで生成されたものです。",
+    "first_sound_done": "この声、数秒前にローカルで生成されました。ようこそ。",
+    "hf_token_title": "Hugging Face トークン（任意）",
+    "hf_token_hint": "制限付きモデルを解放します。例：複数話者ダビング用の話者分離（pyannote）。無料アカウントのトークンで、このマシンにのみ保存されます。",
+    "hf_token_save": "保存",
+    "hf_token_saving": "保存中…",
+    "hf_token_saved": "Hugging Face トークンを保存しました",
+    "hf_token_error": "トークンを保存できませんでした。再試行するか、後で設定 → 認証情報から設定してください。"
+  },
+  "history": {
+    "dub_title": "ダブ履歴",
+    "empty": "まだ何もありません — 生成結果が右側に表示されます。",
+    "empty_dub": "ダブはここに表示されます。",
+    "title": "履歴"
+  },
+  "recording": {
+    "cleaned_loaded": "録音をクリーンアップして読み込みました！",
+    "loaded_raw": "録音を読み込みました（未処理 — ノイズ除去は利用できません）",
+    "too_short": "録音が短すぎます"
   }
 }

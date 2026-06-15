@@ -10,7 +10,7 @@
  * Spec: docs/superpowers/specs/2026-05-30-stories-editor-studio-design.md
  */
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Plus, Play, Trash2, GripVertical, BookOpen, Mic, Download, Scissors, Pause as PauseIcon, Users, X, Upload, Sparkles, SlidersHorizontal, Folder, Layers, Bookmark } from 'lucide-react';
+import { Plus, Play, Trash2, GripVertical, BookOpen, Mic, Download, Scissors, Pause as PauseIcon, Users, X, Upload, Sparkles, SlidersHorizontal, Folder, Layers, Bookmark, FileText, Drama, Timer, ChartColumn, Hourglass, Laugh, Wind, CircleQuestionMark, Zap, CircleCheck, Annoyed } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import { Button, Menu } from '../ui';
@@ -18,9 +18,12 @@ import { useAppStore } from '../store';
 import { parseStoryText, hasStoryMarkers, applyInlineVoice, insertToken } from '../utils/storyTokens';
 import { parseScript } from '../utils/parseScript';
 import { importToText } from '../utils/importStory';
-import { generateSpeech } from '../api/generate';
+import { generateSpeech, audioUrl } from '../api/generate';
 import { encodeAudio } from '../api/stories';
-import { exportStoryAudio, exportStems, buildCueSheet } from '../utils/storyExport';
+import { longformRender } from '../api/audiobook';
+import { exportStems } from '../utils/storyExport';
+import { storyToSpans } from '../utils/storyToSpans';
+import { consumeLongformStream } from '../utils/longformStream';
 import { reorder } from '../utils/storyReorder';
 import { effectiveProfile, castMember, nextCastColor } from '../utils/storyCast';
 import './StoriesEditor.css';
@@ -35,6 +38,16 @@ function download(blob, filename) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// Trigger a browser download for a same-origin URL (server-rendered file).
+function downloadUrl(url, filename) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 // A chapter line is any track whose text is a markdown heading (`# …`). It
@@ -87,12 +100,12 @@ function genCastId() {
 // Curated inline emotion/sound tags (a subset of utils/constants TAGS) for the
 // per-line tone drawer. Inserting a tag is the model-native way to direct tone.
 const STORY_TONES = [
-  { tag: '[laughter]', icon: '😄', key: 'laugh' },
-  { tag: '[sigh]', icon: '😮‍💨', key: 'sigh' },
-  { tag: '[question-en]', icon: '❓', key: 'question' },
-  { tag: '[surprise-wa]', icon: '😲', key: 'surprise' },
-  { tag: '[confirmation-en]', icon: '✅', key: 'confirm' },
-  { tag: '[dissatisfaction-hnn]', icon: '😒', key: 'dissatisfaction' },
+  { tag: '[laughter]', icon: Laugh, key: 'laugh' },
+  { tag: '[sigh]', icon: Wind, key: 'sigh' },
+  { tag: '[question-en]', icon: CircleQuestionMark, key: 'question' },
+  { tag: '[surprise-wa]', icon: Zap, key: 'surprise' },
+  { tag: '[confirmation-en]', icon: CircleCheck, key: 'confirm' },
+  { tag: '[dissatisfaction-hnn]', icon: Annoyed, key: 'dissatisfaction' },
 ];
 
 export default function StoriesEditor({ profiles = [] }) {
@@ -136,7 +149,20 @@ export default function StoriesEditor({ profiles = [] }) {
   const [expandedLine, setExpandedLine] = useState(null);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [projectName, setProjectName] = useState('');
-  const [exportFormat, setExportFormat] = useState('wav');
+  const [exportFormat, setExportFormat] = useState('m4b');
+  // Global reading speed (#415): one speed for every line without its own
+  // per-track override. UI preference → persisted in localStorage (survives
+  // restarts; not part of the project state, so no slice migration).
+  const [globalSpeed, setGlobalSpeedState] = useState(() => {
+    try {
+      const v = parseFloat(localStorage.getItem('ov_stories_global_speed'));
+      return Number.isFinite(v) && v >= 0.5 && v <= 2 ? v : 1;
+    } catch { return 1; }
+  });
+  const setGlobalSpeed = useCallback((v) => {
+    setGlobalSpeedState(v);
+    try { localStorage.setItem('ov_stories_global_speed', String(v)); } catch { /* noop */ }
+  }, []);
   const trackTextRefs = useRef(new Map());
   const fileInputRef = useRef(null);
   const dragId = useRef(null);
@@ -248,7 +274,10 @@ export default function StoriesEditor({ profiles = [] }) {
   const insertPauseInto = useCallback((trackId) => insertTokenInto(trackId, '[pause 0.5s]'), [insertTokenInto]);
 
   const addTrack = useCallback(() => setTracks((prev) => [...prev, makeTrack()]), [setTracks]);
-  const removeTrack = useCallback((id) => setTracks((prev) => prev.filter((tk) => tk.id !== id)), [setTracks]);
+  const removeTrack = useCallback((id) => setTracks((prev) => prev.filter((tk) => {
+    if (tk.id === id && tk.audioUrl) URL.revokeObjectURL(tk.audioUrl);  // free the preview blob
+    return tk.id !== id;
+  })), [setTracks]);
   const updateTrack = useCallback((id, field, value) => {
     setTracks((prev) => prev.map((tk) => (tk.id === id ? { ...tk, [field]: value } : tk)));
   }, [setTracks]);
@@ -336,28 +365,44 @@ export default function StoriesEditor({ profiles = [] }) {
     download(wavBlob, `${baseName}.wav`);
   }, [exportFormat, t]);
 
+  // Full export now runs on the shared server-side renderer (the Stories +
+  // Audiobook convergence): cast + lines compile to a chapter/span plan and
+  // stream through /longform/render — gaining chapter markers, resume, and
+  // (via the audiobook controls) loudness/metadata. Single-line preview stays
+  // client-side for latency. Stems remain a client export below.
   const generateAll = useCallback(async () => {
     const usable = tracks.filter((tk) => (tk.text || '').trim());
     if (!usable.length || exporting) return;
+    const chapters = storyToSpans(usable, cast, globalSpeed);
+    if (!chapters.length) { toast.error(t('stories.exportFailed')); return; }
     setExporting(true);
     setExportPct(0);
     try {
-      const { blob, chapters } = await exportStoryAudio(
-        usable,
-        (tk) => ({ profileId: effectiveProfile(tk, cast), speed: tk.speed || 1.0 }),
-        fetchChunkBlob,
-        (d, total) => setExportPct(total ? Math.round((d / total) * 100) : 0),
-      );
-      await deliver(blob, 'story');
-      if (chapters.length) download(new Blob([buildCueSheet(chapters)], { type: 'text/plain' }), 'story-chapters.txt');
+      const res = await longformRender({
+        chapters,
+        format: exportFormat === 'mp3' ? 'mp3' : 'm4b',
+      });
+      let total = 0;
+      let output = '';
+      let streamErr = null;
+      await consumeLongformStream(res, (evt) => {
+        if (evt.type === 'started') total = evt.chapters;
+        else if (evt.type === 'chapter' || evt.type === 'chapter_error') {
+          setExportPct(total ? Math.round(((evt.index + 1) / total) * 100) : 0);
+        } else if (evt.type === 'done') output = evt.output;
+        else if (evt.type === 'error') streamErr = evt.error || 'render failed';
+      });
+      if (streamErr) throw new Error(streamErr);
+      if (!output) throw new Error('no output produced');
+      downloadUrl(audioUrl(output), output.split('/').pop());
       toast.success(t('stories.exportDone'));
     } catch (err) {
-      console.warn('Story export failed:', err);
+      console.warn('Story render failed:', err);
       toast.error(t('stories.exportFailed'));
     } finally {
       setExporting(false);
     }
-  }, [tracks, cast, fetchChunkBlob, exporting, deliver, t]);
+  }, [tracks, cast, exporting, exportFormat, globalSpeed, t]);
 
   const exportStemsAll = useCallback(async () => {
     const usable = tracks.filter((tk) => (tk.text || '').trim());
@@ -432,19 +477,38 @@ export default function StoriesEditor({ profiles = [] }) {
 
           <span className="stories-editor__divider" aria-hidden="true" />
 
+          {/* Global reading speed (#415) — one speed for every line that has no
+              per-line override. */}
+          <div className="stories-editor__group">
+            <label className="stories-editor__speed" title={t('stories.global_speed_hint', { defaultValue: 'Reading speed for all lines without their own speed override' })}>
+              <span>{t('stories.global_speed', { defaultValue: 'Speed' })}</span>
+              <input
+                type="range" min="0.5" max="2" step="0.05" value={globalSpeed}
+                onChange={(e) => setGlobalSpeed(parseFloat(e.target.value))}
+                aria-label={t('stories.global_speed', { defaultValue: 'Global reading speed' })}
+              />
+              <span className="stories-editor__speed-val">{globalSpeed.toFixed(2)}×</span>
+              {globalSpeed !== 1 && (
+                <button type="button" className="stories-track__reset" onClick={() => setGlobalSpeed(1)}>{t('stories.reset')}</button>
+              )}
+            </label>
+          </div>
+
+          <span className="stories-editor__divider" aria-hidden="true" />
+
           {/* Output */}
           <div className="stories-editor__group">
             <Button size="sm" variant="ghost" onClick={exportStemsAll} disabled={tracks.length === 0 || exporting} aria-label={t('stories.stems')}>
               <Layers size={13} /> {t('stories.stems')}
             </Button>
             <select
-              className="stories-editor__format"
+              className="input-base stories-editor__format"
               value={exportFormat}
               onChange={(e) => setExportFormat(e.target.value)}
               aria-label={t('stories.format')}
               title={t('stories.format')}
             >
-              <option value="wav">WAV</option>
+              <option value="m4b">M4B</option>
               <option value="mp3">MP3</option>
             </select>
             <Button size="sm" onClick={generateAll} disabled={tracks.length === 0 || exporting}>
@@ -569,7 +633,7 @@ export default function StoriesEditor({ profiles = [] }) {
       {/* Tracks */}
       {tracks.length === 0 ? (
         <div className="stories-editor__empty">
-          <span className="stories-editor__empty-icon">📖</span>
+          <BookOpen size={32} className="stories-editor__empty-icon" aria-hidden="true" />
           <p className="stories-editor__empty-text">{t('stories.emptyText')}</p>
           <Button size="sm" onClick={addTrack}><Plus size={13} /> {t('stories.addFirst')}</Button>
         </div>
@@ -707,7 +771,7 @@ export default function StoriesEditor({ profiles = [] }) {
                     <div className="stories-track__tones">
                       {STORY_TONES.map((tn) => (
                         <button key={tn.tag} type="button" className="stories-track__tone" onClick={() => insertTokenInto(track.id, tn.tag)} title={tn.tag}>
-                          <span aria-hidden="true">{tn.icon}</span> {t(`stories.tones.${tn.key}`)}
+                          <tn.icon size={12} aria-hidden="true" /> {t(`stories.tones.${tn.key}`)}
                         </button>
                       ))}
                     </div>
@@ -735,11 +799,11 @@ export default function StoriesEditor({ profiles = [] }) {
       {tracks.length > 0 && (
         <div className="stories-editor__footer">
           <div className="stories-editor__stats">
-            <span className="stories-editor__stat">📝 {t('stories.lines', { count: tracks.length })}</span>
-            <span className="stories-editor__stat">🎭 {t('stories.characters', { count: usedCharacters })}</span>
-            <span className="stories-editor__stat">⏱ {t('stories.minutes', { count: estMinutes })}</span>
-            <span className="stories-editor__stat">📊 {t('stories.chars', { count: totalChars })}</span>
-            {exporting && <span className="stories-editor__stat">⏳ {exportPct}%</span>}
+            <span className="stories-editor__stat"><FileText size={12} aria-hidden="true" /> {t('stories.lines', { count: tracks.length })}</span>
+            <span className="stories-editor__stat"><Drama size={12} aria-hidden="true" /> {t('stories.characters', { count: usedCharacters })}</span>
+            <span className="stories-editor__stat"><Timer size={12} aria-hidden="true" /> {t('stories.minutes', { count: estMinutes })}</span>
+            <span className="stories-editor__stat"><ChartColumn size={12} aria-hidden="true" /> {t('stories.chars', { count: totalChars })}</span>
+            {exporting && <span className="stories-editor__stat"><Hourglass size={12} aria-hidden="true" /> {exportPct}%</span>}
           </div>
         </div>
       )}

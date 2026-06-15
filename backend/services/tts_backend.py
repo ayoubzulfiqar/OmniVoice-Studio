@@ -21,7 +21,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from typing import Optional
 
 import torch
@@ -86,6 +88,13 @@ class TTSBackend(ABC):
     #: Whether this engine supports voice design from a text description
     #: (e.g. "young female, warm tone, British accent") without reference audio.
     supports_voice_design: bool = False
+
+    #: Whether this engine already emits mastered, studio-grade audio and should
+    #: therefore skip the shared apply_mastering() chain (Compressor + Reverb,
+    #: tuned for OmniVoice's 24 kHz output). Studio engines like VoxCPM2 (native
+    #: 48 kHz) set this True so their clean output isn't pumped/reverbed. Loudness
+    #: normalisation is applied regardless — it's a benign peak scale.
+    applies_own_mastering: bool = False
 
     #: GPU/accelerator targets the engine can run on. Surfaced via the
     #: Engine Compatibility Matrix (Plan 02-04 / ENGINE-06) so users can
@@ -152,6 +161,63 @@ class TTSBackend(ABC):
 # ── OmniVoice adapter (the current default) ─────────────────────────────────
 
 
+# ── Voice-clone prompt cache (#427) ──────────────────────────────────────────
+# Every cloned generation re-encodes the reference audio from scratch — a fixed
+# per-request latency that compounds on batch/long-form workloads reusing one
+# voice. The OmniVoice model exposes create_voice_clone_prompt(ref) →
+# VoiceClonePrompt + generate(voice_clone_prompt=) to do that encoding ONCE.
+# We cache the prompt (bounded LRU, keyed by ref path + mtime + ref_text) so
+# repeated generations with the same voice skip the encode. Bounded because a
+# VoiceClonePrompt holds tensors (VRAM). Thread-safe (generation runs in a GPU
+# thread pool). Best-effort: any miss/error falls back to the inline ref path,
+# so output is never affected — this is a pure latency optimization.
+_PROMPT_CACHE_MAX = 8
+_prompt_cache: "OrderedDict[tuple, object]" = OrderedDict()
+_prompt_cache_lock = threading.Lock()
+
+
+def _clone_prompt_key(ref_audio: str, ref_text):
+    try:
+        mtime = os.path.getmtime(ref_audio)
+    except OSError:
+        mtime = 0.0
+    return (os.path.abspath(ref_audio), mtime, ref_text or "")
+
+
+def _get_clone_prompt(model, ref_audio: str, ref_text):
+    """Return a cached/precomputed ``VoiceClonePrompt`` for (ref_audio, ref_text),
+    or ``None`` to fall back to the inline ref path. Never raises."""
+    try:
+        key = _clone_prompt_key(ref_audio, ref_text)
+    except Exception:
+        return None
+    with _prompt_cache_lock:
+        hit = _prompt_cache.get(key)
+        if hit is not None:
+            _prompt_cache.move_to_end(key)
+            return hit
+    try:
+        # Encode outside the lock (slow); default preprocess matches the inline
+        # ref_audio path's preprocessing.
+        prompt = model.create_voice_clone_prompt(ref_audio, ref_text=ref_text)
+    except Exception as e:  # noqa: BLE001 — fall back, never break synthesis
+        logger.warning("voice-clone prompt precompute failed; using inline ref: %s", e)
+        return None
+    with _prompt_cache_lock:
+        _prompt_cache[key] = prompt
+        _prompt_cache.move_to_end(key)
+        while len(_prompt_cache) > _PROMPT_CACHE_MAX:
+            _prompt_cache.popitem(last=False)
+    return prompt
+
+
+def clear_clone_prompt_cache() -> None:
+    """Drop all cached voice-clone prompts (frees their tensors). Called on model
+    unload so a flush/engine-switch doesn't strand VRAM."""
+    with _prompt_cache_lock:
+        _prompt_cache.clear()
+
+
 class OmniVoiceBackend(TTSBackend):
     """Wraps `omnivoice.models.omnivoice.OmniVoice`. Zero behaviour change.
 
@@ -210,11 +276,11 @@ class OmniVoiceBackend(TTSBackend):
     def generate(self, text, **kw) -> torch.Tensor:
         self._ensure_loaded()
         language = kw.get("language")
-        audios = self._model.generate(
+        ref_audio = kw.get("ref_audio")
+        ref_text = kw.get("ref_text")
+        gen_kw = dict(
             text=text,
             language=language if language and language != "Auto" else None,
-            ref_audio=kw.get("ref_audio"),
-            ref_text=kw.get("ref_text"),
             instruct=kw.get("instruct"),
             duration=kw.get("duration"),
             num_step=kw.get("num_step", 16),
@@ -223,7 +289,40 @@ class OmniVoiceBackend(TTSBackend):
             denoise=kw.get("denoise", True),
             postprocess_output=kw.get("postprocess_output", True),
         )
+        # #427: when cloning from a reference file, reuse a cached voice-clone
+        # prompt so the reference isn't re-encoded every call. Any failure in the
+        # prompt path falls back to the inline ref — output is identical either
+        # way (the model documents the two as equivalent); this only saves the
+        # repeated encode. The design/instruct path (no ref_audio) is untouched.
+        audios = None
+        if ref_audio:
+            prompt = _get_clone_prompt(self._model, ref_audio, ref_text)
+            if prompt is not None:
+                try:
+                    audios = self._model.generate(voice_clone_prompt=prompt, **gen_kw)
+                except Exception as e:  # noqa: BLE001 — fall back to the inline ref
+                    logger.warning("voice_clone_prompt generate failed; retrying inline ref: %s", e)
+                    audios = None
+        if audios is None:
+            audios = self._model.generate(ref_audio=ref_audio, ref_text=ref_text, **gen_kw)
         return audios[0]
+
+    def unload(self) -> None:
+        """Release the OmniVoice model (MM2-02). OmniVoice shares the singleton
+        owned by ``model_manager``, so dropping our local ref isn't enough — we
+        clear the shared one and free GPU memory too. Idempotent and safe before
+        the first generate(). Best-effort: assignment is GIL-atomic, so we don't
+        take the async ``_model_lock`` from this sync path; the registry wraps
+        this call in try/except so a race can never block an engine switch."""
+        self._model = None
+        clear_clone_prompt_cache()  # #427: drop cached prompts so VRAM is freed
+        try:
+            import services.model_manager as mm
+            if mm.model is not None:
+                mm.model = None
+                mm.free_vram()
+        except Exception:
+            pass
 
 
 # ── VoxCPM2 adapter (optional, scaffolded) ──────────────────────────────────
@@ -246,6 +345,7 @@ class VoxCPM2Backend(TTSBackend):
     id = "voxcpm2"
     display_name = "VoxCPM2 (30 langs, studio 48 kHz, voice design)"
     supports_voice_design = True
+    applies_own_mastering = True  # native 48 kHz studio output — skip apply_mastering()
     gpu_compat = ("cuda", "mps", "cpu")
 
     def __init__(self):
@@ -569,12 +669,22 @@ class MLXAudioBackend(TTSBackend):
 
     @classmethod
     def is_available(cls) -> tuple[bool, str]:
+        # #390: gate on the shared platform check FIRST, before importing the
+        # package. A stray mlx-audio wheel on Linux/Windows/mac-Intel must never
+        # report available (and must never advertise a usable `mps` route).
+        from core.device_caps import mlx_supported
+        ok, why = mlx_supported()
+        if not ok:
+            return False, why
         try:
             import mlx_audio  # noqa: F401
             return True, "ready"
-        except ImportError as e:
+        # OSError/RuntimeError too: in a PyInstaller bundle mlx's native
+        # dylib/metallib can fail to load even when the package imports —
+        # report unavailable instead of crashing the registry scan (Wave 4.4).
+        except (ImportError, OSError, RuntimeError) as e:
             return False, (
-                f"mlx-audio not installed: {e}. "
+                f"mlx-audio unavailable: {e}. "
                 "This backend is Apple Silicon only — available on mac-ARM dev "
                 "installs; not shipped on Linux/Windows/mac-Intel."
             )
@@ -1150,7 +1260,10 @@ def list_backends() -> list[dict]:
           "install_hint":   Optional[str],
           "last_error":     Optional[str],          # cached most-recent failure
           "isolation_mode": "in-process" | "subprocess",
-          "gpu_compat":     list[str],              # subset of {cuda, mps, rocm, cpu}
+          "gpu_compat":     list[str],              # subset of {cuda, rocm, mps, xpu, cpu}
+          "effective_device": str,                  # device this engine uses on THIS host
+          "routing_status": "accelerated" | "cpu_fallback" | "cpu_only" | "unavailable",
+          "routing_reason": Optional[str],          # scrubbed; null when none
         }
 
     Guarantees (ENGINE-05): a backend whose `is_available()` raises does
@@ -1170,6 +1283,12 @@ def list_backends() -> list[dict]:
     # class object that no longer == the one this test's subclasses closed
     # over. The marker attribute is set on SubprocessBackend itself, so
     # subclasses inherit it through any re-import path.
+    # Routing is host-aware but the host caps are constant per process, so probe
+    # ONCE here and resolve each engine's effective device against the same caps.
+    from core.device_caps import detect_host_caps
+    from services.engine_routing import routing_fields
+    caps = detect_host_caps()
+
     out: list[dict] = []
     for bid, cls in _REGISTRY.items():
         try:
@@ -1195,6 +1314,7 @@ def list_backends() -> list[dict]:
             isolation = "subprocess"
         else:
             isolation = "in-process"
+        gpu_compat = getattr(cls, "gpu_compat", ("cpu",))
         out.append({
             "id": bid,
             "display_name": cls.display_name,
@@ -1203,7 +1323,9 @@ def list_backends() -> list[dict]:
             "install_hint": _INSTALL_HINTS.get(bid),
             "last_error": _LAST_ERRORS.get(bid),
             "isolation_mode": isolation,
-            "gpu_compat": list(getattr(cls, "gpu_compat", ("cpu",))),
+            "gpu_compat": list(gpu_compat),
+            # effective_device / routing_status / routing_reason (scrubbed):
+            **routing_fields(gpu_compat, caps),
         })
     return out
 
@@ -1214,6 +1336,60 @@ def get_backend_class(backend_id: str) -> type[TTSBackend]:
     return _REGISTRY[backend_id]
 
 
+def active_routing() -> dict | None:
+    """Routing verdict for the currently-active TTS engine, or ``None`` if it
+    can't be determined (no engine / probe failure).
+
+    Derived from :func:`list_backends` so the verdict is byte-identical to what
+    the Engine Compatibility Matrix shows for the same engine. Consumed by
+    ``/setup/preflight`` and ``/system/diagnose`` to surface a GPU-routing
+    verdict for the active engine (no silent CPU fallback). Never raises.
+    """
+    try:
+        active = active_backend_id()
+        for b in list_backends():
+            if b.get("id") == active:
+                return {
+                    "engine": active,
+                    "available": b.get("available"),
+                    "effective_device": b.get("effective_device"),
+                    "routing_status": b.get("routing_status"),
+                    "routing_reason": b.get("routing_reason"),
+                }
+    except Exception:
+        # Routing is advisory — never let a probe/registry hiccup break the
+        # caller (preflight/diagnose must stay responsive — local-first).
+        return None
+    return None
+
+
+def gpu_routing_verdict() -> dict:
+    """The GpuRouting payload (see api.schemas.GpuRouting) for the active TTS
+    engine + this host's compute summary. Used by ``/setup/preflight`` and
+    ``/system/diagnose``. Never raises — degrades to a host-only verdict with
+    ``routing_status:"none"`` if the active engine can't be resolved."""
+    from core.device_caps import detect_host_caps
+    try:
+        caps = detect_host_caps()
+        host_family, vram_gb = caps.family, round(caps.vram_gb, 1)
+    except Exception:
+        host_family, vram_gb = "cpu", 0.0
+    r = active_routing()
+    if not r:
+        return {
+            "engine": None, "effective_device": None,
+            "routing_status": "none", "routing_reason": None,
+            "host_family": host_family, "vram_gb": vram_gb,
+        }
+    return {
+        "engine": r.get("engine"),
+        "effective_device": r.get("effective_device"),
+        "routing_status": r.get("routing_status"),
+        "routing_reason": r.get("routing_reason"),
+        "host_family": host_family, "vram_gb": vram_gb,
+    }
+
+
 def active_backend_id() -> str:
     # Env var > persisted UI choice > default. Env wins so power-users can
     # pin a backend without the Settings picker silently undoing it.
@@ -1221,14 +1397,65 @@ def active_backend_id() -> str:
     return prefs.resolve("tts_backend", env="OMNIVOICE_TTS_BACKEND", default="omnivoice")
 
 
+# Cached active backend instance + its id (MM2-01). Without this, every call
+# built a fresh instance and the previous engine's VRAM/sidecar leaked until GC
+# — measurable when switching engines on an 8 GB MPS Mac (root cause behind the
+# #278 comment thread). We now keep one instance per configured backend id and
+# call the outgoing engine's unload() before switching.
+_active_instance: "TTSBackend | None" = None
+_active_instance_id: "str | None" = None
+
+
+def reset_active_backend() -> None:
+    """Unload + clear the cached active backend. For app shutdown and tests.
+    Idempotent and best-effort — a raising unload() never propagates."""
+    global _active_instance, _active_instance_id
+    inst = _active_instance
+    _active_instance = None
+    _active_instance_id = None
+    if inst is not None:
+        try:
+            inst.unload()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reset_active_backend: %s.unload() raised: %s",
+                           type(inst).__name__, exc)
+
+
 def get_active_tts_backend(*, model=None) -> TTSBackend:
-    """Instantiate the configured backend. Pass `model=` for OmniVoice to
-    reuse an already-loaded model from `model_manager`.
+    """Return the configured backend, reusing a cached instance and releasing
+    the previous engine on a switch (MM2-01).
+
+    Rule: the cache tracks the configured backend id. Switching id always
+    unload()s the outgoing instance first. For OmniVoice with an explicit
+    ``model=`` (caller already holds a loaded model), we return a fresh view
+    over the shared singleton rather than caching it — but a switch *away from*
+    a different engine still triggers that engine's unload().
     """
-    cls = get_backend_class(active_backend_id())
-    if cls is OmniVoiceBackend:
+    global _active_instance, _active_instance_id
+    bid = active_backend_id()
+
+    # Switching engines: release the outgoing one first. Best-effort so a bad
+    # unload() can never block the switch.
+    if _active_instance is not None and _active_instance_id != bid:
+        try:
+            _active_instance.unload()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("engine switch: %s.unload() raised: %s",
+                           type(_active_instance).__name__, exc)
+        _active_instance = None
+        _active_instance_id = None
+
+    cls = get_backend_class(bid)
+    if cls is OmniVoiceBackend and model is not None:
+        # Per-call view over the already-loaded shared singleton; don't cache it
+        # (the model lifecycle is owned by model_manager), but the switch above
+        # already released any *different* previous engine.
         return OmniVoiceBackend(model=model)
-    return cls()
+
+    if _active_instance is None or _active_instance_id != bid:
+        _active_instance = OmniVoiceBackend(model=model) if cls is OmniVoiceBackend else cls()
+        _active_instance_id = bid
+    return _active_instance
 
 
 # ── PEP 562 lazy attribute re-export ───────────────────────────────────────

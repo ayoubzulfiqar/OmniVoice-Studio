@@ -325,16 +325,29 @@ check_endpoint "GET /system/notifications" "${BACKEND_URL}/system/notifications"
 # isn't reachable from this harness.
 check_endpoint "GET /system/quarantine-status" "${BACKEND_URL}/system/quarantine-status"
 
-# INST-01 no-regression — setuptools>=75.0 pinned, WhisperX imports cleanly.
+# INST-01 no-regression — setuptools>=75,<80 pinned, WhisperX imports cleanly.
 # Per 01-03-PLAN.md must_have truth #6 / checker W-5: the user-observable
 # form of this check lives here in the smoke test (Phase 0 GATE-02 also
 # enforces it in CI), guarding against a regression where pkg_resources
 # goes missing on Python 3.12+.
+# #248: bootstrap now also detects pkg_resources missing in existing venvs and
+# runs a repair sync / targeted pip install to self-heal before handing the venv
+# to the backend — this test verifies the end-state of both paths is correct.
+#
+# Export restricted-network env vars so that a uv failure here reflects a real
+# bootstrap regression, not harness networking. UV_PYTHON_PREFERENCE=only-system
+# skips the python-build-standalone download (already in the venv); the timeout +
+# retry vars guard against PyPI timeouts masking import failures. Empty values
+# are preserved so callers can override them at the shell level.
+export UV_PYTHON_PREFERENCE="${UV_PYTHON_PREFERENCE:-only-system}"
+export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-120}"
+export UV_HTTP_RETRIES="${UV_HTTP_RETRIES:-5}"
+
 TESTS=$((TESTS + 1))
 if uv run python -c "import pkg_resources; import whisperx" 2>/dev/null; then
-    pass "INST-01: pkg_resources + whisperx import OK (setuptools pinned)"
+    pass "INST-01: pkg_resources + whisperx import OK (setuptools>=75,<80 pinned)"
 else
-    fail "INST-01 regression: pkg_resources or whisperx import failed (setuptools pin?)"
+    fail "INST-01 regression: pkg_resources or whisperx import failed (setuptools pin? #248)"
 fi
 
 # INST-02 (plan-02 #129/#116) — the full ASR critical path must import before

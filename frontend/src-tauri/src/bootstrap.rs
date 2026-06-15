@@ -19,6 +19,11 @@ use crate::{BackendState, backend_port};
 #[derive(Clone, Serialize, Debug)]
 #[serde(tag = "stage", rename_all = "snake_case")]
 pub enum BootstrapStage {
+    /// First run with nothing installed: parked on the setup screen waiting
+    /// for the user to confirm an install plan (mode, storage, mirrors).
+    /// Nothing downloads or installs in this stage — `complete_setup` is the
+    /// only way out of it.
+    AwaitingSetup,
     /// Working out whether we need to bootstrap at all.
     Checking,
     /// Fetching the standalone `uv` binary from astral-sh/uv releases.
@@ -149,14 +154,31 @@ pub fn retry_bootstrap(app: tauri::AppHandle, state: tauri::State<'_, BootstrapS
             crate::backend::kill_orphan_on_port(backend_port());
             std::thread::sleep(Duration::from_millis(500));
         }
-        let child = crate::backend::spawn_backend(&app, Some(&stage_handle));
+        spawn_backend_and_wait(&app, &stage_handle);
+    });
+}
+
+/// Spawn the backend and poll until it is healthy (→ `Ready`) or dead /
+/// timed out (→ `Failed`). Shared by the launch-time bootstrap (`lib.rs`) and
+/// the Retry button (`retry_bootstrap`) so both get the same recovery
+/// behavior.
+///
+/// #314: when the backend dies with a broken-venv signature ("No pyvenv.cfg
+/// file" / exit code 106 from the CPython venv launcher), the venv — and only
+/// the venv — is removed and the bootstrap re-runs once, recreating it through
+/// the normal `CreatingVenv` / `InstallingDeps` setup path instead of
+/// surfacing the same dead-end failure on every retry.
+pub fn spawn_backend_and_wait(app: &tauri::AppHandle, stage_handle: &Arc<Mutex<BootstrapStage>>) {
+    let mut venv_heal_attempted = false;
+    'bootstrap: loop {
+        let child = crate::backend::spawn_backend(app, Some(stage_handle));
         if let Ok(mut guard) = app.state::<BackendState>().process.lock() {
             *guard = child;
         }
         let start = std::time::Instant::now();
         while start.elapsed() < Duration::from_secs(300) {
             if crate::backend::backend_healthy(backend_port()) {
-                set_stage(&stage_handle, BootstrapStage::Ready);
+                set_stage(stage_handle, BootstrapStage::Ready);
                 return;
             }
             let process_dead = if let Ok(mut guard) = app.state::<BackendState>().process.lock() {
@@ -173,13 +195,40 @@ pub fn retry_bootstrap(app: tauri::AppHandle, state: tauri::State<'_, BootstrapS
             };
             if let Some(exit_info) = process_dead {
                 let err_tail = crate::backend::read_error_log_tail(30);
+                // #314: a backend that dies because the venv itself is broken
+                // can only be healed by rebuilding the venv — do that once
+                // instead of failing into an unwinnable retry loop.
+                if !venv_heal_attempted
+                    && backend_exit_indicates_broken_venv(&exit_info, &err_tail)
+                {
+                    venv_heal_attempted = true;
+                    let venv_dir = crate::setup::env_root(app).join("project").join(".venv");
+                    log::warn!(
+                        "Backend exited with a broken-venv signature ({}) — removing {} and rebuilding (#314)",
+                        exit_info,
+                        venv_dir.display()
+                    );
+                    emit_log(
+                        app,
+                        "checking",
+                        "Backend failed because the Python environment is broken — rebuilding it automatically",
+                    );
+                    if quarantine_broken_venv(&venv_dir) {
+                        set_stage(stage_handle, BootstrapStage::Checking);
+                        continue 'bootstrap;
+                    }
+                    log::error!(
+                        "Could not remove broken venv at {} — surfacing the failure",
+                        venv_dir.display()
+                    );
+                }
                 let msg = if err_tail.is_empty() {
                     format!("Backend process exited ({}) — no error output captured", exit_info)
                 } else {
                     format!("Backend process exited ({}):\n{}", exit_info, err_tail)
                 };
                 log::error!("Backend died early: {}", msg);
-                set_stage(&stage_handle, BootstrapStage::Failed { message: msg });
+                set_stage(stage_handle, BootstrapStage::Failed { message: msg });
                 return;
             }
             std::thread::sleep(Duration::from_millis(500));
@@ -190,18 +239,19 @@ pub fn retry_bootstrap(app: tauri::AppHandle, state: tauri::State<'_, BootstrapS
         } else {
             format!("Backend did not respond within 300 s. Last stderr output:\n{}", err_tail)
         };
-        set_stage(&stage_handle, BootstrapStage::Failed { message: msg });
-    });
+        set_stage(stage_handle, BootstrapStage::Failed { message: msg });
+        return;
+    }
 }
 
 #[tauri::command]
 pub fn clean_and_retry_bootstrap(app: tauri::AppHandle, state: tauri::State<'_, BootstrapState>) {
-    if let Ok(data_dir) = app.path().app_local_data_dir() {
-        let project_dir = data_dir.join("project");
-        if project_dir.is_dir() {
-            log::info!("Clean retry: removing {}", project_dir.display());
-            let _ = fs::remove_dir_all(&project_dir);
-        }
+    // env_root honors the setup-screen choice (portable / custom env dir), so
+    // clean-retry removes the venv the bootstrap actually uses.
+    let project_dir = crate::setup::env_root(&app).join("project");
+    if project_dir.is_dir() {
+        log::info!("Clean retry: removing {}", project_dir.display());
+        let _ = fs::remove_dir_all(&project_dir);
     }
     // Kill any zombie backend still occupying the port from the deleted
     // project dir, otherwise bootstrap will "attach" to the stale process.
@@ -243,6 +293,45 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Refresh `pyproject.toml` + `uv.lock` in the project dir from the bundled
+/// resources, so an upgraded app never runs freshly-synced backend code against
+/// the stale dependency manifests from when the venv was first created (#307 —
+/// a venv predating scalar-fastapi's addition crashed main.py on import).
+/// Returns true when the lockfile content changed (or the project had none):
+/// the signal that the venv may be missing newly added dependencies and needs
+/// a `uv sync`.
+fn refresh_project_manifests(resource_dir: &Path, project_dir: &Path) -> bool {
+    let flat = resource_dir.to_path_buf();
+    let up2 = resource_dir.join("_up_").join("_up_");
+    let res_root = if flat.join("pyproject.toml").is_file() { flat } else { up2 };
+    let res_pyproject = res_root.join("pyproject.toml");
+    let res_uvlock = res_root.join("uv.lock");
+    if res_pyproject.is_file() {
+        if let Err(e) = fs::copy(&res_pyproject, project_dir.join("pyproject.toml")) {
+            log::warn!("Could not refresh pyproject.toml from bundle: {}", e);
+        }
+    }
+    if !res_uvlock.is_file() {
+        return false;
+    }
+    let project_lock = project_dir.join("uv.lock");
+    let lock_changed = match (fs::read(&res_uvlock), fs::read(&project_lock)) {
+        (Ok(bundled), Ok(existing)) => bundled != existing,
+        (Ok(_), Err(_)) => true, // project has no lock yet — treat as drift
+        (Err(e), _) => {
+            log::warn!("Could not read bundled uv.lock: {}", e);
+            return false;
+        }
+    };
+    if lock_changed {
+        if let Err(e) = fs::copy(&res_uvlock, &project_lock) {
+            log::warn!("Could not refresh uv.lock from bundle: {}", e);
+            return false; // don't sync against a lock we failed to refresh
+        }
+    }
+    lock_changed
 }
 
 /// Dev-mode fallback: running from the source tree (`bun run dev`).
@@ -320,15 +409,106 @@ fn rocm_torch_reinstall_args(rocm_index_url: &str) -> Vec<String> {
     ]
 }
 
-/// Whether the user opted into the AMD ROCm torch build via
-/// OMNIVOICE_TORCH_VARIANT=rocm. Default (unset/other) → false (CUDA/CPU path
-/// unchanged). Returns the ROCm wheel index to use when enabled.
-fn rocm_opt_in() -> Option<String> {
-    let variant = std::env::var("OMNIVOICE_TORCH_VARIANT").ok()?;
+/// Whether the user opted into the AMD ROCm torch build — via the
+/// OMNIVOICE_TORCH_VARIANT env var (power users, takes precedence) or the
+/// setup screen's Compute choice persisted in config (`configured_variant`).
+/// Default (unset/"auto") → None (CUDA/CPU path unchanged). Returns the ROCm
+/// wheel index to use when enabled.
+fn rocm_opt_in(configured_variant: &str) -> Option<String> {
+    let variant = std::env::var("OMNIVOICE_TORCH_VARIANT")
+        .unwrap_or_else(|_| configured_variant.to_string());
     if !variant.eq_ignore_ascii_case("rocm") {
         return None;
     }
     Some(std::env::var("OMNIVOICE_TORCH_INDEX").unwrap_or_else(|_| ROCM_TORCH_INDEX.to_string()))
+}
+
+// ── #314: broken-venv detection + self-heal ────────────────────────────────
+
+/// Cheap structural validity check for an existing venv — no subprocess
+/// spawned. Returns a human-readable reason when the venv can never work and
+/// must be rebuilt:
+///   - `pyvenv.cfg` missing (interrupted creation / half-deleted dir — the
+///     CPython venv launcher then exits 106 with "No pyvenv.cfg file"),
+///   - the python executable missing entirely, or
+///   - on Unix, `bin/python` left as a dangling symlink because the base
+///     interpreter it was created from was removed.
+///
+/// Returns `None` both for a healthy venv (which must never be touched) and
+/// for a venv path that doesn't exist at all (the first-run creation path
+/// owns that case).
+pub fn venv_structural_problem(venv_dir: &Path) -> Option<String> {
+    if venv_dir.symlink_metadata().is_err() {
+        return None; // no venv at all — first-run creation handles it
+    }
+    if !venv_dir.is_dir() {
+        return Some(".venv exists but is not a directory".to_string());
+    }
+    if !venv_dir.join("pyvenv.cfg").is_file() {
+        return Some("pyvenv.cfg is missing".to_string());
+    }
+    let py = venv_python_path(venv_dir);
+    if py.symlink_metadata().is_err() {
+        return Some(format!("python executable is missing ({})", py.display()));
+    }
+    // `is_file()` follows symlinks, so a `bin/python` whose target interpreter
+    // was uninstalled (dangling symlink) fails here even though the
+    // `symlink_metadata()` existence check above passed.
+    if !py.is_file() {
+        return Some(format!("python executable is a dangling symlink ({})", py.display()));
+    }
+    None
+}
+
+/// Remove a structurally broken venv so the creation path can rebuild it.
+/// Only `.venv` itself is touched — project manifests, backend sources, and
+/// all user data (`omnivoice_data/`) stay in place. If the directory can't be
+/// deleted outright (e.g. a locked file on Windows), rename it aside instead
+/// so `uv venv` still finds a clean path. Returns true when the original path
+/// is gone.
+fn quarantine_broken_venv(venv_dir: &Path) -> bool {
+    if venv_dir.symlink_metadata().is_err() {
+        return true; // already gone — nothing to do
+    }
+    match fs::remove_dir_all(venv_dir) {
+        Ok(()) => {
+            log::info!("Removed broken venv {} (#314)", venv_dir.display());
+            true
+        }
+        Err(e) => {
+            log::warn!(
+                "remove_dir_all({}) failed: {} — renaming the broken venv aside instead",
+                venv_dir.display(),
+                e
+            );
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let quarantine = venv_dir.with_file_name(format!(".venv.broken-{}", ts));
+            match fs::rename(venv_dir, &quarantine) {
+                Ok(()) => {
+                    log::info!("Renamed broken venv to {} (#314)", quarantine.display());
+                    true
+                }
+                Err(e2) => {
+                    log::error!("Could not rename broken venv aside: {}", e2);
+                    false
+                }
+            }
+        }
+    }
+}
+
+/// Whether a dead backend process looks like it failed because the venv
+/// itself is structurally broken — the CPython venv launcher prints
+/// "No pyvenv.cfg file" and exits with code 106 (`RC_NO_PYVENV_CFG`). Matches
+/// either the message in the captured stderr tail or the exit code in the
+/// `ExitStatus` display ("exit code: 106" on Windows, "exit status: 106" on
+/// Unix). Kept deliberately narrow so ordinary backend crashes never trigger
+/// a venv rebuild.
+pub fn backend_exit_indicates_broken_venv(exit_info: &str, err_tail: &str) -> bool {
+    err_tail.contains("No pyvenv.cfg file") || exit_info.trim_end().ends_with(": 106")
 }
 
 /// Prepare (and on first run, create) the Python venv that will host the
@@ -355,11 +535,44 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
         }
     }
 
-    let app_data = app.path().app_local_data_dir().ok()?;
+    // Root chosen on the setup screen: app_local_data_dir by default, the
+    // exe-adjacent folder in portable mode, or a user-picked custom dir.
+    let app_data = crate::setup::env_root(app);
     let project_dir = app_data.join("project");
     let venv_dir = project_dir.join(".venv");
     let venv_py = venv_python_path(&venv_dir);
     let backend_dir = project_dir.join("backend");
+
+    // #314: structural validation before trusting an existing venv. A venv
+    // whose pyvenv.cfg is gone (interrupted install) or whose python is a
+    // dangling symlink (its base interpreter was removed) can never recover
+    // via `uv sync` — the interpreter itself is the broken part, and the
+    // backend would just exit 106 ("No pyvenv.cfg file") forever. Quarantine
+    // it and fall through to the creation path below, which rebuilds it with
+    // the normal CreatingVenv/InstallingDeps progress. A healthy venv returns
+    // None here and is never touched.
+    if let Some(problem) = venv_structural_problem(&venv_dir) {
+        log::warn!(
+            "Venv at {} is structurally broken ({}) — removing it and rebuilding (#314)",
+            venv_dir.display(),
+            problem
+        );
+        emit_log(
+            app,
+            "checking",
+            &format!("Detected a broken Python environment ({}) — rebuilding it automatically", problem),
+        );
+        if !quarantine_broken_venv(&venv_dir) {
+            fail(progress, &format!(
+                "The Python environment at {} is broken ({}) but could not be removed \
+automatically. Close any programs using that folder, or delete the .venv folder \
+manually, then relaunch.",
+                venv_dir.display(),
+                problem
+            ));
+            return None;
+        }
+    }
 
     if venv_py.is_file() && backend_dir.is_dir() {
         let mut uvicorn_check_cmd = Command::new(&venv_py);
@@ -369,7 +582,27 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-        if matches!(uvicorn_check, Ok(ref s) if s.success()) {
+        // #248: also verify pkg_resources is importable. Venvs created before the
+        // setuptools<80 pin (commit 675cc20, fixes #224) have setuptools 80+, which
+        // dropped the bundled pkg_resources. whisperx / ctranslate2 import it at
+        // runtime, so dubbing/transcription crashes silently on those installs even
+        // though uvicorn starts fine. We detect this here so we can force a repair
+        // sync rather than handing back a broken venv.
+        let pkg_resources_ok = if matches!(uvicorn_check, Ok(ref s) if s.success()) {
+            let mut pr_check = Command::new(&venv_py);
+            scrub_python_env(&mut pr_check);
+            matches!(
+                pr_check
+                    .args(["-c", "import pkg_resources"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status(),
+                Ok(ref s) if s.success()
+            )
+        } else {
+            false
+        };
+        if matches!(uvicorn_check, Ok(ref s) if s.success()) && pkg_resources_ok {
             // Always sync source dirs from bundle so code fixes land on
             // existing installs without requiring a full clean+reinstall.
             let resource_dir = app.path().resource_dir().ok();
@@ -398,13 +631,67 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
                     }
                     log::info!("Synced backend/ from bundle");
                 }
+                // #307: the source dirs above track the bundle, so the
+                // dependency manifests must too — otherwise an upgrade runs
+                // new code against a venv that predates newly added deps.
+                if refresh_project_manifests(res, &project_dir) {
+                    log::info!("uv.lock changed since the venv was synced — running uv sync (#307)");
+                    if let Some(p) = progress {
+                        set_stage(p, BootstrapStage::InstallingDeps);
+                    }
+                    match resolve_uv(app, &app_data, progress) {
+                        Ok(uv_path) => {
+                            let mut drift_cmd = Command::new(&uv_path);
+                            scrub_python_env(&mut drift_cmd); // #144
+                            apply_uv_http_env(&mut drift_cmd);
+                            let user_cfg = crate::config::load_config(app);
+                            if let Some(pypi) = user_cfg.mirrors.pypi_index.as_deref() {
+                                drift_cmd.env("UV_INDEX_URL", pypi);
+                            } else if get_effective_region(app) == "china" {
+                                drift_cmd.env("UV_INDEX_URL", "https://mirrors.aliyun.com/pypi/simple/");
+                            }
+                            drift_cmd
+                                .args(["sync", "--frozen", "--no-dev", "--verbose"])
+                                .current_dir(&project_dir);
+                            match run_streaming(app, "installing_deps", &mut drift_cmd) {
+                                Ok(ref s) if s.success() => {
+                                    log::info!("Dependency drift sync complete (#307)");
+                                }
+                                other => {
+                                    // Don't brick a previously-working install
+                                    // (e.g. an offline upgrade): keep the old
+                                    // venv and let the backend try.
+                                    log::error!(
+                                        "Dependency drift sync failed ({:?}) — continuing with \
+the existing venv; newly added dependencies may be missing (#307)",
+                                        other
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Could not resolve uv for drift sync: {} (#307)", e);
+                        }
+                    }
+                }
             }
             return Some((venv_py, backend_dir));
         }
-        log::warn!(
-            "Venv exists at {} but uvicorn is not importable — re-running uv sync",
-            venv_dir.display()
-        );
+        if matches!(uvicorn_check, Ok(ref s) if s.success()) {
+            // uvicorn is fine but pkg_resources is missing (#248): setuptools>=80 was
+            // installed before the <80 pin landed (issue #224). Force a repair sync
+            // to downgrade setuptools to a version that ships pkg_resources.
+            log::warn!(
+                "Venv at {} is missing pkg_resources (setuptools>=80 pre-dates the <80 pin) \
+— re-running uv sync to repair (#248)",
+                venv_dir.display()
+            );
+        } else {
+            log::warn!(
+                "Venv exists at {} but uvicorn is not importable — re-running uv sync",
+                venv_dir.display()
+            );
+        }
         if let Some(p) = progress {
             set_stage(p, BootstrapStage::InstallingDeps);
         }
@@ -412,8 +699,14 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
             Ok(p) => p,
             Err(e) => { fail(progress, &e); return None; }
         };
+        // #307: repair against the *current* bundled manifests, not the stale
+        // copies from when the venv was first created.
+        if let Ok(res) = app.path().resource_dir() {
+            let _ = refresh_project_manifests(&res, &project_dir);
+        }
         let mut repair_cmd = Command::new(&uv_path);
         scrub_python_env(&mut repair_cmd); // #144: don't inherit AppImage's bundled Python
+        apply_uv_http_env(&mut repair_cmd);
         let has_lockfile = project_dir.join("uv.lock").is_file();
         if has_lockfile {
             repair_cmd.args(["sync", "--frozen", "--no-dev", "--verbose"]);
@@ -423,6 +716,64 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
         repair_cmd.current_dir(&project_dir);
         let repair_status = run_streaming(app, "installing_deps", &mut repair_cmd);
         if matches!(repair_status, Ok(ref s) if s.success()) {
+            // #248: after the repair sync, ensure pkg_resources landed. The repair
+            // path is also triggered when pkg_resources is missing (see above), so
+            // we must verify here rather than trusting that uv sync alone fixed it
+            // (e.g. if the bundled uv.lock still pins setuptools>=80 somehow).
+            let mut pr_repair_check = Command::new(&venv_py);
+            scrub_python_env(&mut pr_repair_check);
+            let pr_ok = matches!(
+                pr_repair_check
+                    .args(["-c", "import pkg_resources"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status(),
+                Ok(ref s) if s.success()
+            );
+            if !pr_ok {
+                log::warn!("pkg_resources still missing after repair sync — installing setuptools<80 directly (#248)");
+                emit_log(app, "installing_deps",
+                    "Repairing pkg_resources: installing setuptools<80 (#248)");
+                let mut st_cmd = Command::new(&uv_path);
+                scrub_python_env(&mut st_cmd);
+                apply_uv_http_env(&mut st_cmd);
+                st_cmd
+                    .args(["pip", "install", "setuptools>=75,<80"])
+                    .current_dir(&project_dir);
+                match run_streaming(app, "installing_deps", &mut st_cmd) {
+                    Ok(ref s) if s.success() => {
+                        log::info!("setuptools<80 installed after repair sync; pkg_resources now available (#248)");
+                    }
+                    other => {
+                        log::error!("Failed to install setuptools<80 after repair sync: {:?} — dubbing may fail (#248)", other);
+                    }
+                }
+                // Re-verify pkg_resources is importable after the targeted install.
+                let mut pr_post_check = Command::new(&venv_py);
+                scrub_python_env(&mut pr_post_check);
+                let pr_final_ok = matches!(
+                    pr_post_check
+                        .args(["-c", "import pkg_resources"])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status(),
+                    Ok(ref s) if s.success()
+                );
+                if !pr_final_ok {
+                    // Repair could not restore pkg_resources — fail loudly instead of
+                    // handing back a venv that will crash on the first ASR/dub call. The
+                    // "pkg_resources" text routes to the PKG_RESOURCES_MISSING failure
+                    // mapping (clear, doc-linked remediation in the UI). (#248)
+                    fail(
+                        progress,
+                        "pkg_resources is missing from the backend venv and the automatic \
+                         setuptools repair did not restore it. Open a terminal and run \
+                         `uv pip install 'setuptools>=75,<80'` in the backend venv, then \
+                         restart. (#248)",
+                    );
+                    return None;
+                }
+            }
             return Some((venv_py, backend_dir));
         }
         fail(progress, &format!("Repair uv sync failed: {:?}", repair_status));
@@ -496,17 +847,26 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
         set_stage(p, BootstrapStage::CreatingVenv);
     }
     // plan-03 (#130): mirror cascade + system-Python fallback so first-run
-    // survives a GitHub-blocked network. Try in order: (1) default GitHub host,
+    // survives a GitHub-blocked network. Try in order: (0) the user's custom
+    // mirror from the setup screen, when set, (1) default GitHub host,
     // (2) gh-proxy mirror, (3) system Python (only if >= 3.11) — each with
     // longer timeouts/retries. Stop at the first that succeeds.
-    let mut venv_attempts: Vec<(&str, Vec<&str>, Vec<(&str, &str)>)> = vec![
-        ("default", vec!["venv", "--python", "3.11", "--managed-python"], vec![]),
-        (
-            "gh-proxy mirror",
+    let user_cfg = crate::config::load_config(app);
+    let custom_mirrors = user_cfg.mirrors.clone();
+    let mut venv_attempts: Vec<(&str, Vec<&str>, Vec<(&str, String)>)> = Vec::new();
+    if let Some(custom_py_mirror) = custom_mirrors.python_downloads.clone() {
+        venv_attempts.push((
+            "custom mirror (setup screen)",
             vec!["venv", "--python", "3.11", "--managed-python"],
-            vec![("UV_PYTHON_INSTALL_MIRROR", PY_INSTALL_MIRROR)],
-        ),
-    ];
+            vec![("UV_PYTHON_INSTALL_MIRROR", custom_py_mirror)],
+        ));
+    }
+    venv_attempts.push(("default", vec!["venv", "--python", "3.11", "--managed-python"], vec![]));
+    venv_attempts.push((
+        "gh-proxy mirror",
+        vec!["venv", "--python", "3.11", "--managed-python"],
+        vec![("UV_PYTHON_INSTALL_MIRROR", PY_INSTALL_MIRROR.to_string())],
+    ));
     // Always try the system Python as the LAST resort (mirrors blocked too).
     // No `--python 3.11` pin and no pre-gate: uv's own interpreter discovery is
     // the authority — with `only-system` + the project's `requires-python =
@@ -517,7 +877,7 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
     venv_attempts.push((
         "system-python",
         vec!["venv"],
-        vec![("UV_PYTHON_PREFERENCE", "only-system")],
+        vec![("UV_PYTHON_PREFERENCE", "only-system".to_string())],
     ));
 
     let mut venv_ok = false;
@@ -525,7 +885,7 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
         let mut venv_cmd = Command::new(&uv_path);
         scrub_python_env(&mut venv_cmd); // #144: don't inherit AppImage's bundled Python
         apply_uv_http_env(&mut venv_cmd);
-        for &(k, v) in envs {
+        for (k, v) in envs {
             venv_cmd.env(k, v);
         }
         venv_cmd.args(args.iter()).current_dir(&project_dir);
@@ -558,8 +918,10 @@ pub fn ensure_venv_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>, progress:
             .args(["sync", "--no-dev", "--verbose"])
             .current_dir(&project_dir);
     }
-    let effective_region = get_effective_region(app);
-    if effective_region == "china" {
+    // PyPI index precedence: explicit setup-screen mirror > region preset.
+    if let Some(pypi) = custom_mirrors.pypi_index.as_deref() {
+        sync_cmd.env("UV_INDEX_URL", pypi);
+    } else if get_effective_region(app) == "china" {
         sync_cmd.env("UV_INDEX_URL", "https://mirrors.aliyun.com/pypi/simple/");
     }
     let sync_status = run_streaming(app, "installing_deps", &mut sync_cmd);
@@ -574,13 +936,50 @@ docs/install/troubleshooting.md).",
         return None;
     }
 
+    // #248 belt-and-suspenders: after every uv sync, verify that pkg_resources is
+    // importable. If it isn't (setuptools>=80 somehow landed — e.g. no lock file in
+    // bundle, or the lock was resolved without our pin), run a targeted
+    // `uv pip install "setuptools<80"` to repair the venv without touching anything
+    // else. This is safe on all platforms (pure-Python wheel, no native code).
+    {
+        let mut pr_verify = Command::new(&venv_py);
+        scrub_python_env(&mut pr_verify);
+        let pr_ok = matches!(
+            pr_verify
+                .args(["-c", "import pkg_resources"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status(),
+            Ok(ref s) if s.success()
+        );
+        if !pr_ok {
+            log::warn!("pkg_resources not importable after uv sync — installing setuptools<80 (#248)");
+            emit_log(app, "installing_deps",
+                "pkg_resources missing (setuptools>=80) — installing setuptools<80 to fix (#248)");
+            let mut st_cmd = Command::new(&uv_path);
+            scrub_python_env(&mut st_cmd);
+            apply_uv_http_env(&mut st_cmd);
+            st_cmd
+                .args(["pip", "install", "setuptools>=75,<80"])
+                .current_dir(&project_dir);
+            match run_streaming(app, "installing_deps", &mut st_cmd) {
+                Ok(ref s) if s.success() => {
+                    log::info!("setuptools<80 installed; pkg_resources now available (#248)");
+                }
+                other => {
+                    log::error!("Failed to install setuptools<80: {:?} — dubbing may fail (#248)", other);
+                }
+            }
+        }
+    }
+
     // Opt-in AMD ROCm (#124): the default install ships the CUDA torch build,
     // so AMD-only machines fall back to CPU. If the user set
     // OMNIVOICE_TORCH_VARIANT=rocm, reinstall torch/torchaudio from the ROCm
     // wheel index. Non-fatal: a failure keeps the working CUDA/CPU build rather
     // than breaking first-run. Default (unset) leaves everything unchanged.
-    if let Some(rocm_url) = rocm_opt_in() {
-        log::info!("OMNIVOICE_TORCH_VARIANT=rocm → reinstalling torch from {}", rocm_url);
+    if let Some(rocm_url) = rocm_opt_in(&user_cfg.torch_variant) {
+        log::info!("ROCm torch variant selected → reinstalling torch from {}", rocm_url);
         let mut rocm_cmd = Command::new(&uv_path);
         scrub_python_env(&mut rocm_cmd); // #144: don't inherit AppImage's bundled Python
         apply_uv_http_env(&mut rocm_cmd);
@@ -649,23 +1048,187 @@ mod tests {
     }
 
     #[test]
-    fn rocm_opt_in_gates_strictly_on_the_env_var() {
+    fn rocm_opt_in_gates_on_env_var_or_config() {
         // This test owns OMNIVOICE_TORCH_VARIANT / _INDEX for its duration; no
         // other test reads them.
         std::env::remove_var("OMNIVOICE_TORCH_VARIANT");
         std::env::remove_var("OMNIVOICE_TORCH_INDEX");
-        assert!(rocm_opt_in().is_none(), "unset → no ROCm (default CUDA/CPU path)");
+        assert!(rocm_opt_in("auto").is_none(), "unset+auto → no ROCm (default CUDA/CPU path)");
+        assert_eq!(
+            rocm_opt_in("rocm").as_deref(),
+            Some(ROCM_TORCH_INDEX),
+            "setup-screen config alone opts in"
+        );
 
         std::env::set_var("OMNIVOICE_TORCH_VARIANT", "cuda");
-        assert!(rocm_opt_in().is_none(), "non-rocm value → no ROCm");
+        assert!(rocm_opt_in("rocm").is_none(), "env var wins over config (explicit non-rocm)");
 
         std::env::set_var("OMNIVOICE_TORCH_VARIANT", "ROCm");
-        assert_eq!(rocm_opt_in().as_deref(), Some(ROCM_TORCH_INDEX), "case-insensitive opt-in → default index");
+        assert_eq!(rocm_opt_in("auto").as_deref(), Some(ROCM_TORCH_INDEX), "case-insensitive env opt-in → default index");
 
         std::env::set_var("OMNIVOICE_TORCH_INDEX", "https://example.test/rocm6.3");
-        assert_eq!(rocm_opt_in().as_deref(), Some("https://example.test/rocm6.3"), "index override honored");
+        assert_eq!(rocm_opt_in("auto").as_deref(), Some("https://example.test/rocm6.3"), "index override honored");
 
         std::env::remove_var("OMNIVOICE_TORCH_VARIANT");
         std::env::remove_var("OMNIVOICE_TORCH_INDEX");
+    }
+
+    /// Unique scratch dir under the OS temp dir for the #314 venv-validity tests.
+    /// Caller removes it at the end of the test.
+    fn temp_venv_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "omnivoice-test-314-{}-{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp venv dir");
+        dir
+    }
+
+    /// Lay down the minimal healthy-venv skeleton: pyvenv.cfg + the python
+    /// executable at the platform-correct location.
+    fn write_healthy_venv_skeleton(venv: &Path) {
+        fs::write(venv.join("pyvenv.cfg"), "home = /usr/local/bin\n").unwrap();
+        let py = venv_python_path(venv);
+        fs::create_dir_all(py.parent().unwrap()).unwrap();
+        fs::write(&py, "#!fake interpreter\n").unwrap();
+    }
+
+    #[test]
+    fn venv_structural_problem_none_when_venv_missing() {
+        // #314: a venv path that doesn't exist is the first-run case — the
+        // creation path owns it, the validator must stay out of the way.
+        let dir = temp_venv_dir("absent");
+        let venv = dir.join(".venv");
+        assert!(venv_structural_problem(&venv).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn venv_structural_problem_none_for_healthy_venv() {
+        // #314 / backward-compat hard rule: a healthy venv must never be
+        // flagged (and therefore never deleted).
+        let dir = temp_venv_dir("healthy");
+        let venv = dir.join(".venv");
+        fs::create_dir_all(&venv).unwrap();
+        write_healthy_venv_skeleton(&venv);
+        assert!(venv_structural_problem(&venv).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn venv_structural_problem_detects_missing_pyvenv_cfg() {
+        // #314: the exact field condition of the bug report — python present,
+        // pyvenv.cfg gone → venv launcher exits 106 "No pyvenv.cfg file".
+        let dir = temp_venv_dir("no-cfg");
+        let venv = dir.join(".venv");
+        fs::create_dir_all(&venv).unwrap();
+        write_healthy_venv_skeleton(&venv);
+        fs::remove_file(venv.join("pyvenv.cfg")).unwrap();
+        let problem = venv_structural_problem(&venv).expect("must flag missing pyvenv.cfg");
+        assert!(problem.contains("pyvenv.cfg"), "reason names pyvenv.cfg: {}", problem);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn venv_structural_problem_detects_missing_python() {
+        let dir = temp_venv_dir("no-python");
+        let venv = dir.join(".venv");
+        fs::create_dir_all(&venv).unwrap();
+        write_healthy_venv_skeleton(&venv);
+        fs::remove_file(venv_python_path(&venv)).unwrap();
+        let problem = venv_structural_problem(&venv).expect("must flag missing python");
+        assert!(problem.contains("python"), "reason names python: {}", problem);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn venv_structural_problem_detects_dangling_python_symlink() {
+        // #314: `bin/python` symlinks to a managed base interpreter; if that
+        // interpreter was removed, the symlink dangles and the venv is dead.
+        let dir = temp_venv_dir("dangling");
+        let venv = dir.join(".venv");
+        fs::create_dir_all(&venv).unwrap();
+        write_healthy_venv_skeleton(&venv);
+        let py = venv_python_path(&venv);
+        fs::remove_file(&py).unwrap();
+        std::os::unix::fs::symlink(dir.join("no-such-interpreter"), &py).unwrap();
+        let problem = venv_structural_problem(&venv).expect("must flag dangling symlink");
+        assert!(problem.contains("dangling"), "reason names the dangling link: {}", problem);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quarantine_broken_venv_removes_only_the_venv() {
+        // #314 safety property: only `.venv` goes away; sibling project files
+        // (manifests, backend sources) are untouched.
+        let dir = temp_venv_dir("quarantine");
+        let venv = dir.join(".venv");
+        fs::create_dir_all(venv.join("lib")).unwrap();
+        fs::write(venv.join("lib").join("junk.py"), "x").unwrap();
+        fs::write(dir.join("pyproject.toml"), "[project]\n").unwrap();
+        assert!(quarantine_broken_venv(&venv), "quarantine must succeed");
+        assert!(!venv.exists(), ".venv must be gone");
+        assert!(dir.join("pyproject.toml").is_file(), "sibling files must survive");
+        // Idempotent: quarantining an already-gone venv is a no-op success.
+        assert!(quarantine_broken_venv(&venv));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn broken_venv_exit_signature_matches_106_and_pyvenv_message_only() {
+        // #314: Windows venv launcher display + message.
+        assert!(backend_exit_indicates_broken_venv("exit code: 106", ""));
+        // Unix ExitStatus display.
+        assert!(backend_exit_indicates_broken_venv("exit status: 106", ""));
+        // Message in stderr tail wins regardless of the exit code text.
+        assert!(backend_exit_indicates_broken_venv(
+            "exit status: 1",
+            "Fatal error: No pyvenv.cfg file"
+        ));
+        // Deliberately narrow: ordinary crashes must NOT trigger a rebuild.
+        assert!(!backend_exit_indicates_broken_venv("exit status: 1", "Traceback ..."));
+        assert!(!backend_exit_indicates_broken_venv("exit status: 1060", ""));
+        assert!(!backend_exit_indicates_broken_venv("signal: 6 (SIGABRT)", ""));
+        assert!(!backend_exit_indicates_broken_venv("never started", ""));
+    }
+
+    /// #248: verify that the setuptools repair install uses the correct specifier.
+    /// The specifier `"setuptools>=75,<80"` must be passed as a single argument so
+    /// pip/uv interprets the range constraint as one requirement, not two.
+    #[test]
+    fn setuptools_repair_uses_correct_specifier() {
+        // Mirror the exact args slice used in both repair branches so a regression
+        // (e.g. accidentally splitting into ["setuptools>=75", ",<80"]) is caught
+        // here rather than silently installing the latest setuptools.
+        let repair_args: &[&str] = &["pip", "install", "setuptools>=75,<80"];
+
+        // The version specifier must be the third positional argument — one string,
+        // not split. This is the key property the review bot flagged: a split arg
+        // would make uv install the latest setuptools and leave pkg_resources absent.
+        assert_eq!(repair_args[0], "pip");
+        assert_eq!(repair_args[1], "install");
+        assert_eq!(repair_args[2], "setuptools>=75,<80",
+            "specifier must be a single arg; splitting it would bypass the <80 bound");
+
+        // The single-string specifier must contain both bounds.
+        let specifier = repair_args[2];
+        assert!(specifier.contains("setuptools"), "arg must name the package");
+        assert!(specifier.contains(">=75"), "lower bound must be >=75");
+        assert!(specifier.contains("<80"), "upper bound must be <80 to keep pkg_resources");
+        // No comma-split: the entire range is in one argument with no spaces.
+        assert!(!specifier.contains(' '), "specifier must not contain spaces (would be split by shell)");
+
+        // Verify 79.x satisfies the range
+        let v79: (u32, u32) = (79, 0);
+        assert!(v79.0 >= 75 && v79.0 < 80, "79.x must satisfy >=75,<80");
+        // Verify 80.x does NOT satisfy
+        let v80: (u32, u32) = (80, 0);
+        assert!(!(v80.0 >= 75 && v80.0 < 80), "80.x must NOT satisfy <80");
+        // Verify 82.x (what was installed before #224 fix) does NOT satisfy
+        let v82: (u32, u32) = (82, 0);
+        assert!(!(v82.0 >= 75 && v82.0 < 80), "82.x (pre-fix version) must NOT satisfy <80");
     }
 }

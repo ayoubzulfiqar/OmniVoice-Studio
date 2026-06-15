@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { createProfile, deleteProfile as apiDeleteProfile, lockProfile, unlockProfile } from '../api/profiles';
 import { generateSpeech, audioUrlWithCacheBust } from '../api/generate';
@@ -11,6 +12,7 @@ import { toast } from 'react-hot-toast';
  * Encapsulates voice-profile CRUD, lock/unlock, preview, and save-from-history.
  */
 export default function useProfiles({ loadHistory, loadProfiles }) {
+  const { t } = useTranslation();
   const [selectedProfile, setSelectedProfile] = useState(null);
   const [showSaveProfile, setShowSaveProfile] = useState(false);
   const [profileName, setProfileName] = useState('');
@@ -24,6 +26,8 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
   const setRefText = useAppStore(s => s.setRefText);
   const setInstruct = useAppStore(s => s.setInstruct);
   const setLanguage = useAppStore(s => s.setLanguage);
+  const setVdStates = useAppStore(s => s.setVdStates);
+  const setDefineMethod = useAppStore(s => s.setDefineMethod);
   const language = useAppStore(s => s.language);
   const mode = useAppStore(s => s.mode);
   const steps = useAppStore(s => s.steps);
@@ -35,7 +39,7 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
   // loadProfiles is provided by useAppData (single source of truth)
 
   const handleSaveProfile = useCallback(async (refAudio, refText, instruct, language) => {
-    if (!profileName.trim() || !refAudio) return toast.error("Need a name and reference audio");
+    if (!profileName.trim() || !refAudio) return toast.error(t('profiles.need_name_audio'));
     const formData = new FormData();
     formData.append("name", profileName);
     const arrBuf = await refAudio.arrayBuffer();
@@ -50,7 +54,7 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
       setProfileName('');
       await loadProfiles();
     } catch (e) { toast.error(e.message); }
-  }, [profileName, loadProfiles]);
+  }, [profileName, loadProfiles, t]);
 
   const handleDeleteProfile = useCallback(async (id) => {
     if (!(await askConfirm('Delete this voice profile?'))) return;
@@ -64,7 +68,37 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
     setRefText(profile.ref_text || '');
     setInstruct(profile.instruct || '');
     if (profile.language && profile.language !== 'Auto') setLanguage(profile.language);
-  }, [setRefText, setInstruct, setLanguage]);
+    // The profile's kind picks the "Define voice" method implicitly: design
+    // profiles open the design controls, everything else the audio path.
+    setDefineMethod(profile.kind === 'design' ? 'design' : 'audio');
+    // Design profiles (0005) carry their category picks — restore the sliders
+    // so selecting one makes it re-editable, not just re-usable.
+    if (profile.kind === 'design' && profile.vd_states) {
+      try {
+        const parsed = JSON.parse(profile.vd_states);
+        if (parsed && typeof parsed === 'object') setVdStates(parsed);
+      } catch { /* malformed stored state — sliders keep their current values */ }
+    }
+  }, [setRefText, setInstruct, setLanguage, setVdStates, setDefineMethod]);
+
+  /** Save the current design (vd_states + instruct) as a reusable profile.
+      The backend renders a deterministic identity sample (seed 42). */
+  const handleSaveDesignProfile = useCallback(async (vdStates, instruct, language) => {
+    if (!profileName.trim()) return toast.error('Need a profile name');
+    const fd = new FormData();
+    fd.append('name', profileName);
+    fd.append('kind', 'design');
+    fd.append('vd_states', JSON.stringify(vdStates || {}));
+    fd.append('instruct', instruct || '');
+    fd.append('language', language || 'Auto');
+    try {
+      await createProfile(fd);
+      setShowSaveProfile(false);
+      setProfileName('');
+      await loadProfiles();
+      toast.success('Design saved as a voice profile');
+    } catch (e) { toast.error(e.message); }
+  }, [profileName, loadProfiles]);
 
   const handlePreviewVoice = useCallback(async (proj, e) => {
     e.stopPropagation();
@@ -83,7 +117,7 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
     }
 
     setPreviewLoading(proj.id);
-    const toastId = toast.loading(`Synthesizing preview for ${proj.name}...`);
+    const toastId = toast.loading(t('profiles.synthesizing_preview', { name: proj.name }));
 
     try {
       const formData = new FormData();
@@ -93,21 +127,21 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
       formData.append("num_step", steps || 16);
       const res = await generateSpeech(formData);
       const blob = await res.blob();
-      toast.success('Preview ready!', { id: toastId });
-      playBlobAudio(blob).catch(() => toast.error('Playback failed', { id: toastId }));
+      toast.success(t('profiles.preview_ready'), { id: toastId });
+      playBlobAudio(blob).catch(() => toast.error(t('profiles.playback_failed'), { id: toastId }));
       await loadHistory();
     } catch (err) {
-      toast.error('Preview failed: ' + err.message, { id: toastId });
+      toast.error(t('profiles.preview_failed', { message: err.message }), { id: toastId });
     } finally {
       setPreviewLoading(null);
     }
-  }, [previewLoading, language, mode, dubSegments, dubLang, text, steps, loadHistory]);
+  }, [previewLoading, language, mode, dubSegments, dubLang, text, steps, loadHistory, t]);
 
   const handleSegmentPreview = useCallback(async (seg, e) => {
     e.preventDefault();
     if (segmentPreviewLoading) return;
     setSegmentPreviewLoading(seg.id);
-    const toastId = toast.loading(`Synthesizing segment...`);
+    const toastId = toast.loading(t('profiles.synthesizing_segment'));
 
     try {
       const formData = new FormData();
@@ -137,14 +171,14 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
 
       const res = await generateSpeech(formData);
       const blob = await res.blob();
-      toast.success('Preview ready!', { id: toastId });
-      playBlobAudio(blob).catch(() => toast.error('Playback failed', { id: toastId }));
+      toast.success(t('profiles.preview_ready'), { id: toastId });
+      playBlobAudio(blob).catch(() => toast.error(t('profiles.playback_failed'), { id: toastId }));
     } catch (err) {
-      toast.error('Preview failed: ' + err.message, { id: toastId });
+      toast.error(t('profiles.preview_failed', { message: err.message }), { id: toastId });
     } finally {
       setSegmentPreviewLoading(null);
     }
-  }, [segmentPreviewLoading, dubLang, cfg]);
+  }, [segmentPreviewLoading, dubLang, cfg, t]);
 
   const handleSaveHistoryAsProfile = useCallback(async (item) => {
     try {
@@ -166,12 +200,12 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
       }
 
       await createProfile(formData);
-      toast.success("Voice saved to profiles!");
+      toast.success(t('profiles.saved'));
       await loadProfiles();
     } catch (e) {
-      toast.error(e.message || "Failed to save voice profile");
+      toast.error(e.message || t('profiles.save_failed'));
     }
-  }, [loadProfiles]);
+  }, [loadProfiles, t]);
 
   const handleLockProfile = useCallback(async (profileId, historyId, seed) => {
     try {
@@ -179,22 +213,22 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
       formData.append("history_id", historyId);
       if (seed !== null && seed !== undefined) formData.append("seed", seed);
       await lockProfile(profileId, formData);
-      toast.success("🔒 Voice locked! Identity is now consistent across all generations.");
+      toast.success(t('profiles.locked'));
       await loadProfiles();
     } catch (e) {
-      toast.error(e.message || "Failed to lock profile");
+      toast.error(e.message || t('profiles.lock_failed'));
     }
-  }, [loadProfiles]);
+  }, [loadProfiles, t]);
 
   const handleUnlockProfile = useCallback(async (profileId) => {
     try {
       await unlockProfile(profileId);
-      toast.success("🎨 Voice unlocked. Generations will vary again.");
+      toast.success(t('profiles.unlocked'));
       await loadProfiles();
     } catch (e) {
-      toast.error(e.message || "Failed to unlock profile");
+      toast.error(e.message || t('profiles.unlock_failed'));
     }
-  }, [loadProfiles]);
+  }, [loadProfiles, t]);
 
   return {
     selectedProfile, setSelectedProfile,
@@ -204,6 +238,7 @@ export default function useProfiles({ loadHistory, loadProfiles }) {
     isVoicePreviewOpen, setIsVoicePreviewOpen,
     voicePreviewProfileId, setVoicePreviewProfileId,
     handleSaveProfile,
+    handleSaveDesignProfile,
     handleDeleteProfile,
     handleSelectProfile,
     handlePreviewVoice,

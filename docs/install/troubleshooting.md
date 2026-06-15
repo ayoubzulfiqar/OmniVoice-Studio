@@ -4,6 +4,32 @@ The top 10 errors users have actually hit on `v0.2.x`, with their causes and
 fixes. Most have a deeplink anchor that the in-app error UI's "Open docs for
 this error" button targets directly.
 
+## Start here: self-diagnosis
+
+<a id="self-diagnosis"></a>
+
+Before digging through the entries below, let the app diagnose itself:
+
+- **In the app:** **Settings → About → "Run self-check"** verifies your
+  compute device (CUDA/MPS/CPU), ffmpeg, HuggingFace token, disk space,
+  data-directory permissions, RAM, installed TTS engines, and hub
+  reachability — each with a hint when something's off.
+- **Headless / terminal:**
+
+  ```bash
+  uv run python backend/main.py --diagnose          # same checks, exits 1 on failure
+  uv run python backend/main.py --diagnose --deep   # also loads the active engine
+                                                    # and synthesizes a test utterance
+  ```
+
+  `--deep` catches "installed but broken" engines. On a fresh install it may
+  cold-load the model (minutes, plus a large download).
+
+- **Filing an issue?** **Settings → About → "Save diagnostic bundle"**
+  produces a zip (self-check report, recent classified errors, scrubbed log
+  tails) you can drag straight onto the GitHub issue. Home paths and
+  anything token-shaped are redacted before they leave your machine.
+
 ## 1. `pkg_resources` missing (ModuleNotFoundError)
 
 <a id="pkg_resources-missing"></a>
@@ -121,7 +147,24 @@ falling back to faster-whisper`.
 path and is still fast. If you want the latest CT2 wheels, run `uv sync`
 from a fresh source checkout.
 
-## 10. IndexTTS / CosyVoice / ChatterboxTTS clash
+## 10. Windows: `Could not locate cudnn_ops_infer64_8.dll` during transcription
+
+**Symptom:** on Windows + NVIDIA, transcription/dubbing fails and the backend
+log shows `Could not locate cudnn_ops_infer64_8.dll`. Settings → Models shows
+WhisperX or faster-whisper selected.
+
+**Cause:** WhisperX and faster-whisper run on **CTranslate2**, which needs
+**cuDNN 8**, but PyTorch 2.8 ships cuDNN 9. OmniVoice side-loads a cuDNN-8 copy
+from `.venv\Lib\site-packages\cudnn8_compat\`; if that folder is missing
+(some upgrade paths don't install it), CTranslate2 can't find the DLL.
+
+**Fix:** switch the ASR backend to **PyTorch Whisper** in **Settings → Models**.
+It runs on PyTorch's own stack (cuDNN 9, bundled with torch) and needs no
+cuDNN-8 DLL — it loads its Whisper pipeline on demand (no extra env var). To
+keep using faster-whisper/WhisperX instead, reinstall to restore the bundled
+`cudnn8_compat` libraries.
+
+## 11. IndexTTS / CosyVoice / ChatterboxTTS clash
 
 **Symptom:** installing one of these engines breaks the others — e.g. after
 installing CosyVoice, IndexTTS errors out with import conflicts.

@@ -24,6 +24,7 @@
     "engines": "Motorlar",
     "capture": "Kısayollar",
     "credentials": "Kimlik Bilgileri",
+    "updates": "Güncellemeler",
     "logs": "Günlükler",
     "about": "Hakkında",
     "privacy": "Gizlilik",
@@ -73,7 +74,16 @@
     "shortcut_set": "Dikte kısayolu {{shortcut}} olarak ayarlandı",
     "shortcut_register_failed": "Kaydedilemedi: {{message}}",
     "shortcut_reset": "Varsayılana sıfırla",
-    "shortcut_reset_failed": "Sıfırlama başarısız oldu: {{message}}"
+    "shortcut_reset_failed": "Sıfırlama başarısız oldu: {{message}}",
+    "cancel": "İptal",
+    "hf_token_also_clear": "Ayrıca temizle",
+    "hf_token_clear_btn": "Belirteci temizle",
+    "hf_token_clear_confirm": "Uygulama kaynaklı HuggingFace belirteci temizlensin mi?",
+    "hf_token_clear_dialog": "Belirteci temizle",
+    "hf_token_input": "HuggingFace belirteci",
+    "hf_token_sources": "HF belirteç kaynakları",
+    "hf_token_test_now": "Şimdi test et",
+    "hf_token_test_now_title": "Her kaynak için whoami'yi yeniden çalıştır"
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -103,7 +113,17 @@
     "region_russia": "Rusya (ayna)",
     "region_restricted": "Kısıtlanmış (ayna)",
     "unknown_error": "Bilinmeyen hata",
-    "retrying": "Yeniden deneniyor…"
+    "retrying": "Yeniden deneniyor…",
+    "hint_readme": "Pakette README.md eksikti. Bu artık otomatik düzeltiliyor — yeniden denemek işe yaramalı.",
+    "hint_python_mirror": "Ağ, Python indirmesine (github.com sürümü) ulaşamadı. Ayarlar → Ağ bölümünden bölgeyi değiştirin (Çin / Rusya / Kısıtlı bir yansı üzerinden gider) veya uygulamanın kullanması için sisteme Python 3.11+ kurun.",
+    "hint_uv_timeout": "uv indirilirken ağ zaman aşımı oluştu. İnternet bağlantınızı kontrol edin veya Ayarlar → Ağ bölümünden farklı bir bölge deneyin.",
+    "hint_uv_sync": "Bağımlılık kurulumu başarısız oldu. \"Temizle ve Yeniden Dene\" önbellekteki venv'i silip baştan başlar.",
+    "hint_build_backend": "Python derleme arka ucu hatası. \"Temizle ve Yeniden Dene\" bozuk venv'i kaldırır ve sıfırdan yeniden oluşturur.",
+    "hint_ffmpeg": "ffmpeg indirmesi başarısız oldu. Bu kritik değil — yeniden deneyin veya ffmpeg'i elle kurun.",
+    "hint_port": "3900 numaralı bağlantı noktası zaten kullanımda. Diğer OmniVoice kopyalarını veya bu portu kullanan uygulamaları kapatın.",
+    "hint_silent_crash": "Arka uç hata mesajı vermeden çöktü. \"Temizle ve Yeniden Dene\" bozuk venv sorunlarını genellikle çözer.",
+    "hint_github_blocked": "Ağınız GitHub'ı engelliyor olabilir. python.org'dan Python 3.11+ kurun (PATH'e ekleyin) ve yeniden başlatın veya UV_PYTHON_INSTALL_MIRROR ayarlayın — bkz. docs/install/troubleshooting.md.",
+    "hint_default": "Önce \"Yeniden Dene\"yi deneyin. Yine başarısız olursa \"Temizle ve Yeniden Dene\" ortamı sıfırdan kurar."
   },
   "stories": {
     "title": "Hikaye Düzenleyici",
@@ -220,7 +240,7 @@
     "designed_voices": "Tasarlanmış Sesler",
     "dubbing_projects": "Dublaj Projeleri",
     "empty_hint": "Burada henüz bir şey yok; yukarıdan bir kart seçin.",
-    "demo_callout": "👋 Demo sesini deneyin; duymak için Oluştur'a basın.",
+    "demo_callout": "Demo sesini deneyin; duymak için Oluştur'a basın.",
     "locked": "KİLİTLİ",
     "open": "Açık",
     "try_it": "Deneyin",
@@ -274,7 +294,7 @@
     "preset_surprised_woman": "😲 Şaşırdım",
     "preset_elderly_story": "👴 yaşlı",
     "preset_sichuan": "🌶️",
-    "prompt_placeholder": "Bu ses ne söylemeli? ✍️",
+    "prompt_placeholder": "Bu ses ne söylemeli?",
     "design_placeholder": "Sesi tanımlayın, ardından ne dediğini yazın…",
     "speed": "Hız",
     "tshift": "t_shift",
@@ -302,7 +322,17 @@
     "opt_high_pitch": "yüksek perde",
     "opt_very_high_pitch": "çok yüksek perde",
     "opt_whisper": "fısıltı",
-    "style_placeholder": "örneğin fısıltı"
+    "style_placeholder": "örneğin fısıltı",
+    "stop_playback": "Oynatmayı durdur",
+    "describe_label": "Sesinizi tarif edin",
+    "describe_placeholder": "örn. a warm elderly British storyteller, slightly raspy",
+    "describe_hint": "Açıklamanız (İngilizce) aşağıdaki denetimleri ayarlar — sonradan ince ayar yapabilirsiniz.",
+    "describe_unmatched": "Eşlenemedi: {{items}}",
+    "describe_no_match": "Henüz ses özelliği tanınmadı — deep, elderly veya British gibi kelimeler deneyin.",
+    "define_by_design": "Tasarımla",
+    "define_from_audio": "Sesten",
+    "define_voice": "Sesi tanımla",
+    "save_design_as_profile": "Tasarımı profil olarak kaydet"
   },
   "about": {
     "app": "Uygulama",
@@ -337,7 +367,17 @@
     "channel_stable": "Kararlı",
     "channel_preview": "Önizleme",
     "channel_set": "Güncelleme kanalı {{channel}} olarak ayarlandı",
-    "channel_preview_hint": "Önizleme en son main yapısını izler — daha yeni özellikler, daha az test. Daha yeni bir kararlı sürüm varsa kararlıya geri döner."
+    "channel_preview_hint": "Önizleme en son main yapısını izler — daha yeni özellikler, daha az test. Daha yeni bir kararlı sürüm varsa kararlıya geri döner.",
+    "self_check": "Öz denetimi çalıştır",
+    "self_check_failed": "Öz denetim başarısız: {{message}}",
+    "self_check_ok": "Tamam",
+    "self_check_warn": "Uyarı",
+    "self_check_fail": "Başarısız",
+    "self_check_healthy": "Tüm denetimler geçti — bu kurulum sağlıklı görünüyor.",
+    "self_check_attention": "{{count}} denetim başarısız — yukarıdaki ipuçlarına bakın.",
+    "save_bundle": "Tanılama paketini kaydet",
+    "bundle_saved": "Tanılama paketi kaydedildi: {{filename}}",
+    "bundle_failed": "Tanılama paketi oluşturulamadı: {{message}}"
   },
   "privacy": {
     "desc": "Her şey <1>bu makine</1> üzerinde çalışıyor. Açıkça bir çevrimiçi çevirmen (Google, DeepL vb.) kullanmadığınız veya HuggingFace'e aktarmadığınız sürece ses, video ve transkriptleriniz asla bilgisayarınızdan ayrılmaz.",
@@ -436,9 +476,12 @@
     "mic_denied": "Mikrofon erişimi reddedildi",
     "mic_denied_toast": "Mikrofon erişimi reddedildi. {{hint}}",
     "mic_hint_mac": "macOS: Sistem Ayarları → Gizlilik ve Güvenlik → Mikrofon'u açın ve OmniVoice'u etkinleştirin.",
-    "mic_hint_windows": "Windows: Ayarlar → Gizlilik ve güvenlik → Mikrofon'u açın ve OmniVoice'a izin verin.",
+    "mic_hint_windows": "Windows: Ayarlar → Gizlilik ve güvenlik → Mikrofon'u açın, 'Mikrofon erişimi' ve 'Masaüstü uygulamalarının mikrofonunuza erişmesine izin ver' seçeneklerini etkinleştirin, ardından OmniVoice'a izin verin.",
     "mic_hint_linux": "Linux: Kullanıcınızın ses grubunda olduğundan ve Web Görünümünün mikrofon erişimine sahip olduğundan emin olun.",
-    "transcription_failed": "Transkripsiyon başarısız oldu: {{message}}"
+    "transcription_failed": "Transkripsiyon başarısız oldu: {{message}}",
+    "mic_not_found": "Mikrofon bulunamadı. Bir mikrofon bağlayın veya etkinleştirin ve tekrar deneyin.",
+    "mic_in_use": "Mikrofon meşgul veya kullanılamıyor. Mikrofonu kullanıyor olabilecek diğer uygulamaları kapatın ve tekrar deneyin.",
+    "mic_error_generic": "Mikrofon başlatılamadı: {{message}}"
   },
   "logs": {
     "no_tauri_log": "Henüz diskte Tauri oturumu açılmadı; bir tane oluşturmak için masaüstü sürümü aracılığıyla başlatın",
@@ -564,7 +607,7 @@
     "prep_extract": "Ses çıkarılıyor…",
     "prep_demucs": "Vokal/müzik ayrımı (Demucs)…",
     "prep_scene": "Sahne kesintileri algılanıyor…",
-    "prep_cached": "⚡ Önbelleğe alınmış sonuçlar kullanılıyor…",
+    "prep_cached": "Önbelleğe alınmış sonuçlar kullanılıyor…",
     "prep_preparing": "Hazırlanıyor…",
     "prep_chip_download": "indir",
     "prep_chip_extract": "çıkarmak",
@@ -629,6 +672,8 @@
     "dual_subs_title": "Altyazıları, üstte çevrilmiş metin ve altta italik orijinal olacak şekilde dışa aktarın.",
     "burn_subs": "Altyazıları yaz",
     "burn_subs_title": "Altyazıları doğrudan MP4 video akışına (hardsub'lar) aktarın. Çift altyazı açıkken çift altyazı formatını kullanır.",
+    "timing_smart_fit": "Akıllı Sığdırma",
+    "timing_smart_fit_title": "Yükü paylaştırır: sesi hafifçe hızlandırır (perde korunur, en fazla 1,5×) ve videonun o bölümünü hafifçe yavaşlatır (en fazla 2×), böylece doğal hızdaki konuşma sığar. Sınırları aşan kısım kırpılır ve işaretlenir. Dışa aktarma videoyu yeniden kodlar.",
     "default_track": "Varsayılan Parça:",
     "original_track": "Orijinal",
     "selected_dub": "{{code}} (Seçilmiş Dub)",
@@ -654,7 +699,20 @@
     "diagnostic_copied": "Teşhis kopyalandı",
     "copy_failed": "Kopyalama başarısız oldu",
     "open_docs": "Dokümanları aç",
-    "copy_diagnostic": "Teşhisi kopyala"
+    "copy_diagnostic": "Teşhisi kopyala",
+    "dialect_label": "Lehçe",
+    "dialect_default": "Varsayılan",
+    "dialect_title": "Çeviri için bölgesel lehçe ve söz varlığı (örn. Arjantin → “tú eres” yerine “vos sos”). LLM motorları (OpenAI/Ollama) ve Cinematic kalitesi tarafından uygulanır.",
+    "num_speakers_label": "Konuşmacılar",
+    "num_speakers_auto": "Otomatik",
+    "num_speakers_help": "Bu videoda kaç konuşmacı var? Otomatik algılama için boş bırakın. Otomatik algılama birden çok konuşmacıyı tek kişide birleştiriyorsa bir sayı girin.",
+    "advanced": "Gelişmiş",
+    "cinematic_needs_llm_hint": "Sinematik için bir LLM gerekir. Ayarlar → Kimlik Bilgileri → LLM uç noktası bölümünden yapılandırın (Ollama yerel çalışır, anahtar gerekmez).",
+    "generate_dub_multi": "{{count}} dublaj oluştur",
+    "pipeline": "Dublaj hattı",
+    "preview_language": "Önizleme dili",
+    "target_language": "Dublaj dili",
+    "transcript_after_extract": "Transkript, çıkarma işleminden sonra görünür."
   },
   "glossary": {
     "title": "Sözlük",
@@ -740,6 +798,20 @@
     "fit_compressed_title": "TTS sesi yuvanın %{{pct}}'si kadardır ve yoğun şekilde sıkıştırılmıştır.",
     "fit_audio_title": "Ses yuvanın içine sığar.",
     "fit_ratio_title": "TTS sesi yuvanın %{{pct}} kadarıdır."
+  },
+  "timeline": {
+    "track_label": "Segment zaman çizelgesi",
+    "keyboard_hint": "Ok tuşları segment seçer · Enter düzenleme modunu açıp kapatır · Delete siler · S en yakın konuşma başlangıcına hizalar",
+    "segment_aria": "Segment {{index}}: {{start}} - {{end}}",
+    "overlap_warning": "Bitişik bir segmentle çakışıyor — iki replik birlikte çalınacak",
+    "moved_announce": "Segment {{index}}, {{start}} konumuna taşındı",
+    "resized_announce": "Segment {{index}}: {{start}} - {{end}}",
+    "deleted_announce": "Segment {{index}} silindi",
+    "snapped_announce": "Kenar, {{time}} konumundaki konuşma başlangıcına hizalandı",
+    "edit_mode_on": "Düzenleme modu: oklar başlangıcı, Shift bitişi, Alt tüm segmenti kaydırır, Esc bitirir",
+    "edit_mode_off": "Düzenleme modu kapalı",
+    "play_slot": "Bu aralığı oynat",
+    "preview_dub": "Dublajı burada önizle"
   },
   "voice": {
     "personality": "Kişilik",
@@ -903,7 +975,15 @@
     "save_failed": "Profil kaydedilemedi.",
     "confirm_delete": "\"{{name}}\" silinsin mi?",
     "trim_load_failed": "Kırpma için ses yüklenemedi.",
-    "delete": "Sil"
+    "delete": "Sil",
+    "community_empty": "Henüz topluluk sesi yüklenmedi — internete bağlanıp yeniden açın veya ilk gönderen siz olun.",
+    "community_explainer": "Topluluk tarafından paylaşılan tasarlanmış ön ayarlar ve kayıtlı sesler; omnivoice-gallery'den yüklenir.",
+    "no_designer": "Kayıtlı ses — bunun yerine \"Sesi kullan\"ı kullanın.",
+    "no_preview": "Önizleme yok — duymak için \"Sesi kullan\" ile ekleyin.",
+    "submit_failed": "Gönderim formu açılamadı.",
+    "submit_preset": "Ön ayar gönder",
+    "submit_voice": "Ses gönder",
+    "zone_community": "Topluluk"
   },
   "transcriptions": {
     "title": "Transkripsiyonlar",
@@ -956,7 +1036,9 @@
     "open": "Açık",
     "install_required_models": "Devam etmek için yukarıdaki gerekli modelleri yükleyin.",
     "try_dictation": "Dikte etmeyi deneyin",
-    "next_try_dictation": "Sonraki: Dikteyi deneyin"
+    "next_try_dictation": "Sonraki: Dikteyi deneyin",
+    "step_aria": "Adım {{num}}: {{label}}",
+    "step_completed": "tamamlandı"
   },
   "donate": {
     "title": "Destek",
@@ -977,7 +1059,7 @@
     "back": "Studio'ya geri dön",
     "badge": "Ticari Lisans",
     "hero_title": "Üretimde yapay zeka seslerini gönderin",
-    "hero_desc": "OmniVoice Studio, İşlevsel Kaynak Lisansı (FSL) kapsamında kaynak olarak mevcuttur. Çoğu kullanıcı ticari bir anlaşma olmadan dahili olarak değerlendirebilir, prototip oluşturabilir ve hatta dağıtabilir. Ticari lisansa yalnızca rakip bir ürün veya hizmet geliştiriyorsanız ya da kullanım alanınız FSL sınırlarının dışında kalıyorsa ihtiyacınız vardır.",
+    "hero_desc": "OmniVoice Studio, GNU Affero Genel Kamu Lisansı v3 (AGPL-3.0) kapsamında özgür ve açık kaynaklı bir yazılımdır — ticari ve kurum içi iş kullanımı dahil, kullanımı ücretsizdir. Ticari lisans yalnızca OmniVoice Studio'yu AGPL-3.0'ın copyleft yükümlülükleri olmadan kapalı kaynaklı veya tescilli bir ürün ya da hizmete gömmek istediğinizde gereklidir.",
     "why_title": "İşletmeler neden OmniVoice'u seçiyor?",
     "pricing_title": "Fiyatlandırma",
     "faq_title": "Sık sorulan sorular",
@@ -998,7 +1080,7 @@
     "benefit_source_desc": "Yığına tam görünürlük. Lisans koşulları dahilinde denetleyin, çatallayın ve uyarlayın.",
     "benefit_lang": "646 dil",
     "benefit_lang_desc": "646 dilde insan düzeyinde kaliteyle metne dönüştürün, tercüme edin ve dublaj yapın.",
-    "hero_note": "FSL kapsamında dahili kullanım - geniş ölçekte bile - ücretsizdir; ticari lisans yalnızca OmniVoice'u başkalarına rakip bir ürün veya hizmet (barındırılan veya kullanım başına ödemeli API, yeniden satılan veya beyaz etiketli bir uygulama) olarak sunmak için gereklidir. Fiyatlandırma katmanları yakında gelecek; bu arada bizimle iletişime geçin."
+    "hero_note": "Kullanım, kendi sunucunuzda barındırma ve ticari kullanım AGPL-3.0 kapsamında tamamen ücretsizdir — büyük ölçekte bile. AGPL bir ağ copyleft lisansıdır: OmniVoice'u değiştirir ve bu değiştirilmiş sürümü ağ üzerinden başkalarına sunarsanız, değiştirilmiş kaynak kodunuzu aynı koşullarla paylaşmanız gerekir. Ticari lisans, tescilli ve kapalı kaynaklı dağıtımlar için bu copyleft yükümlülüklerini kaldırır. Fiyatlandırma planları yakında — bu arada bizimle iletişime geçin."
   },
   "exportModal": {
     "export": "İhracat",
@@ -1047,6 +1129,7 @@
     "current_target": "Mevcut hedef ({{code}})",
     "all_selected_dubs": "Seçilen tüm dublajlar ({{count}})",
     "subs_note": "Alt başlıklar olduğu gibi bölüm metninden oluşturulur; yazım hataları fark ederseniz, dışa aktarmadan önce bölüm tablosunu düzenleyin.",
+    "retime_note": "Segment bazlı video yeniden zamanlama, dışa aktarmada videonun tamamını yeniden kodlar — CPU'da yaklaşık video süresinin 0,5–2 katını bekleyin.",
     "pkg_clips_title": "Segment başına klipler (.zip)",
     "pkg_clips_body": "Oluşturulan her segment, bir zip içinde numaralandırılmış bir WAV olarak; inceleme, seslendirme gönderisi veya veri kümesi oluşturma için iyidir.",
     "pkg_clips_cta": "Klipleri zip olarak dışa aktar",
@@ -1097,7 +1180,8 @@
     "script_french": "İngilizce olmayan (Fransızca)",
     "aria_pause": "Duraklat {{label}}",
     "aria_hear": "{{label}} sesini duyun",
-    "aria_replay": "{{label}} metnini aktarıcı aracılığıyla tekrar oynat"
+    "aria_replay": "{{label}} metnini aktarıcı aracılığıyla tekrar oynat",
+    "dictation_lede_hotkey_only": "Yukarıdaki kısayolu masaüstünde herhangi bir yerde basılı tutun, konuşun, bırakın — metin odaktaki uygulamaya düşer. Şimdi basıp doğrulayın."
   },
   "direction": {
     "title": "#{{id}} segmentinin yönü",
@@ -1122,7 +1206,10 @@
     "title": "Bu sekme bir engele çarptı.",
     "desc": "Endişelenmeyin; uygulamanın geri kalanı hala çalışıyor. Sekmeleri değiştirebilir veya aşağıda tekrar deneyebilirsiniz.",
     "tryAgain": "Tekrar dene",
-    "openDocs": "Bu hata için dokümanları açın"
+    "openDocs": "Bu hata için dokümanları açın",
+    "report": "Bu hatayı bildir",
+    "searchIssues": "Benzer sorunları ara",
+    "unexpected": "Beklenmeyen hata: {{message}}"
   },
   "keyboard": {
     "title": "Klavye kısayolları",
@@ -1278,7 +1365,8 @@
     "dub_label": "Dublaj",
     "save_label": "Kaydet",
     "lock_identity": "Ses kimliğini kilitle",
-    "in_folder": "{{folder}}'da"
+    "in_folder": "{{folder}}'da",
+    "search": "Ara…"
   },
   "trimmer": {
     "title": "Referans sesini kırp",
@@ -1411,13 +1499,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Dahili araçlar için lisansa ihtiyacım var mı?",
-    "a_internal_tools": "Çalışanlarınızın ve yüklenicilerinizin şirket içi kullanımı, FSL kapsamında İzin Verilen Amaçlardan biridir; lisans gerekmez. OmniVoice'u rakip bir ürün veya hizmetin (yeniden satış, barındırılan SaaS, beyaz etiket) parçası olarak başkalarının kullanımına sunduğunuzda ticari bir lisans gerekir.",
+    "a_internal_tools": "Hayır. Çalışanlarınızın ve yüklenicilerinizin kullanımı — kurum içi değişiklik ve kendi sunucunuzda barındırma dahil — AGPL-3.0 kapsamında ücretsizdir. Ticari lisans yalnızca OmniVoice'u kapalı kaynaklı veya tescilli bir ürün ya da hizmete gömüp AGPL'nin kaynak paylaşım yükümlülüklerine uymak istemediğinizde gereklidir.",
     "q_try_before": "Taahhüt etmeden önce deneyebilir miyim?",
-    "a_try_before": "Evet. Uygulamanın tamamını FSL kapsamında değerlendirme için yerel olarak indirmek ve çalıştırmak ücretsizdir. Ticari bir dağıtımı tartışmaya hazır olduğunuzda bize e-posta gönderin; ayrıntılar üzerinde birlikte çalışalım.",
+    "a_try_before": "Evet. Uygulamanın tamamı AGPL-3.0 kapsamında ücretsiz indirilebilir, çalıştırılabilir ve kendi sunucunuzda barındırılabilir — hiçbir sözleşme gerekmez. Ticari (tescilli kullanım) lisansını görüşmeye hazır olduğunuzda bize e-posta gönderin; ayrıntıları birlikte netleştirelim.",
     "q_watermark": "Filigran ne olacak?",
-    "a_watermark": "Görünmez AudioSeal filigranı varsayılan olarak gömülüdür. Ticari lisans sahipleri bunu Ayarlar → Gizlilik bölümünden devre dışı bırakabilir. Ücretsiz/kişisel kullanım her zaman filigranı da içerir.",
-    "q_apache": "Kaynak hiç Apache 2.0 olur mu?",
-    "a_apache": "Evet. Her sürüm, yayınlanmasının ikinci yıldönümünde otomatik olarak Apache Lisansı Sürüm 2.0'a dönüştürülür. Bu, bugünkü sürümün iki yıl içinde Apache 2.0 olacağı anlamına gelir; bizden herhangi bir işlem yapılmasına gerek yoktur - FSL bunu geri dönülmez bir şekilde garanti eder."
+    "a_watermark": "Görünmez AudioSeal filigranı varsayılan olarak herkes için gömülüdür. Ticari lisans sahipleri bunu Ayarlar → Gizlilik bölümünden devre dışı bırakabilir."
   },
   "gallery_extra": {
     "save_prompt": "Bu ses profili için bir ad girin:",
@@ -1452,6 +1538,7 @@
     "segments_clean": "Segmentler zaten temiz",
     "cleanup_failed": "Temizleme başarısız oldu: {{message}}",
     "cinematic_no_llm": "Sinematik kalitenin bir LLM'ye ihtiyacı vardır - TRANSLATE_BASE_URL + TRANSLATE_API_KEY'i ayarlayın (Ollama yerel olarak çalışır). Hızlı'ya geri dönüyorum.",
+    "dialect_not_applied": "Seçilen lehçe için LLM gerekir — motoru OpenAI/Ollama yapın veya Cinematic kalitesini seçin.",
     "translate_errors": "{{errorCount}}/{{totalCount}} segment(ler)i başarısız oldu: {{firstError}}",
     "translated_segments": "{{count}} segment(ler) çevrildi → {{lang}}",
     "translated_cinematic_suffix": "(Sinematik)",
@@ -1597,5 +1684,90 @@
     "none": "Yayın bulunamadı",
     "load_error": "Sürümler yüklenemedi (çevrimdışı mı?)",
     "retry_load": "Yeniden dene"
+  },
+  "firstrun": {
+    "loading": "Kurulum hazırlanıyor…",
+    "title": "OmniVoice Studio'yu kur",
+    "subtitle": "Henüz hiçbir şey kurulmadı — her şeyin nereye gideceğini gözden geçirin, sonra başlatın. Daha sonra Ayarlar'dan değiştirebilirsiniz.",
+    "language": "Dil",
+    "mode_title": "Kurulum modu",
+    "mode_installed": "Kurulu",
+    "mode_installed_desc": "Standart sistem klasörlerini kullanır. Çoğu kullanıcı için önerilir.",
+    "mode_portable": "Taşınabilir",
+    "mode_portable_desc": "Her şey uygulamanın yanındaki tek bir klasörde durur — başka bir diske veya makineye bütün halinde taşıyın.",
+    "mode_portable_unavailable": "Kullanılamıyor: uygulamanın yanındaki klasör yazılabilir değil.",
+    "storage_title": "Depolama",
+    "portable_folder": "Taşınabilir klasör",
+    "portable_folder_desc": "Çalışma ortamı, modeller ve ses verileriniz — tek klasör, tamamen taşınabilir.",
+    "env_dir": "Uygulama ortamı",
+    "env_dir_desc": "Python çalışma zamanı ve yapay zekâ kitaplıkları.",
+    "data_dir": "Ses verileri ve projeler",
+    "data_dir_desc": "Sesleriniz, dublajlar, çıktılar ve proje veritabanı.",
+    "models_dir": "Model önbelleği",
+    "models_dir_desc": "İndirilen yapay zekâ modelleri — en büyük ve en kolay taşınan kısım.",
+    "needs": "~{{size}} gerekir",
+    "free": "{{size}} boş",
+    "checking": "denetleniyor…",
+    "not_writable": "yazılamaz",
+    "change": "Değiştir…",
+    "compute_title": "Hesaplama",
+    "compute_label": "GPU / hızlandırıcı",
+    "compute_auto": "Otomatik (NVIDIA CUDA / Apple MPS / CPU)",
+    "compute_rocm": "AMD GPU (ROCm, Linux)",
+    "channel_label": "Güncelleme kanalı",
+    "channel_stable": "Kararlı",
+    "channel_preview": "Önizleme (en yeni main)",
+    "network_title": "Ağ",
+    "region_label": "İndirme bölgesi",
+    "mirrors_title": "Özel yansılar (gelişmiş)",
+    "mirror_pypi": "PyPI dizin URL'si",
+    "mirror_hf": "Hugging Face uç noktası",
+    "mirror_python": "Python indirme yansısı",
+    "insufficient_space": "Yetersiz alan: bu düzen tek diskte ~{{need}} gerektirir, yalnızca {{free}} boş. Başka bir konum seçin.",
+    "blocked_not_writable": "Seçilen bir klasör yazılabilir değil — başka bir konum seçin.",
+    "total_required": "Gereken toplam disk: ~{{size}} (ilk kullanımda tek seferlik indirme)",
+    "start": "Kurulumu başlat",
+    "starting": "Başlatılıyor…",
+    "compute_detected": "Algılandı",
+    "compute_match": "bu makineyle eşleşiyor",
+    "compute_auto_desc": "Çalışma anında bu makinenin en iyi arka ucunu seçer — NVIDIA'da CUDA, Apple Silicon'da MPS, aksi halde CPU.",
+    "compute_rocm_desc": "Linux'ta AMD ekran kartları için PyTorch ROCm paketlerini kurar. Emin değilseniz Otomatik'te bırakın.",
+    "channel_stable_desc": "Yalnızca test edilmiş sürümler — güncellemeler topluluk doğrulamasından sonra gelir.",
+    "channel_preview_desc": "En yeni main'den sürekli derlemeler — yeni motorlar ve düzeltmeler önce gelir, ara sıra pürüz olabilir.",
+    "installing_title": "Kuruluyor",
+    "activity_title": "Etkinlik",
+    "stage_setup": "Kurulum",
+    "stage_models": "Modeller ve motorlar",
+    "chip_required": "gerekli",
+    "chip_optional": "isteğe bağlı",
+    "chip_engine": "motor",
+    "lib_download": "İndir",
+    "lib_downloading": "indiriliyor…",
+    "lib_use": "Kullan",
+    "lib_active": "etkin",
+    "lib_in_settings": "daha sonra Ayarlar’dan kur",
+    "lib_show_all": "{{count}} isteğe bağlı modeli göster",
+    "trust_line": "Her şey bu makinede çalışır ve kalır — hesap yok, bulut yok, telemetri yok.",
+    "resume_note": "Yarıda kalan indirmeler otomatik devam eder — uygulamayı kapatmak güvenlidir.",
+    "eta_left": "~{{eta}} kaldı",
+    "first_sound_text": "Stüdyona hoş geldin. Duyduğun her kelime az önce bu makinede üretildi.",
+    "first_sound_done": "O ses mi? Saniyeler önce, yerelde üretildi. Hoş geldin.",
+    "hf_token_title": "Hugging Face belirteci (isteğe bağlı)",
+    "hf_token_hint": "Kısıtlı modellerin kilidini açar — ör. çok konuşmacılı dublaj için konuşmacı ayrıştırma (pyannote). Ücretsiz hesap belirteci; bu makinede kalır.",
+    "hf_token_save": "Kaydet",
+    "hf_token_saving": "kaydediliyor…",
+    "hf_token_saved": "Hugging Face belirteci kaydedildi",
+    "hf_token_error": "Belirteç kaydedilemedi — yeniden deneyin veya sonra Ayarlar → Kimlik bilgileri bölümünden ayarlayın."
+  },
+  "history": {
+    "dub_title": "Dublaj geçmişi",
+    "empty": "Burada henüz bir şey yok — oluşturduklarınız sağda görünecek.",
+    "empty_dub": "Dublajlarınız burada görünecek.",
+    "title": "Geçmiş"
+  },
+  "recording": {
+    "cleaned_loaded": "Kayıt temizlendi ve yüklendi!",
+    "loaded_raw": "Kayıt yüklendi (ham — gürültü giderme kullanılamıyor)",
+    "too_short": "Kayıt çok kısa"
   }
 }

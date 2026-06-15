@@ -2,10 +2,20 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-|---------|--------------------|
-| 0.2.x   | ✅ Current release |
-| < 0.2   | ❌ No longer supported |
+| Version | Supported |
+|---------|-----------|
+| 0.3.x (latest release + `main` previews) | ✅ Current — all fixes land here |
+| 0.2.7 | ⚠️ Legacy stable — security fixes only, upgrade recommended |
+| < 0.2.7 | ❌ No longer supported |
+
+## Model supply chain
+
+OmniVoice supports models from **public, verifiable sources only** (Hugging
+Face repos, official project releases). Privately sold or gated model files
+are not supported: an archive from a private source can carry anything
+(bundled executables, modified configs), and nobody else can verify or
+reproduce it. Treat any privately distributed model file as an untrusted
+download, and never run executables bundled with model archives.
 
 ## Reporting a Vulnerability
 

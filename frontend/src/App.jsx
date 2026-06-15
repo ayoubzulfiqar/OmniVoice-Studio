@@ -24,9 +24,13 @@ const VoiceGallery = lazy(() => import('./pages/VoiceGallery'));
 const SupportPage = lazy(() => import('./pages/SupportPage'));
 const TranscriptionsPage = lazy(() => import('./pages/Transcriptions'));
 const StoriesEditor = lazy(() => import('./components/StoriesEditor'));
+const AudiobookTab = lazy(() => import('./pages/AudiobookTab'));
 
 import Header from './components/Header';
 import NavRail from './components/NavRail';
+import WorkspaceHistory from './components/WorkspaceHistory';
+import WorkspaceVoices from './components/WorkspaceVoices';
+import WorkspaceProjects from './components/WorkspaceProjects';
 import ErrorBoundary from './components/ErrorBoundary';
 import FloatingPill from './components/FloatingPill';
 // RemoteAuthGate is mounted at the true outermost provider in main-app.jsx so
@@ -49,6 +53,8 @@ import useDubWorkflow from './hooks/useDubWorkflow';
 const LazyFallback = () => <div className="app-lazy-fallback">{i18n.t('app.loading')}</div>;
 
 import { Toaster, toast } from 'react-hot-toast';
+import { toastErrorWithReport } from './utils/errorToast';
+import { addBreadcrumb } from './utils/breadcrumbs';
 import {
   POPULAR_LANGS, POPULAR_ISO, TAGS, CATEGORIES, PRESETS, CLONE_MAX_SECONDS,
 } from './utils/constants';
@@ -56,10 +62,11 @@ import { LANG_CODES } from './utils/languages';
 import { formatTime } from './utils/format';
 import { API, apiPost } from './api/client';
 import { flushMemory as apiFlushMemory } from './api/system';
-import { saveProject as apiSaveProject, loadProject as apiLoadProject, deleteProject as apiDeleteProject } from './api/projects';
+import { saveProject as apiSaveProject, loadProject as apiLoadProject, deleteProject as apiDeleteProject, renameProject as apiRenameProject } from './api/projects';
 import { exportAction, exportReveal, exportRecord } from './api/exports';
 
 import { isTauri, doubleClickMaximize, fileToMediaUrl, playBlobAudio, playPing } from './utils/media';
+import { browserDownload } from './utils/download';
 import { checkForUpdate, fetchAppVersion } from './utils/updater';
 import { syncChannel } from './utils/channelControl';
 import i18n from './i18n';
@@ -76,6 +83,26 @@ function App() {
   // via the store's `partialize`; active project / voice ids stay transient.
   const uiScale = useAppStore(s => s.uiScale);
   const setUiScale = useAppStore(s => s.setUiScale);
+
+  // Responsive shell breakpoints driven off the app-container's OWN width, not
+  // the viewport. The shell is sized `width: calc(100vw / --ui-scale)` then
+  // `transform: scale(--ui-scale)` (the WebKitGTK fix, #407), so the grid lays
+  // out against `100vw/scale` — which `el.clientWidth` reports (transforms don't
+  // change the layout box). Viewport `@media` queries fire on raw `100vw` and so
+  // collapse at the wrong threshold whenever the UI scale ≠ 1, cramming the
+  // content into a sliver. ResizeObserver fires on both window resize and scale
+  // change (the calc width changes), so this stays correct on every engine.
+  const shellRef = useRef(null);
+  const [shellWidth, setShellWidth] = useState(Infinity);
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => setShellWidth(el.clientWidth));
+    ro.observe(el);
+    setShellWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+  const shellSizeClass = shellWidth <= 600 ? 'shell-mini' : shellWidth <= 1100 ? 'shell-narrow' : '';
   const theme = useAppStore(s => s.theme);
 
   const locale = useAppStore(s => s.locale);
@@ -101,6 +128,13 @@ function App() {
   }, [locale, theme, font]);
   const mode = useAppStore(s => s.mode);
   const setMode = useAppStore(s => s.setMode);
+  // "Define voice" method inside the Voice (studio) workspace — replaces the
+  // old clone/design navigation split (voice-studio-unification P4).
+  const defineMethod = useAppStore(s => s.defineMethod);
+  const setDefineMethod = useAppStore(s => s.setDefineMethod);
+  // Breadcrumb every view change — mode names are a closed set, so this is
+  // privacy-safe by construction (see utils/breadcrumbs.js).
+  useEffect(() => { addBreadcrumb(`view:${mode}`); }, [mode]);
   const [navRailSide, setNavRailSide] = useState(() => {
     try { return localStorage.getItem('omnivoice.navRailSide') || 'left'; } catch { return 'left'; }
   });
@@ -153,12 +187,11 @@ function App() {
   const closeVoiceProfile = useAppStore(s => s.closeVoiceProfile);
   const hideSidebar = mode === 'launchpad' || mode === 'settings' || mode === 'voice' || mode === 'donate'
     || mode === 'queue' || mode === 'tools' || mode === 'projects' || mode === 'gallery' || mode === 'enterprise' || mode === 'transcriptions'
-    || mode === 'stories';
-  const availableSidebarTabs = mode === 'dub'
-    ? ['projects', 'history', 'downloads']
-    : (mode === 'clone' || mode === 'design')
-      ? ['projects', 'history']
-      : [];
+    || mode === 'stories' || mode === 'audiobook'
+    // Voice (studio) and Dub workspaces moved their saved voices /
+    // projects + history into right-side panels; left sidebar dissolved.
+    || mode === 'studio' || mode === 'dub';
+  const availableSidebarTabs = [];
   // Generate-tab prefs now live in `generateSlice` (Phase 2.2). Persisted
   // knobs survive reloads via the store's `partialize`.
   const text              = useAppStore(s => s.text);
@@ -197,7 +230,7 @@ function App() {
   const {
     profiles, history, dubHistory, studioProjects, exportHistory,
     showOverrides, setShowOverrides,
-    sysStats, modelStatus,
+    modelStatus,
     loadProfiles, loadHistory, loadDubHistory, loadProjects, loadExportHistory,
   } = useAppData();
 
@@ -209,6 +242,7 @@ function App() {
     isVoicePreviewOpen, setIsVoicePreviewOpen,
     voicePreviewProfileId, setVoicePreviewProfileId,
     handleSaveProfile: _handleSaveProfile,
+    handleSaveDesignProfile,
     handleDeleteProfile, handleSelectProfile,
     handlePreviewVoice, handleSegmentPreview,
     handleSaveHistoryAsProfile, handleLockProfile, handleUnlockProfile,
@@ -224,6 +258,34 @@ function App() {
   } = useTTS({ selectedProfile, setSelectedProfile, loadHistory });
 
   const handleSaveProfile = () => _handleSaveProfile(refAudio, refText, instruct, language);
+
+  // ═══ PENDING PROFILE HAND-OFF ═══
+  // Views like the Gallery hand a freshly-created profile to the synthesis view
+  // via store.pendingProfileId + setMode('studio'). The profile may not be in the
+  // loaded list yet (it arrives via loadProfiles / the realtime `profiles` event),
+  // so we wait for it to appear, select it, then clear the hand-off.
+  const pendingProfileId = useAppStore(s => s.pendingProfileId);
+  const setPendingProfileId = useAppStore(s => s.setPendingProfileId);
+  // Stories projects (storiesSlice) — surfaced in the global Projects view so a
+  // saved story is openable from OmniDrive, like dub projects.
+  const storyProjects = useAppStore(s => s.storyProjects);
+  const loadStoryProject = useAppStore(s => s.loadProject);
+  const pendingRefreshRef = useRef(null);
+  useEffect(() => {
+    if (!pendingProfileId) { pendingRefreshRef.current = null; return; }
+    const prof = profiles.find(p => p.id === pendingProfileId);
+    if (prof) {
+      handleSelectProfile(prof);
+      setPendingProfileId(null);
+      pendingRefreshRef.current = null;
+      return;
+    }
+    // Not loaded yet — refresh the list once; the effect re-runs when it arrives.
+    if (pendingRefreshRef.current !== pendingProfileId) {
+      pendingRefreshRef.current = pendingProfileId;
+      loadProfiles();
+    }
+  }, [pendingProfileId, profiles, handleSelectProfile, loadProfiles, setPendingProfileId]);
 
   // A/B Voice Comparison State
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
@@ -252,6 +314,8 @@ function App() {
   const setDubLang         = useAppStore(s => s.setDubLang);
   const dubLangCode        = useAppStore(s => s.dubLangCode);
   const setDubLangCode     = useAppStore(s => s.setDubLangCode);
+  const dubDialect         = useAppStore(s => s.dubDialect);
+  const setDubDialect      = useAppStore(s => s.setDubDialect);
   const dubInstruct        = useAppStore(s => s.dubInstruct);
   const setDubInstruct     = useAppStore(s => s.setDubInstruct);
   const dubProgress        = useAppStore(s => s.dubProgress);
@@ -297,7 +361,8 @@ function App() {
   const {
     undo, redo, editSegments,
     segmentEditField, segmentDelete, segmentRestoreOriginal,
-    segmentSplit, segmentMerge,
+    segmentSplit, segmentMerge, segmentMoveResize,
+    timelineSelSegId, setTimelineSelSegId,
     selectedSegIds, setSelectedSegIds,
     toggleSegSelect, selectAllSegs, clearSegSelection,
     bulkApplyToSelected, bulkDeleteSelected,
@@ -364,6 +429,13 @@ function App() {
   const [setupNeeded, setSetupNeeded] = useState(false);
   const [setupChecked, setSetupChecked] = useState(false);
   useEffect(() => {
+    // Gate the probe on the bootstrap being 'ready' — before that there is
+    // no backend to answer. Probing from mount burned the 30-attempt ceiling
+    // during the setup/installing acts (minutes long on a first run), so the
+    // wizard was silently skipped straight into the studio once the install
+    // finished. Keyed on bootstrapStage: the probe (re)runs the moment the
+    // backend becomes reachable.
+    if (bootstrapStage !== 'ready') return undefined;
     let cancelled = false;
     (async () => {
       const { setupStatus } = await import('./api/setup');
@@ -382,7 +454,37 @@ function App() {
       if (!cancelled) setSetupChecked(true);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [bootstrapStage]);
+
+  // ── First sound ──
+  // Onboarding should end with the product doing the thing: the moment the
+  // studio mounts after the wizard, generate one short line locally and play
+  // it. Best-effort by design — a first impression must never surface an
+  // error, so every failure path is silent.
+  useEffect(() => {
+    if (!setupChecked || setupNeeded || bootstrapStage !== 'ready') return;
+    let pending = false;
+    try {
+      pending = sessionStorage.getItem('omnivoice.firstSound') === '1';
+      if (pending) sessionStorage.removeItem('omnivoice.firstSound');
+    } catch { /* private mode */ }
+    if (!pending) return;
+    (async () => {
+      try {
+        const fd = new FormData();
+        fd.append('text', i18n.t('firstrun.first_sound_text'));
+        // Functional model prompt (not user-facing copy) — keeps the demo
+        // voice warm without depending on seeded profiles.
+        fd.append('instruct', 'A warm, friendly narrator voice, medium pace');
+        fd.append('num_step', '16');
+        const res = await fetch(`${API}/generate`, { method: 'POST', body: fd });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        await playBlobAudio(blob);
+        toast.success(i18n.t('firstrun.first_sound_done'), { duration: 7000 });
+      } catch { /* silent — see above */ }
+    })();
+  }, [setupChecked, setupNeeded, bootstrapStage]);
 
   // ── Tauri auto-updater ──
   // On boot, ask GitHub Releases if a newer build is available. If yes,
@@ -505,7 +607,27 @@ function App() {
   });
 
   const handleNativeExport = async (e, sourceIdentifier, fallbackName, mode) => {
+    addBreadcrumb('export');
     if (e) { e.preventDefault(); e.stopPropagation(); }
+    // Browser / Docker web build: there is no Tauri shell, so the native save
+    // dialog is unavailable — invoking it throws "Cannot read properties of
+    // undefined (reading 'invoke')" (issue #256). Fall back to a plain HTTP
+    // blob download of the file already served at /audio/<path>.
+    if (!isTauri) {
+      const niceName = (fallbackName || sourceIdentifier || 'audio').split('/').pop();
+      try {
+        const finalName = await browserDownload(`${API}/audio/${sourceIdentifier}`, niceName);
+        toast.success(i18n.t('app.toast_downloaded', { name: finalName }));
+        try {
+          await exportRecord({ filename: finalName, destination_path: `~/Downloads/${finalName}`, mode });
+          loadExportHistory();
+        } catch (err) { console.warn('exportRecord (browser export path) failed:', err); }
+      } catch (err) {
+        console.error(err);
+        toastErrorWithReport(i18n.t('app.toast_export_failed', { message: err?.message || err }), err);
+      }
+      return;
+    }
     try {
       const { save } = await import('@tauri-apps/plugin-dialog');
       const ext = fallbackName.includes('.') ? fallbackName.split('.').pop() : 'wav';
@@ -517,7 +639,7 @@ function App() {
       loadExportHistory();
     } catch (err) {
       console.error(err);
-      toast.error(i18n.t('app.toast_export_failed', { message: err?.message || err }));
+      toastErrorWithReport(i18n.t('app.toast_export_failed', { message: err?.message || err }), err);
     }
   };
   const revealInFolder = async (filePath) => {
@@ -527,14 +649,6 @@ function App() {
       toast.error(i18n.t('app.toast_open_folder_failed', { message: err.message }));
     }
   };
-  const parseFilenameFromContentDisposition = (header) => {
-    if (!header) return null;
-    const utf8 = header.match(/filename\*=(?:UTF-8|utf-8)''([^;]+)/i);
-    if (utf8) { try { return decodeURIComponent(utf8[1].trim().replace(/^"|"$/g, '')); } catch { /* ignore */ } }
-    const plain = header.match(/filename="?([^";]+)"?/i);
-    return plain ? plain[1].trim() : null;
-  };
-
   const triggerDownload = async (url, fallbackName) => {
     const extGuess = (fallbackName.includes('.') ? fallbackName.split('.').pop() : 'bin').toLowerCase();
     const modeGuess = ['mp4','mov','mkv','webm'].includes(extGuess)
@@ -551,11 +665,40 @@ function App() {
         });
         if (!destPath) return; // user cancelled
         toast.loading(i18n.t('app.toast_saving', { name: fallbackName }), { id: fallbackName });
+
+        // Subtitles are small text bodies: fetch them raw and write from this
+        // (trusted) process via the save_text_file command — the user's dialog
+        // pick is the write authorization, and the backend never handles a
+        // destination path (#309).
+        if (['srt', 'vtt'].includes(extGuess)) {
+          const res = await fetch(url);
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Save failed');
+          }
+          const text = await res.text();
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('save_text_file', { path: destPath, contents: text });
+          toast.success(i18n.t('app.toast_saved', { path: destPath }), { id: fallbackName });
+          try {
+            await exportRecord({ filename: fallbackName, destination_path: destPath, mode: modeGuess });
+            loadExportHistory();
+          } catch (err) { console.warn('exportRecord (subtitle save) failed:', err); }
+          return;
+        }
+
         const sep = url.includes('?') ? '&' : '?';
         const res = await fetch(`${url}${sep}save_path=${encodeURIComponent(destPath)}`);
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.detail || 'Save failed');
+        }
+        // Every save_path-aware endpoint returns a JSON envelope. Guard the
+        // content-type so a raw-body response surfaces as a clear error
+        // instead of a cryptic JSON.parse failure (#309).
+        const ctype = res.headers.get('content-type') || '';
+        if (!ctype.includes('application/json')) {
+          throw new Error(`Server returned ${ctype || 'an unknown content type'} instead of a JSON save confirmation`);
         }
         const data = await res.json();
         toast.success(i18n.t('app.toast_saved', { path: data.path }), { id: fallbackName });
@@ -573,19 +716,7 @@ function App() {
     // Browser path: standard blob download.
     try {
       toast.loading(i18n.t('app.toast_processing', { name: fallbackName }), { id: fallbackName });
-      const response = await fetch(url);
-      if (!response.ok) throw new Error("Download failed");
-      const serverName = parseFilenameFromContentDisposition(response.headers.get('content-disposition'));
-      const finalName = serverName || fallbackName || 'download';
-      const blob = await response.blob();
-      const localUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = localUrl;
-      a.download = finalName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(localUrl);
+      const finalName = await browserDownload(url, fallbackName);
       toast.success(i18n.t('app.toast_downloaded', { name: finalName }), { id: fallbackName });
       try {
         await exportRecord({ filename: finalName, destination_path: `~/Downloads/${finalName}`, mode: modeGuess });
@@ -602,7 +733,7 @@ function App() {
   // artifacts. No-op when previewSegIds is empty.
   const finalizeTtsBeforeExport = async () => {
     if (!previewSegIds || previewSegIds.length === 0) return;
-    toast(`Upgrading ${previewSegIds.length} preview-quality segment${previewSegIds.length === 1 ? '' : 's'} to full quality…`, { icon: '✨' });
+    toast(i18n.t('dub.upgrading_preview', { count: previewSegIds.length }));
     await handleDubGenerate({ regenOnly: previewSegIds, preview: false });
   };
   const handleDubDownload = async () => {
@@ -651,7 +782,7 @@ function App() {
       duration: dubDuration || null,
       state: {
         dubJobId, dubFilename, dubDuration, dubSegments,
-        dubLang, dubLangCode, dubInstruct, dubTracks,
+        dubLang, dubLangCode, dubDialect, dubInstruct, dubTracks,
         dubStep, dubTranscript, preserveBg, defaultTrack,
         speakerClones,
       },
@@ -679,6 +810,7 @@ function App() {
       setDubSegments((s.dubSegments || []).map(x => ({ ...x, text_original: x.text_original || x.text || '' })));
       setDubLang(s.dubLang || 'Auto');
       setDubLangCode(s.dubLangCode || 'en');
+      setDubDialect(s.dubDialect || '');
       setDubInstruct(s.dubInstruct || '');
       setDubTracks(s.dubTracks || []);
       setDubTranscript(s.dubTranscript || '');
@@ -706,6 +838,16 @@ function App() {
       }
       loadProjects();
       toast.success(i18n.t('app.toast_project_deleted'));
+    } catch (err) { toast.error(err.message); }
+  };
+
+  const renameProject = async (projectId, nextName) => {
+    const name = (nextName || '').trim();
+    if (!name) return;
+    try {
+      await apiRenameProject(projectId, name);
+      if (activeProjectId === projectId) setActiveProject(projectId, name);
+      loadProjects();
     } catch (err) { toast.error(err.message); }
   };
 
@@ -738,7 +880,15 @@ function App() {
   };
 
   const restoreHistory = (item) => {
-    if (item.mode) setMode(item.mode);
+    // History `mode` values stay 'clone'/'design' forever — only the
+    // navigation mode id changed. Map them onto the unified 'studio'
+    // workspace + its define method (voice-studio-unification P4).
+    if (item.mode === 'clone' || item.mode === 'design') {
+      setMode('studio');
+      setDefineMethod(item.mode === 'clone' ? 'audio' : 'design');
+    } else if (item.mode) {
+      setMode(item.mode);
+    }
     if (item.text) setText(item.text);
     if (item.language) setLanguage(item.language);
     if (item.profile_id) setSelectedProfile(item.profile_id);
@@ -765,6 +915,17 @@ function App() {
   };
 
 
+  // Install-plan screen outranks everything — both on a true first run and
+  // when explicitly requested via `--setup`. Without this, a live backend
+  // answering /setup/status would route straight to the model wizard and the
+  // awaiting_setup stage would never get to render.
+  if (bootstrapStage === 'awaiting_setup') {
+    return (
+      <div style={{ zoom: uiScale }}>
+        <BootstrapSplash stage={bootstrapStage} message={bootstrapMessage} />
+      </div>
+    );
+  }
   // First-run gate: if /setup/status says models aren't on disk yet, render
   // the wizard instead of the main studio. Dismisses itself once the user
   // completes the download (or clicks "Skip" if they want to limp along).
@@ -781,10 +942,13 @@ function App() {
       </div>
     );
   }
-  if (setupNeeded) {
+  if (setupNeeded && bootstrapStage === 'ready') {
     // Render outside the `app-container` grid so the wizard spans the full
     // viewport instead of getting squeezed into whatever grid cell the
-    // studio layout reserves for the main content column.
+    // studio layout reserves for the main content column. Gated on the
+    // bootstrap being 'ready': while the stage is still settling (checking /
+    // awaiting_setup racing the first poll), the wizard must not steal the
+    // mount from the install-plan screen.
     return (
       <div
         className="app-wizard-wrap"
@@ -793,19 +957,20 @@ function App() {
         {/* Invisible drag strip across the top 28 px of the wizard —
             matches the macOS traffic-light zone so the window can be
             dragged / double-click-zoomed from anywhere along the top. */}
+        {/* Double-click-to-maximize is handled globally in main.jsx for every
+            drag region (splash, first-run, wizard, main) on all platforms. */}
         <div
           data-tauri-drag-region
-          onDoubleClick={() => {
-            if ('__TAURI_INTERNALS__' in window) {
-              import('@tauri-apps/api/window').then(m =>
-                m.getCurrentWindow().toggleMaximize()
-              ).catch(() => {});
-            }
-          }}
           className="app-wizard-dragstrip"
         />
         <Suspense fallback={<LazyFallback />}>
-          <SetupWizard onReady={() => setSetupNeeded(false)} />
+          <SetupWizard onReady={() => {
+            // First-sound handoff: the studio's first act after onboarding is
+            // to speak. sessionStorage (not localStorage) so it never replays
+            // on later launches — only on the run that finished the wizard.
+            try { sessionStorage.setItem('omnivoice.firstSound', '1'); } catch { /* private mode */ }
+            setSetupNeeded(false);
+          }} />
         </Suspense>
         <Suspense fallback={null}>
           <LogsFooter />
@@ -822,13 +987,15 @@ function App() {
 
   return (
     <div
+      ref={shellRef}
       className={[
         'app-container',
         isSidebarCollapsed ? 'sidebar-collapsed' : '',
         hideSidebar ? 'sidebar-hidden' : '',
         navRailSide === 'right' ? 'rail-right' : '',
+        shellSizeClass,
       ].filter(Boolean).join(' ')}
-      style={{ zoom: uiScale }}
+      style={{ '--ui-scale': uiScale }}
     >
       {pendingTrimFile && (
         <ErrorBoundary name="audio-trimmer">
@@ -853,7 +1020,7 @@ function App() {
 
       <Header
         mode={mode} setMode={setMode}
-        sysStats={sysStats} modelStatus={modelStatus}
+        modelStatus={modelStatus}
         doubleClickMaximize={doubleClickMaximize}
         activeProjectName={activeProjectName}
         onFlushMemory={async (unloadModel) => {
@@ -913,8 +1080,10 @@ function App() {
                 profiles={profiles}
                 history={history}
                 exportHistory={exportHistory}
+                storyProjects={storyProjects}
                 onOpenDub={(id) => { loadProject(id); setMode('dub'); }}
                 onOpenProfile={(id) => { openVoiceProfile(id); }}
+                onOpenStory={(id) => { loadStoryProject(id); setMode('stories'); }}
                 onRevealExport={(path) => { exportReveal({ path }).catch(() => {}); }}
               />
             </Suspense>
@@ -935,6 +1104,12 @@ function App() {
           <ErrorBoundary name="stories">
             <Suspense fallback={<LazyFallback />}>
               <StoriesEditor profiles={profiles} />
+            </Suspense>
+          </ErrorBoundary>
+        ) : mode === 'audiobook' ? (
+          <ErrorBoundary name="audiobook">
+            <Suspense fallback={<LazyFallback />}>
+              <AudiobookTab profiles={profiles} />
             </Suspense>
           </ErrorBoundary>
         ) : mode === 'donate' ? (
@@ -965,6 +1140,8 @@ function App() {
           </Suspense>
           </ErrorBoundary>
         ) : mode === 'dub' ? (
+          <div className={`studio-with-history ${dubStep === 'idle' ? '' : 'studio-with-history--editing'}`}>
+          <div className="studio-with-history__main">
           <ErrorBoundary name="dub">
           <Suspense fallback={<LazyFallback />}>
             <DubTab
@@ -1001,6 +1178,8 @@ function App() {
               segmentEditField={segmentEditField} segmentDelete={segmentDelete}
               segmentRestoreOriginal={segmentRestoreOriginal}
               segmentSplit={segmentSplit} segmentMerge={segmentMerge}
+              segmentMoveResize={segmentMoveResize}
+              timelineSelSegId={timelineSelSegId} setTimelineSelSegId={setTimelineSelSegId}
               toggleSegSelect={toggleSegSelect}
               selectAllSegs={selectAllSegs} clearSegSelection={clearSegSelection}
               bulkApplyToSelected={bulkApplyToSelected}
@@ -1008,11 +1187,36 @@ function App() {
             />
           </Suspense>
           </ErrorBoundary>
+          </div>
+          {/* Dub home: the Projects + History landing shows only when no project
+              is being edited. Opening/creating one switches to the full-width
+              editor (dubStep !== 'idle'). */}
+          {dubStep === 'idle' && (
+          <div className="studio-right">
+            <WorkspaceProjects
+              projects={studioProjects}
+              activeProjectId={activeProjectId}
+              canSave={dubStep !== 'idle' || !!dubVideoFile}
+              saveProject={saveProject}
+              loadProject={loadProject}
+              deleteProject={deleteProject}
+              renameProject={renameProject}
+            />
+            <WorkspaceHistory
+              variant="dub"
+              dubHistory={dubHistory}
+              restoreDubHistory={restoreDubHistory}
+              deleteHistory={deleteHistory}
+            />
+          </div>
+          )}
+          </div>
         ) : (
+          <div className="studio-with-history">
+          <div className="studio-with-history__main">
           <ErrorBoundary name="clone-design">
           <Suspense fallback={<LazyFallback />}>
             <CloneDesignTab
-              mode={mode}
               textAreaRef={textAreaRef}
               text={text} setText={setText}
               language={language} setLanguage={setLanguage}
@@ -1042,12 +1246,41 @@ function App() {
               handleSelectProfile={handleSelectProfile}
               handleDeleteProfile={handleDeleteProfile}
               handleSaveProfile={handleSaveProfile}
+              handleSaveDesignProfile={handleSaveDesignProfile}
               handleGenerate={handleGenerate}
               startRecording={startRecording} stopRecording={stopRecording}
               ingestRefAudio={ingestRefAudio}
             />
           </Suspense>
           </ErrorBoundary>
+          </div>
+          <div className="studio-right">
+            <WorkspaceVoices
+              defineMethod={defineMethod}
+              profiles={profiles}
+              selectedProfile={selectedProfile}
+              setSelectedProfile={setSelectedProfile}
+              previewLoading={previewLoading}
+              handleSelectProfile={handleSelectProfile}
+              handleDeleteProfile={handleDeleteProfile}
+              handlePreviewVoice={handlePreviewVoice}
+              handleUnlockProfile={handleUnlockProfile}
+              openVoiceProfile={openVoiceProfile}
+              onOpenVoicePreview={(profileId) => {
+                setVoicePreviewProfileId(profileId || '');
+                setIsVoicePreviewOpen(true);
+              }}
+            />
+            <WorkspaceHistory
+              history={history}
+              handleSaveHistoryAsProfile={handleSaveHistoryAsProfile}
+              handleLockProfile={handleLockProfile}
+              handleNativeExport={handleNativeExport}
+              restoreHistory={restoreHistory}
+              deleteHistory={deleteHistory}
+            />
+          </div>
+          </div>
         )}
       </div>
 

@@ -133,9 +133,28 @@ jobs:
             rust_target: aarch64-apple-darwin
             bundles: "app,dmg,updater"
 
-          # macOS Intel dropped: Apple shipped the last Intel Mac in 2023 and
-          # Rosetta 2 runs the ARM build natively. macos-13 runner backlog
-          # was also blocking every release tag for ~10 min.
+          # macOS Intel (#279): reinstated. The earlier "Rosetta 2 runs the
+          # ARM build" rationale for dropping it was backwards — Rosetta only
+          # translates x86_64→arm64, so Intel Macs (supported through macOS
+          # Sequoia) simply cannot run the aarch64 bundle and had NO
+          # installable artifact. Runner: `macos-15-intel`, GitHub's
+          # designated migration target after macos-13 retired (Dec 2025);
+          # it's a standard (public-repo-free) image supported through
+          # August 2027 — the last x86_64 image Actions will offer. Building
+          # natively (not cross-compiling from the arm64 leg) keeps the
+          # per-TRIPLE uv/ffmpeg sidecar fetches, the DMG installer smoke,
+          # and the ad-hoc signing verification (scripts/
+          # verify-macos-signing.sh, PR #290) all exercising the real
+          # x86_64 artifact on real Intel hardware. The macos-13 queue
+          # backlog that motivated the original drop is contained by
+          # fail-fast:false — a slow Intel leg can delay the release run but
+          # can't fail the other targets.
+          - os: macos-15-intel
+            arch: x86_64-apple-darwin
+            label: "macOS Intel"
+            rust_target: x86_64-apple-darwin
+            bundles: "app,dmg,updater"
+
           # Windows: force MSI bundling via --bundles. NSIS fails at makensis
           # because our PyInstaller payload approaches its ~2 GB stub limit.
           - os: windows-2022
@@ -291,7 +310,10 @@ jobs:
           case "$TRIPLE" in
             aarch64-apple-darwin|x86_64-apple-darwin)
               # evermeet.cx ships each binary as a separate .zip containing
-              # a single x86_64 Mach-O executable (runs via Rosetta on arm64).
+              # a single x86_64 Mach-O executable — natively correct on the
+              # Intel leg, and runs via Rosetta 2 on the arm64 leg. Both
+              # darwin TRIPLEs therefore bundle the same payload; only the
+              # sidecar filename suffix differs.
               for TOOL in ffmpeg ffprobe; do
                 if [ "$TOOL" = "ffmpeg" ]; then
                   URL="https://evermeet.cx/ffmpeg/getrelease/zip"
@@ -398,11 +420,12 @@ jobs:
       # always reported the static 0.3.0 never looked "newer", so no update was
       # ever delivered). Ephemeral, CI-only — never committed. Tauri reads the
       # bundle + updater version from tauri.conf.json, so rewriting it here
-      # stamps the artifacts + latest.json. `0.3.0-preview.N` is a prerelease of
-      # the current target, so previews converge to stable when 0.3.0 ships
-      # (0.3.0 > 0.3.0-preview.N). NOTE: the Windows MSI ProductVersion strips
-      # the prerelease (→ 0.3.0), a wrinkle to verify for win preview→preview
-      # upgrades; mac/linux replace the bundle wholesale and are unaffected.
+      # stamps the artifacts + latest.json. Under the versioning hard rule
+      # (owner-set 2026-06-11) main is always last-release + 1, so BASE-N is a
+      # prerelease of the NEXT version and semver-sorts ABOVE the last stable
+      # (0.3.6-N > 0.3.5) — preview users naturally upgrade past stable, and
+      # the Windows MSI ProductVersion (which strips the prerelease → 0.3.6)
+      # is also correctly above the last stable.
       - name: Stamp preview version
         if: github.event_name == 'workflow_dispatch' && inputs.publish_preview
         shell: bash
@@ -410,7 +433,11 @@ jobs:
           set -euo pipefail
           CONF=frontend/src-tauri/tauri.conf.json
           BASE=$(jq -r .version "$CONF")
-          PREVIEW_VERSION="${BASE}-preview.${{ github.run_number }}"
+          # MSI/WiX requires the semver pre-release identifier to be numeric-only
+          # (and <= 65535). "preview.N" hard-fails the Windows bundler, so the
+          # preview stamp is BASE-N — still sorts below the stable BASE for the
+          # updater, still unique per run.
+          PREVIEW_VERSION="${BASE}-${{ github.run_number }}"
           tmp=$(mktemp)
           jq --arg v "$PREVIEW_VERSION" '.version = $v' "$CONF" > "$tmp"
           mv "$tmp" "$CONF"
@@ -427,6 +454,12 @@ jobs:
           # only on the opt-in stable path, leaving them ABSENT (not "") on
           # preview/unsigned paths so Tauri's bundler skips cert import. A static
           # env: here would always set them to "" and break the mac build.
+          # Unsigned paths still get a VALID ad-hoc seal from tauri.conf.json
+          # (bundle.macOS.signingIdentity = "-"), so a downloaded build shows the
+          # GUI-bypassable "unidentified developer" prompt (right-click → Open /
+          # Settings → "Open Anyway") instead of the un-bypassable "damaged"
+          # error. On the signed path APPLE_SIGNING_IDENTITY (env) overrides the
+          # "-" default; once notarized, Gatekeeper accepts it with no prompt.
           # GH runners disable FUSE, so linuxdeploy's AppImage can't mount
           # itself at bundle time. This env tells linuxdeploy to extract-and-run
           # instead, which works without FUSE.
@@ -476,6 +509,35 @@ jobs:
           find "$APP/Contents" -type f -path '*/backend/main.py' | grep -q . || fail "backend source backend/main.py missing"
           echo "OK — bundle has shell + uv + backend resources"
           hdiutil detach "$MOUNT" || true
+
+      # ── Signing / Gatekeeper / notarization verification ──────────────
+      # Runs codesign --verify, spctl (Gatekeeper), nested-binary, and
+      # stapler checks against the built .app (see docs/macos-signing-verification.md).
+      # STRICT (--require-signed) only on the opt-in signed stable path — same
+      # condition as "Configure Apple signing" above — so a failed or missing
+      # signature/notarization FAILS the job and STOPS the release instead of
+      # publishing an unsigned artifact. On every other (unsigned dev/preview)
+      # path it runs report-only and never breaks the build.
+      - name: Verify macOS signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          STRICT: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.MACOS_SIGNING_ENABLED == 'true') && '1' || '0' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -uo pipefail
+          APP=$(find "frontend/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -maxdepth 1 -name '*.app' | head -1)
+          [ -n "$APP" ] || { echo "FAIL — no .app found to verify"; exit 1; }
+          MODE=""
+          if [ "$STRICT" = "1" ]; then
+            MODE="--require-signed"
+            echo "Signed stable release → STRICT verification (release stops on failure)."
+          else
+            echo "Unsigned dev/preview path → report-only verification."
+          fi
+          bash scripts/verify-macos-signing.sh "$APP" $MODE
 
       - name: Installer smoke (Windows)
         if: runner.os == 'Windows'
@@ -540,7 +602,13 @@ jobs:
 
           # Gather artifact paths per matrix leg's `bundles` (msi/app/dmg/deb/appimage/updater).
           # `find` is portable across all three runners (Git Bash on Windows).
-          mapfile -t ARTIFACTS < <(find "$BUNDLE_DIR" -type f \
+          # NB: macOS runners use /bin/bash 3.2, which has no `mapfile` (a bash 4+
+          # builtin) — using it 127'd this step and dropped the macOS SHA256SUMS
+          # for v0.3.1 and v0.3.2. A `while read` loop is portable to bash 3.2.
+          ARTIFACTS=()
+          while IFS= read -r artifact; do
+            ARTIFACTS+=("$artifact")
+          done < <(find "$BUNDLE_DIR" -type f \
             \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \
                -o -name "*.msi" -o -name "*.msi.sig" \
                -o -name "*.AppImage" -o -name "*.AppImage.sig" \
@@ -627,3 +695,40 @@ jobs:
           } > /tmp/preview-notes.md
           gh release edit preview --repo "$REPO" --notes-file /tmp/preview-notes.md
           echo "Applied auto-generated release notes + contributors to the preview release."
+
+  # ── Post-release version bump (versioning hard rule, owner-set 2026-06-11) ──
+  # main is always last-release + 1 patch. The moment a stable v* tag is
+  # released, bump the three version sources on main to the next patch so every
+  # PR and preview build identifies as the next version. Pushes directly to
+  # main with the workflow token (a metadata-only commit; CI runs on PRs).
+  version-bump:
+    if: github.event_name == 'push' && github.ref_type == 'tag' && !contains(github.ref, '-')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Bump main to released version + 1 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASED="${GITHUB_REF_NAME#v}"
+          IFS=. read -r MAJ MIN PAT <<< "$RELEASED"
+          NEXT="$MAJ.$MIN.$((PAT + 1))"
+          CURRENT=$(jq -r .version frontend/src-tauri/tauri.conf.json)
+          if [ "$(printf '%s\n' "$NEXT" "$CURRENT" | sort -V | tail -1)" = "$CURRENT" ] && [ "$NEXT" != "$CURRENT" ]; then
+            echo "main is already at $CURRENT (>= $NEXT) — nothing to bump"; exit 0
+          fi
+          tmp=$(mktemp)
+          jq --arg v "$NEXT" '.version = $v' frontend/src-tauri/tauri.conf.json > "$tmp"
+          mv "$tmp" frontend/src-tauri/tauri.conf.json
+          sed -i "0,/^version = \"$CURRENT\"/s//version = \"$NEXT\"/" frontend/src-tauri/Cargo.toml
+          sed -i "0,/^version = \"$CURRENT\"/s//version = \"$NEXT\"/" pyproject.toml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src-tauri/tauri.conf.json frontend/src-tauri/Cargo.toml pyproject.toml
+          git commit -m "chore(version): main -> $NEXT after $GITHUB_REF_NAME release"
+          git push origin main

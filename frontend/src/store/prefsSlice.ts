@@ -39,14 +39,29 @@ export const FONT_STACKS: Record<FontId, string | null> = {
 };
 
 /**
- * Dub timing strategy — replaces audio time-compression with two cleaner
+ * Dub timing strategy — replaces audio time-compression with cleaner
  * alternatives. `concise` trims the translation up-front so it fits at
- * natural rate (overflows surfaced for manual edit); `stretch_video`
+ * natural rate (overflows surfaced for manual edit); `smart_fit` splits
+ * the burden between a mild audio speed-up (≤1.2× alone, ≤1.5× hybrid)
+ * and a mild per-segment video slow-down (≤2.0×); `stretch_video`
  * stretches the source video per-segment so natural-rate audio fits
  * without lip-sync drift. `strict_slot` is the legacy compress-to-fit
  * path, retained for back-compat.
  */
-export type TimingStrategy = 'concise' | 'stretch_video' | 'strict_slot';
+export type TimingStrategy = 'concise' | 'smart_fit' | 'stretch_video' | 'strict_slot';
+
+/**
+ * Knob overrides for the `smart_fit` strategy. `null` (default) sends no
+ * `fit_options` and the backend uses its canonical FitParams defaults —
+ * identical behavior on every platform out of the box.
+ */
+export interface FitOptions {
+  max_audio_only_rate?: number;
+  audio_rate_cap?: number;
+  video_slow_cap?: number;
+  gap_guard_s?: number;
+  allow_video_retime?: boolean;
+}
 
 export interface PrefsSlice {
   translateQuality: TranslateQuality;
@@ -77,6 +92,12 @@ export interface PrefsSlice {
    */
   timingStrategy: TimingStrategy;
 
+  /**
+   * Optional Smart Fit knob overrides. Stays `null` unless a power user
+   * sets custom caps — the backend then applies its own defaults.
+   */
+  fitOptions: FitOptions | null;
+
   setTranslateQuality: (q: TranslateQuality) => void;
   setDualSubs: (on: boolean) => void;
   setBurnSubs: (on: boolean) => void;
@@ -84,6 +105,17 @@ export interface PrefsSlice {
   setReviewMode: (mode: 'on' | 'off') => void;
   setShowHeaderLiveStats: (on: boolean) => void;
   setTimingStrategy: (s: TimingStrategy) => void;
+  setFitOptions: (o: FitOptions | null) => void;
+
+  /**
+   * Opt-in dictate-over-playback echo cancellation (parity Action 8). When
+   * on, dictation streams raw PCM through the server-side NLMS AEC and the
+   * audio player taps its output as the echo reference, so dictating while
+   * OmniVoice plays audio doesn't transcribe the playback. Default OFF — the
+   * standard MediaRecorder dictation path is unchanged when off.
+   */
+  aecEnabled: boolean;
+  setAecEnabled: (on: boolean) => void;
 
   locale: string;
   setLocale: (l: string) => void;
@@ -103,6 +135,8 @@ export const createPrefsSlice: StateCreator<PrefsSlice, [], [], PrefsSlice> = (s
   reviewMode: 'on',
   showHeaderLiveStats: false,
   timingStrategy: 'concise',
+  fitOptions: null,
+  aecEnabled: false,
 
   setTranslateQuality:    (q) => set({ translateQuality: q }),
   setDualSubs:            (on) => set({ dualSubs: on }),
@@ -111,6 +145,8 @@ export const createPrefsSlice: StateCreator<PrefsSlice, [], [], PrefsSlice> = (s
   setReviewMode:          (mode) => set({ reviewMode: mode }),
   setShowHeaderLiveStats: (on) => set({ showHeaderLiveStats: on }),
   setTimingStrategy:      (s) => set({ timingStrategy: s }),
+  setFitOptions:          (o) => set({ fitOptions: o }),
+  setAecEnabled:          (on) => set({ aecEnabled: on }),
 
   locale: typeof navigator !== 'undefined' ? (() => {
     const nav = navigator.language || '';

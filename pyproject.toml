@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omnivoice"
-version = "0.3.0"
+version = "0.3.6"
 description = "OmniVoice: Towards Omnilingual Zero-Shot Text-to-Speech with Diffusion Language Models"
 readme = "README.md"
-# Source-available under FSL-1.1-ALv2 (see LICENSE); each release converts to
-# Apache-2.0 two years after publication. Declared as a PEP 639 LicenseRef
-# since FSL isn't an OSI/SPDX-listed identifier.
-license = "LicenseRef-FSL-1.1-ALv2"
+# Free and open-source under the GNU Affero General Public License v3 (see
+# LICENSE). A commercial license is available for proprietary/closed-source use
+# without AGPL obligations — contact OmniVoice@palash.dev. The bundled omnivoice/
+# TTS model by Han Zhu remains Apache-2.0 upstream (Apache-2.0 is AGPL-compatible).
+license = "AGPL-3.0-only"
 requires-python = ">=3.11"
 authors = [{name = "Han Zhu"}]
 keywords = [
@@ -107,6 +108,23 @@ dependencies = [
     # (Assumption A1 in RESEARCH.md was checked at execute-time and proved
     # false — `cryptography` is not on the install path today).
     "cryptography>=41",
+    "mcp>=1.2",
+    # Fast model downloads (FDL plan). huggingface_hub arrives transitively via
+    # transformers, but we pin it directly so the Xet fast-download path can't
+    # silently disappear on a resolve, and we pull `hf-xet` explicitly: it is
+    # the content-defined-chunking, parallel byte-range downloader that gives
+    # IDM/uGet-style speed for Xet-backed repos (the entire current model
+    # catalog — see .planning/quick/260613-fdl-fast-model-downloads/SPIKE).
+    # hf-xet is 64-bit only (fine for every OmniVoice target). Do NOT add
+    # `hf_transfer` — it is deprecated in favour of Xet and breaks progress
+    # callbacks (the accurate-progress work in this same plan depends on tqdm).
+    "huggingface_hub>=1.7",
+    "hf-xet>=1.1",
+    # Audiobook PDF ingest (/audiobook/import). Pure-Python, MIT, zero native
+    # deps → identical behaviour on macOS/Windows/Linux (default-parity rule).
+    # EPUB + plaintext stay stdlib-only; only PDF needs a real parser, and
+    # pypdf is the lightest one that ships no C extensions.
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]

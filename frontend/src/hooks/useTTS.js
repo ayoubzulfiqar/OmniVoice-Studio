@@ -6,8 +6,15 @@ import { probeAudioDuration } from '../utils/format';
 import { CLONE_MAX_SECONDS, PRESETS } from '../utils/constants';
 import { buildDesignInstruct } from '../utils/voiceInstruct';
 import { toast } from 'react-hot-toast';
+import { toastErrorWithReport } from '../utils/errorToast';
+import { addBreadcrumb } from '../utils/breadcrumbs';
 import i18next from 'i18next';
 const t = i18next.t.bind(i18next);
+
+// #21: in-memory de-dup for the synth-time routing toast — a 50-clip batch
+// shouldn't fire one toast per request. Tracks the last status surfaced this
+// session (module scope, no localStorage); resets on full reload.
+let _lastRoutingStatus = null;
 
 /**
  * Encapsulates TTS generation logic, streaming response handling,
@@ -30,7 +37,10 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
   const postprocess = useAppStore(s => s.postprocess);
   const duration = useAppStore(s => s.duration);
   const vdStates = useAppStore(s => s.vdStates);
-  const mode = useAppStore(s => s.mode);
+  // Which "Define voice" method is active in the Voice (studio) workspace —
+  // 'audio' (reference clip) vs 'design' (described attributes). Replaces the
+  // old clone/design navigation-mode checks (voice-studio-unification P4).
+  const defineMethod = useAppStore(s => s.defineMethod);
   const setSidebarTab = useAppStore(s => s.setSidebarTab);
 
   const [refAudio, setRefAudio] = useState(null);
@@ -68,7 +78,8 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
 
   const handleGenerate = useCallback(async () => {
     if (!text.trim()) return toast.error(t('tts_errors.enter_text'));
-    if (mode === 'clone' && !refAudio && !selectedProfile) return toast.error(t('tts_errors.upload_or_select'));
+    if (defineMethod === 'audio' && !refAudio && !selectedProfile) return toast.error(t('tts_errors.upload_or_select'));
+    addBreadcrumb(`generate:start (${defineMethod})`);
     setIsGenerating(true);
     setGenerationTime(0);
     const st = Date.now();
@@ -95,7 +106,7 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
       formData.append("postprocess_output", postprocess);
       if (duration) formData.append("duration", parseFloat(duration));
 
-      if (mode === 'clone') {
+      if (defineMethod === 'audio') {
         if (selectedProfile) {
           formData.append("profile_id", selectedProfile);
         } else if (refAudio) {
@@ -138,6 +149,22 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
       let receivedLength = 0;
       const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
 
+      // #21: one-time, non-blocking routing notice. The backend sets these
+      // headers only on cpu_fallback / accelerated-with-caveat (never on the
+      // benign cpu_only / clean-accelerated paths), so their mere presence is
+      // the signal. De-duped by status so a batch doesn't spam.
+      const routingStatus = response.headers.get('X-OmniVoice-Routing');
+      if (routingStatus && routingStatus !== _lastRoutingStatus) {
+        _lastRoutingStatus = routingStatus;
+        const reason = response.headers.get('X-OmniVoice-Routing-Reason') || '';
+        if (routingStatus === 'cpu_fallback') {
+          toast(t('tts.routingFallback', { reason }), { icon: '🐢' });
+        } else if (routingStatus === 'accelerated' && reason) {
+          // accelerated is only surfaced WITH a driver/arch caveat reason.
+          toast(t('tts.routingCaveat', { reason }), { icon: '⚠️' });
+        }
+      }
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -156,16 +183,19 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
       setSidebarTab('history');
       playPing();
     } catch (err) {
-      const msg = err?.name === 'AbortError'
-        ? t('tts_errors.timeout')
-        : t('tts_errors.error_prefix', { message: err.message });
-      toast.error(msg);
+      // Timeouts are user-recoverable (retry / shorter input) — plain toast.
+      // Real generation failures get the "Report this bug" action.
+      if (err?.name === 'AbortError') {
+        toast.error(t('tts_errors.timeout'));
+      } else {
+        toastErrorWithReport(t('tts_errors.error_prefix', { message: err.message }), err);
+      }
     } finally {
       if (abortTimer) clearTimeout(abortTimer);
       clearInterval(timerRef.current);
       setIsGenerating(false);
     }
-  }, [text, mode, selectedProfile, refAudio, refText, language, instruct, steps, cfg, speed, denoise, tShift, posTemp, classTemp, layerPenalty, postprocess, duration, vdStates, loadHistory, setSidebarTab]);
+  }, [text, defineMethod, selectedProfile, refAudio, refText, language, instruct, steps, cfg, speed, denoise, tShift, posTemp, classTemp, layerPenalty, postprocess, duration, vdStates, loadHistory, setSidebarTab]);
 
   return {
     refAudio, setRefAudio,
