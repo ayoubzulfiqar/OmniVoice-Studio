@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { copyText } from "../utils/copyText";
 import { isTauri as _isTauri } from '../utils/media';
 import { normalizeChannel } from '../utils/updateChannel';
@@ -14,10 +14,12 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Cpu, FileText, Info, ShieldCheck, RefreshCw, Trash2, ExternalLink,
   CheckCircle, AlertCircle, Plug, Download, Copy, Building2, KeyRound,
-  Keyboard, Wifi, Palette,
+  Keyboard, Wifi, Palette, Activity, ArrowDownToLine,
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { openExternal } from '../api/external';
+import { API } from '../api/client';
+import { addBreadcrumb } from '../utils/breadcrumbs';
 import { Trans, useTranslation } from 'react-i18next';
 import { systemLogs, systemLogsTauri, clearSystemLogs, clearTauriLogs } from '../api/system';
 import i18n, { LANGUAGES } from '../i18n';
@@ -29,26 +31,34 @@ import { getFrontendLogs, clearFrontendLogs } from '../utils/consoleBuffer';
 import { Tabs, Segmented, Button, Badge, Table, Progress, Select } from '../ui';
 import { useAppStore } from '../store';
 import ApiKeysPanel from '../components/settings/ApiKeysPanel';
+import LLMEndpointPanel from '../components/settings/LLMEndpointPanel';
 import PerformancePanel from '../components/settings/PerformancePanel';
+import RefinementPanel from '../components/settings/RefinementPanel';
+import AecPanel from '../components/settings/AecPanel';
 import AppearancePanel from '../components/settings/AppearancePanel';
 import StoragePanel from '../components/settings/StoragePanel';
+import HFMirrorPanel from '../components/settings/HFMirrorPanel';
 import SharingPanel from '../components/settings/SharingPanel';
+import RemoteBackendPanel from '../components/settings/RemoteBackendPanel';
+import MCPBindingsPanel from '../components/settings/MCPBindingsPanel';
 import EngineCompatibilityMatrix from '../components/EngineCompatibilityMatrix';
 import DictationDemo from '../components/DictationDemo';
+import UpdatesPanel from '../components/UpdatesPanel';
 import ReportBugButton from '../components/ReportBugButton';
 import './Settings.css';
 
 const TAB_DEFS = [
-  { id: 'general',     icon: FileText,     accent: '#83a598' },
-  { id: 'models',      icon: Cpu,          accent: '#f3a5b6' },
-  { id: 'engines',     icon: Plug,         accent: '#d3869b' },
-  { id: 'capture',     icon: Keyboard,     accent: '#83a598' },
-  { id: 'sharing',     icon: Wifi,         accent: '#83a598' },
-  { id: 'appearance',  icon: Palette,      accent: '#d3869b' },
-  { id: 'credentials', icon: KeyRound,     accent: '#fe8019' },
-  { id: 'logs',        icon: FileText,     accent: '#fabd2f' },
-  { id: 'about',       icon: Info,         accent: '#8ec07c' },
-  { id: 'privacy',     icon: ShieldCheck,  accent: '#b8bb26' },
+  { id: 'general',     icon: FileText,      accent: '#83a598' },
+  { id: 'models',      icon: Cpu,           accent: '#f3a5b6' },
+  { id: 'engines',     icon: Plug,          accent: '#d3869b' },
+  { id: 'capture',     icon: Keyboard,      accent: '#83a598' },
+  { id: 'sharing',     icon: Wifi,          accent: '#83a598' },
+  { id: 'appearance',  icon: Palette,       accent: '#d3869b' },
+  { id: 'credentials', icon: KeyRound,      accent: '#fe8019' },
+  { id: 'updates',     icon: ArrowDownToLine, accent: '#b8bb26' },
+  { id: 'logs',        icon: FileText,      accent: '#fabd2f' },
+  { id: 'about',       icon: Info,          accent: '#8ec07c' },
+  { id: 'privacy',     icon: ShieldCheck,   accent: '#b8bb26' },
 ];
 
 const LOG_SOURCE_DEFS = [
@@ -318,13 +328,16 @@ export function ModelStoreTab({ info, modelBadge }) {
   // Tick counter — forces re-render every second while a download is active
   // so speed/ETA displays update smoothly between SSE events.
   const [, setTick] = useState(0);
+  // Boolean derived from rowState so the interval effect below only re-runs
+  // when activity starts/stops — not on every SSE progress event (several per
+  // second during installs), which would clear + recreate the 1s tick forever.
+  const hasActive = useMemo(() => Object.values(rowState).some(s =>
+    ['install_start', 'active', 'delete_start'].includes(s.phase)), [rowState]);
   useEffect(() => {
-    const hasActive = Object.values(rowState).some(s =>
-      ['install_start', 'active', 'delete_start'].includes(s.phase));
     if (!hasActive) return;
     const iv = setInterval(() => setTick(t => t + 1), 1000);
     return () => clearInterval(iv);
-  }, [rowState]);
+  }, [hasActive]);
 
   // HF token inline — compact input in the toolbar
   const [hfToken, setHfToken] = useState('');
@@ -388,6 +401,33 @@ export function ModelStoreTab({ info, modelBadge }) {
           if (ev.phase === 'install_error') {
             return { ...prev, [ev.repo_id]: { ...cur, phase: 'install_error', error: ev.error } };
           }
+          if (ev.phase === 'install_cancelled') {
+            return { ...prev, [ev.repo_id]: { ...cur, phase: 'install_cancelled' } };
+          }
+          // Pre-flight plan (FDL-05): accurate total/cached/remaining BEFORE
+          // bytes flow. Keep the current phase (usually resolving) — the plan
+          // is metadata, not a state change.
+          if (ev.phase === 'install_plan') {
+            return { ...prev, [ev.repo_id]: { ...cur, plan: {
+              total_bytes: ev.total_bytes ?? null,
+              cached_bytes: ev.cached_bytes ?? null,
+              to_download_bytes: ev.to_download_bytes ?? null,
+              n_files: ev.n_files ?? null,
+              n_cached: ev.n_cached ?? null,
+            } } };
+          }
+          // Overall aggregate (FDL-06): one rolling event that is the source of
+          // truth for the overall bar / speed / remaining / ETA.
+          if (ev.phase === 'aggregate') {
+            return { ...prev, [ev.repo_id]: { ...cur, phase: 'active', agg: {
+              bytes_done: ev.bytes_done ?? 0,
+              total_bytes: ev.total_bytes ?? null,
+              rate: ev.rate ?? 0,
+              eta_seconds: ev.eta_seconds ?? null,
+              files_done: ev.files_done ?? 0,
+              files_total: ev.files_total ?? null,
+            } } };
+          }
           // Per-file tqdm events — aggregate across files.
           const files = { ...cur.files, [ev.filename]: {
             downloaded: ev.downloaded || 0,
@@ -407,7 +447,7 @@ export function ModelStoreTab({ info, modelBadge }) {
   // flips server-side info into the row.
   useEffect(() => {
     const term = Object.entries(rowState).find(([, s]) =>
-      ['install_done', 'delete_done', 'install_error'].includes(s.phase));
+      ['install_done', 'delete_done', 'install_error', 'install_cancelled'].includes(s.phase));
     if (!term) return;
     const t = setTimeout(() => {
       modelsQuery.refetch();
@@ -515,10 +555,33 @@ export function ModelStoreTab({ info, modelBadge }) {
       .filter(([, f]) => f.phase !== 'done' && f.rate > 0)
       .reduce((s, [, f]) => s + f.rate, 0);
     const hasFiles = fileList.length > 0;
-    const aggPct = totals.total > 0 ? (totals.downloaded / totals.total) * 100 : null;
     const showBar = ['install_start', 'resolving', 'install_retry', 'active', 'delete_start'].includes(phase);
     const activeFilename = fileList.find(([, f]) => f.phase !== 'done')?.[0];
     const unsupported = m.supported === false;
+
+    // Overall progress: prefer the backend aggregate (FDL-06) — it sums bytes
+    // across all parallel files/chunks and samples a windowed rate, which is
+    // accurate under Xet's parallel fetch. Fall back to per-file summation +
+    // the frontend speed sampler only until the first aggregate event lands.
+    const agg = rs?.agg || null;
+    const plan = rs?.plan || null;
+    const dispDownloaded = agg ? (agg.bytes_done || 0) : totals.downloaded;
+    // Denominator: aggregate total → preflight "to download" → per-file totals.
+    const dispTotal = (agg?.total_bytes ?? plan?.to_download_bytes ?? totals.total) || 0;
+    // Bar %: prefer byte-fraction, but under Xet the byte bars don't advance
+    // mid-download (only the file-count bar does), so fall back to the file
+    // fraction so the bar still moves. Take the max so whichever signal is
+    // live drives it; complete() flushes both to 100% at the end.
+    const bytePct = dispTotal > 0 ? (dispDownloaded / dispTotal) * 100 : 0;
+    const filesTotalForPct = agg?.files_total ?? plan?.n_files ?? 0;
+    const filePct = filesTotalForPct > 0 ? ((agg?.files_done ?? 0) / filesTotalForPct) * 100 : 0;
+    const aggPct = (dispTotal > 0 || filesTotalForPct > 0) ? Math.max(bytePct, filePct) : null;
+    const cachedBytes = plan?.cached_bytes ?? null;
+    const filesTotal = agg?.files_total ?? plan?.n_files ?? (hasFiles ? fileList.length : null);
+    const filesDone = agg?.files_done ?? totals.done;
+    // Backend rate (windowed aggregate) wins over the per-file rate sum.
+    const aggRate = agg?.rate ?? null;
+    const aggEtaSec = agg?.eta_seconds ?? null;
 
     return {
       rs,
@@ -534,6 +597,15 @@ export function ModelStoreTab({ info, modelBadge }) {
       activeFilename,
       unsupported,
       backendRate,
+      agg,
+      plan,
+      dispDownloaded,
+      dispTotal,
+      cachedBytes,
+      filesTotal,
+      filesDone,
+      aggRate,
+      aggEtaSec,
     };
   }, [busy, rowState]);
 
@@ -574,10 +646,15 @@ export function ModelStoreTab({ info, modelBadge }) {
                 <span className="models-row__progresstext">
                   {(() => {
                     if (rt.isDeleting) return t('models.removing_cached');
-                    if (!rt.hasFiles) {
+                    const hasAgg = !!rt.agg;
+                    if (!rt.hasFiles && !hasAgg) {
                       if (rt.phase === 'resolving') {
                         const dots = '.'.repeat((rt.rs?.resolvingStep || 0) % 4);
-                        return `${t('models.resolving_metadata')}${dots}`;
+                        // Once the preflight plan lands we can show the real size
+                        // even before the first byte (FDL-05).
+                        const planBytes = rt.plan?.to_download_bytes;
+                        const planStr = planBytes ? ` · ${fmtBytes(planBytes)} ${t('models.to_download') || 'to download'}` : '';
+                        return `${t('models.resolving_metadata')}${dots}${planStr}`;
                       }
                       if (rt.phase === 'install_retry') {
                         return t('models.retry_attempt', { attempt: rt.rs?.retryAttempt || '?', error: rt.rs?.error || 'reconnecting' });
@@ -585,51 +662,57 @@ export function ModelStoreTab({ info, modelBadge }) {
                       return t('models.connecting_hf');
                     }
 
-                    // We have file events — compute speed
-                    const sp = speedRef.current[m.repo_id];
-                    const now = Date.now();
-                    if (sp && rt.totals.downloaded > 0) {
-                      const dt = (now - sp.lastTime) / 1000;
-                      if (dt >= 1) {
-                        sp.speed = Math.max(0, (rt.totals.downloaded - sp.lastBytes) / dt);
-                        sp.lastBytes = rt.totals.downloaded;
-                        sp.lastTime = now;
+                    // Prefer the backend aggregate's windowed rate (FDL-06).
+                    // Fall back to the frontend sampler only until it arrives.
+                    let speed = rt.aggRate ?? 0;
+                    if (!(speed > 0)) {
+                      const sp = speedRef.current[m.repo_id];
+                      const now = Date.now();
+                      if (sp && rt.dispDownloaded > 0) {
+                        const dt = (now - sp.lastTime) / 1000;
+                        if (dt >= 1) {
+                          sp.speed = Math.max(0, (rt.dispDownloaded - sp.lastBytes) / dt);
+                          sp.lastBytes = rt.dispDownloaded;
+                          sp.lastTime = now;
+                        }
+                      } else {
+                        speedRef.current[m.repo_id] = { lastBytes: rt.dispDownloaded, lastTime: now, speed: 0 };
                       }
-                    } else {
-                      speedRef.current[m.repo_id] = { lastBytes: rt.totals.downloaded, lastTime: now, speed: 0 };
+                      speed = rt.backendRate > 0 ? rt.backendRate : (sp?.speed || 0);
                     }
-                    const speed = rt.backendRate > 0 ? rt.backendRate : (sp?.speed || 0);
 
-                    // If total is unknown and nothing downloaded yet → still resolving
-                    if (rt.totals.total === 0 && rt.totals.downloaded === 0) {
+                    // Total unknown and nothing downloaded yet → still resolving
+                    if (rt.dispTotal === 0 && rt.dispDownloaded === 0) {
                       const activeFile = rt.activeFilename?.split('/').pop();
                       return activeFile
                         ? t('models.resolving_files_active', { count: rt.fileList.length, file: activeFile })
                         : t('models.resolving_files', { count: rt.fileList.length });
                     }
 
-                    // Build the info line
-                    const remaining = rt.totals.total - rt.totals.downloaded;
-                    const etaSec = speed > 0 && rt.totals.total > 0 ? remaining / speed : 0;
+                    // ETA: prefer the backend's, else derive from remaining/speed.
+                    const remaining = Math.max(0, rt.dispTotal - rt.dispDownloaded);
+                    const etaSec = rt.aggEtaSec != null ? rt.aggEtaSec
+                      : (speed > 0 && rt.dispTotal > 0 ? remaining / speed : 0);
                     const etaStr = etaSec > 0
                       ? etaSec < 60 ? `~${Math.ceil(etaSec)}s`
                       : etaSec < 3600 ? `~${Math.ceil(etaSec / 60)}m`
                       : `~${(etaSec / 3600).toFixed(1)}h`
                       : '';
-                    const dlStr = fmtBytes(rt.totals.downloaded) || '0 B';
-                    const totalStr = rt.totals.total > 0 ? fmtBytes(rt.totals.total) : '…';
+                    const dlStr = fmtBytes(rt.dispDownloaded) || '0 B';
+                    const totalStr = rt.dispTotal > 0 ? fmtBytes(rt.dispTotal) : '…';
                     const pctStr = rt.aggPct != null && rt.aggPct > 0 ? `${Math.round(rt.aggPct)}%` : '';
                     const speedStr = speed > 0 ? `${fmtBytes(speed)}/s` : '';
 
                     const parts = [
                       `${dlStr} / ${totalStr}`,
                       pctStr,
-                      speedStr || (rt.totals.downloaded > 0 ? t('models.measuring') : ''),
+                      speedStr || (rt.dispDownloaded > 0 ? t('models.measuring') : ''),
                       etaStr,
                     ].filter(Boolean);
 
                     const extra = [];
-                    if (rt.fileList.length > 1) extra.push(t('models.files_progress', { done: rt.totals.done, total: rt.fileList.length }));
+                    if (rt.cachedBytes > 0) extra.push(`${fmtBytes(rt.cachedBytes)} ${t('models.cached') || 'cached'}`);
+                    if (rt.filesTotal > 1) extra.push(t('models.files_progress', { done: rt.filesDone, total: rt.filesTotal }));
                     if (rt.activeFilename) extra.push(rt.activeFilename.split('/').pop());
 
                     return extra.length
@@ -798,6 +881,19 @@ export function ModelStoreTab({ info, modelBadge }) {
           <span className="models-toolbar__cache" title={data.hf_cache_dir}><code>{data.hf_cache_dir?.replace(/^\/Users\/[^/]+/, '~')}</code></span>
           {info && <span className="models-toolbar__sep">·</span>}
           {info && <span>{modelBadge}</span>}
+          {info?.fast_download?.xet_enabled && (
+            <>
+              <span className="models-toolbar__sep">·</span>
+              <span
+                className="models-toolbar__fast"
+                title={t('models.fast_download_title', {
+                  version: info.fast_download.xet_version || 'Xet',
+                }) || `Fast downloads via Xet ${info.fast_download.xet_version || ''} — parallel chunked transfer`}
+              >
+                ⚡ {t('models.fast_download_badge') || 'fast download'}
+              </span>
+            </>
+          )}
         </div>
         <div className="models-toolbar__actions">
           {/* Compact HF token inline */}
@@ -1010,6 +1106,7 @@ export function EnginesTab() {
   // its install / GPU / isolation state.
   const onSelect = useCallback(async (family, backendId) => {
     try {
+      addBreadcrumb(`engine:${family}=${backendId}`);
       const r = await selectEngine(family, backendId);
       toast.success(t('settings.engine_switched', { family: family.toUpperCase(), engine: r.active }));
     } catch (e) {
@@ -1095,6 +1192,46 @@ export default function Settings() {
   }, [t]);
 
   // sysinfo polling is now handled by useSysinfo() hook above
+
+  // Self-check (/system/diagnose) — device, ffmpeg, HF token, disk, engines,
+  // hub reachability. The report comes back pre-scrubbed (backend core/scrub)
+  // so "Copy" output is safe to paste straight into a GitHub issue.
+  const [selfCheck, setSelfCheck] = useState(null);
+  const [selfCheckRunning, setSelfCheckRunning] = useState(false);
+  const runSelfCheck = useCallback(async () => {
+    setSelfCheckRunning(true);
+    try {
+      const r = await fetch(`${API}/system/diagnose`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setSelfCheck(await r.json());
+    } catch (e) {
+      toast.error(t('about.self_check_failed', { message: e?.message || e }));
+    } finally {
+      setSelfCheckRunning(false);
+    }
+  }, [t]);
+
+  // Diagnostic bundle — zip of self-check + error journal + scrubbed log
+  // tails, saved to the outputs dir and revealed so the user can drag it
+  // onto a GitHub issue (logs never fit in the prefilled-URL report).
+  const [bundleBuilding, setBundleBuilding] = useState(false);
+  const saveDiagnosticBundle = useCallback(async () => {
+    setBundleBuilding(true);
+    try {
+      const r = await fetch(`${API}/system/diagnostic-bundle`, { method: 'POST' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      toast.success(t('about.bundle_saved', { filename: j.filename }));
+      try {
+        const { exportReveal } = await import('../api/exports');
+        await exportReveal({ path: j.path });
+      } catch { /* reveal is best-effort — the toast already names the file */ }
+    } catch (e) {
+      toast.error(t('about.bundle_failed', { message: e?.message || e }));
+    } finally {
+      setBundleBuilding(false);
+    }
+  }, [t]);
 
   const copyDiagnostics = useCallback(async () => {
     const nav = typeof navigator !== 'undefined' ? navigator : {};
@@ -1273,6 +1410,7 @@ export default function Settings() {
       {activeTab === 'models' && (
         <>
           <StoragePanel />
+          <HFMirrorPanel />
           <ModelStoreTab info={info} modelBadge={modelBadge} />
         </>
       )}
@@ -1283,10 +1421,18 @@ export default function Settings() {
         <>
           <DictationDemo />
           <HotkeyTab />
+          <RefinementPanel />
+          <AecPanel />
         </>
       )}
 
-      {activeTab === 'sharing' && <SharingPanel />}
+      {activeTab === 'sharing' && (
+        <>
+          <SharingPanel />
+          <RemoteBackendPanel />
+          <MCPBindingsPanel />
+        </>
+      )}
 
       {activeTab === 'appearance' && <AppearancePanel />}
 
@@ -1348,14 +1494,21 @@ export default function Settings() {
         </section>
       )}
 
+      {activeTab === 'updates' && (
+        <section className="settings-section">
+          <h2><ArrowDownToLine size={16} color="#b8bb26" /> {t('settings.updates')}</h2>
+          <UpdatesPanel />
+        </section>
+      )}
+
       {activeTab === 'about' && (
         <section className="settings-section">
           <h2><Info size={16} color="#8ec07c" /> {t('settings.about')}</h2>
           <Row label={t('about.app')}             value="OmniVoice Studio" />
-          <Row label={t('about.version')}         value={appVersion || '—'} mono />
+          <Row label={t('about.version')}         value={appVersion || info?.app_version || '—'} mono />
           <Row label={t('about.tauri_runtime')}   value={tauriVersion || (isTauri() ? '—' : t('about.web_preview'))} mono />
           <Row label={t('about.platform')}        value={info?.platform || '—'} />
-          <Row label={t('about.architecture')}    value={typeof navigator !== 'undefined' ? (navigator.userAgentData?.platform || navigator.platform || '—') : '—'} mono />
+          <Row label={t('about.architecture')}    value={info?.arch || '—'} mono />
           <Row label={t('about.python')}          value={info?.python || '—'} mono />
           <Row label={t('about.compute_device')}  value={info?.device || '—'} mono />
           <Row label={t('about.gpu_active')}      value={hw?.gpu_active
@@ -1371,40 +1524,66 @@ export default function Settings() {
           <Row label={t('about.data_dir')}        value={info?.data_dir || '—'} mono />
           <Row label={t('about.outputs')}         value={info?.outputs_dir || '—'} mono />
           <Row label={t('about.crash_log')}       value={info?.crash_log_path || '—'} mono />
-          <Row
-            label={t('about.update_channel')}
-            value={
-              <Segmented
-                size="xs"
-                value={updateChannel}
-                onChange={changeChannel}
-                items={[
-                  { value: 'stable',  label: t('about.channel_stable') },
-                  { value: 'preview', label: t('about.channel_preview') },
-                ]}
+          {/* Auto-updater + channel toggle are desktop-only (Tauri). The Docker
+              web build updates by pulling a new image tag, so hide these rows
+              there to avoid a non-functional control (issue #249). */}
+          {isTauri() && (
+            <>
+              <Row
+                label={t('about.update_channel')}
+                value={
+                  <Segmented
+                    size="xs"
+                    value={updateChannel}
+                    onChange={changeChannel}
+                    items={[
+                      { value: 'stable',  label: t('about.channel_stable') },
+                      { value: 'preview', label: t('about.channel_preview') },
+                    ]}
+                  />
+                }
               />
-            }
-          />
-          <Row
-            label={t('about.update_endpoint')}
-            value={updateChannel === 'preview'
-              ? 'releases/download/preview/latest.json'
-              : 'releases/latest/download/latest.json'}
-            mono
-          />
-          {updateChannel === 'preview' && (
-            <p className="settings-muted">{t('about.channel_preview_hint')}</p>
+              <Row
+                label={t('about.update_endpoint')}
+                value={updateChannel === 'preview'
+                  ? 'releases/download/preview/latest.json'
+                  : 'releases/latest/download/latest.json'}
+                mono
+              />
+              {updateChannel === 'preview' && (
+                <p className="settings-muted">{t('about.channel_preview_hint')}</p>
+              )}
+            </>
           )}
           <div className="settings-link-row">
+            {isTauri() && (
+              <Button
+                variant="primary"
+                size="md"
+                leading={<Download size={12} />}
+                onClick={checkForUpdates}
+                loading={updateState === 'checking' || updateState === 'downloading'}
+              >
+                {updateState === 'downloading' ? t('about.downloading') : t('about.check_updates')}
+              </Button>
+            )}
             <Button
-              variant="primary"
+              variant="subtle"
               size="md"
-              leading={<Download size={12} />}
-              onClick={checkForUpdates}
-              loading={updateState === 'checking' || updateState === 'downloading'}
-              disabled={!isTauri()}
+              leading={!selfCheckRunning && <Activity size={12} />}
+              onClick={runSelfCheck}
+              loading={selfCheckRunning}
             >
-              {updateState === 'downloading' ? t('about.downloading') : t('about.check_updates')}
+              {t('about.self_check')}
+            </Button>
+            <Button
+              variant="subtle"
+              size="md"
+              leading={!bundleBuilding && <Download size={12} />}
+              onClick={saveDiagnosticBundle}
+              loading={bundleBuilding}
+            >
+              {t('about.save_bundle')}
             </Button>
             <Button
               variant="subtle"
@@ -1439,6 +1618,32 @@ export default function Settings() {
               {t('about.commercial_license')}
             </Button>
           </div>
+          {selfCheck && (
+            <div className="settings-selfcheck">
+              {selfCheck.checks.map((c) => (
+                <Row
+                  key={c.id}
+                  label={c.label}
+                  value={
+                    <span>
+                      <Badge tone={c.status === 'ok' ? 'success' : c.status === 'warn' ? 'warn' : 'danger'}>
+                        {c.status === 'ok'
+                          ? <CheckCircle size={11} />
+                          : <AlertCircle size={11} />} {t(`about.self_check_${c.status}`)}
+                      </Badge>
+                      {' '}{c.detail}
+                      {c.hint && <span className="settings-muted"> — {c.hint}</span>}
+                    </span>
+                  }
+                />
+              ))}
+              <p className="settings-muted">
+                {selfCheck.summary.ok
+                  ? t('about.self_check_healthy')
+                  : t('about.self_check_attention', { count: selfCheck.summary.failures })}
+              </p>
+            </div>
+          )}
         </section>
       )}
 
@@ -1697,6 +1902,9 @@ function CredentialsTab({ info }) {
       {/* Wave 2 AUTH-03 panel — 3-source cascade with Active badge,
           encrypted-at-rest App-source storage, and live whoami status. */}
       <ApiKeysPanel />
+
+      {/* Wave 2.4 — OpenAI-compatible LLM endpoint (Ollama/LM Studio/vLLM). */}
+      <LLMEndpointPanel />
 
       <p className="settings-prose">
         <Trans i18nKey="credentials.desc" components={{ 1: <strong /> }} />

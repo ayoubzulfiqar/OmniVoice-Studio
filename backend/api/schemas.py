@@ -25,6 +25,7 @@ class SystemInfoResponse(BaseModel):
     """GET /system/info"""
     model_config = ConfigDict(extra="allow")
 
+    app_version: str = ""
     data_dir: str
     outputs_dir: str
     crash_log_path: str
@@ -33,9 +34,19 @@ class SystemInfoResponse(BaseModel):
     asr_model: str = "unknown"
     translate_provider: str = "unknown"
     has_hf_token: bool = False
+    # Xet fast-download backend state (FDL-03): {xet_enabled, xet_version, high_performance}
+    fast_download: dict | None = None
     device: str = "cpu"
     python: str = ""
     platform: str = ""
+    arch: str = ""
+    os_version: str = ""
+    cpu_model: str = ""
+    cpu_count: int = 0
+    ram_total_gb: float = 0.0
+    gpu_name: str = ""
+    vram_total_gb: float = 0.0
+    disk_free_gb: float = 0.0
     error: str | None = None
     ffmpeg_ok: bool = False
     ffmpeg_path: str = ""
@@ -118,8 +129,30 @@ class DeviceInfo(BaseModel):
     gpu_available: bool = False
     gpu_driver: str | None = None
     gpu_device_name: str | None = None
+    # From the canonical device probe (core.device_caps) — distinguishes ROCm
+    # from CUDA, unlike the legacy nvidia-smi-based gpu_vendor/gpu_backend.
+    gpu_family: str = "cpu"
+    vram_gb: float = 0.0
     ram_gb: float = 0.0
     disk_free_gb: float = 0.0
+
+
+class GpuRouting(BaseModel):
+    """Routing verdict for the active TTS engine on THIS host (#21).
+
+    Distinct from the per-engine `routing_*` keys in `/engines`: this is the
+    single verdict for the *currently-selected* engine, surfaced in preflight +
+    diagnose so the user hears about a CPU fallback / unavailable GPU before a
+    slow or failed synth — no silent CPU fallback.
+    """
+    model_config = ConfigDict(extra="allow")
+
+    engine: str | None = None            # active TTS engine id
+    effective_device: str | None = None  # device it will actually use here
+    routing_status: str | None = None    # accelerated|cpu_fallback|cpu_only|unavailable|none
+    routing_reason: str | None = None    # scrubbed; null when none
+    host_family: str = "cpu"             # detect_host_caps().family
+    vram_gb: float = 0.0
 
 
 class PreflightResponse(BaseModel):
@@ -128,6 +161,9 @@ class PreflightResponse(BaseModel):
     has_warnings: bool = False
     checks: list[PreflightCheck] = Field(default_factory=list)
     device: DeviceInfo
+    # Explicit field (PreflightResponse has no extra="allow") so the verdict
+    # survives serialization instead of being silently dropped.
+    gpu_routing: GpuRouting | None = None
 
 
 class InstallModelRequest(BaseModel):

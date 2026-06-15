@@ -5,11 +5,14 @@ import {
   dubTranslate, dubGenerate, tasksStreamUrl, tasksCancel,
   transcribeStreamUrl, dubImportSrt,
 } from '../api/dub';
-import { PRESETS } from '../utils/constants';
+import { dialectMatchesLang } from '../api/dialects';
+import { segmentGenInputs } from '../utils/segments';
 import { apiPost } from '../api/client';
 import { API } from '../api/client';
 import { playPing, isTauri } from '../utils/media';
 import { toast } from 'react-hot-toast';
+import { toastErrorWithReport } from '../utils/errorToast';
+import { addBreadcrumb } from '../utils/breadcrumbs';
 import i18next from 'i18next';
 const t = i18next.t.bind(i18next);
 
@@ -48,7 +51,9 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
   const speed           = useAppStore(s => s.speed);
   const translateQuality = useAppStore(s => s.translateQuality);
   const timingStrategy  = useAppStore(s => s.timingStrategy);
+  const fitOptions      = useAppStore(s => s.fitOptions);
   const glossaryTerms   = useAppStore(s => s.glossaryTerms);
+  const dubDialect      = useAppStore(s => s.dubDialect);
 
   const [translateProvider, setTranslateProvider] = useState('argos');
   const [showTranscript, setShowTranscript] = useState(false);
@@ -68,7 +73,11 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
 
   // ── SSE: wait for transcription stream ──
   const _waitForTranscribe = useCallback((jobId, ctrl) => new Promise((resolve, reject) => {
-    const evt = new EventSource(transcribeStreamUrl(jobId));
+    // Read the optional speaker-count hint at stream-open time (#274) so the
+    // user's choice for this job is honoured without threading it through the
+    // three call sites. null → pyannote auto-detect.
+    const numSpeakers = useAppStore.getState().dubNumSpeakers;
+    const evt = new EventSource(transcribeStreamUrl(jobId, numSpeakers));
     let gotFinal = false;
     const close = () => { try { evt.close(); } catch {} };
     const onAbortSignal = () => { close(); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
@@ -200,7 +209,7 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
   // ── Handlers ──
   const handleDubUpload = useCallback(async (dubVideoFile) => {
     if (!dubVideoFile) return;
-    setDubStep('uploading'); setDubError(''); setDubFailure(null); setDubTracks([]); setDubPrepStage('download');
+    addBreadcrumb('dub:upload'); setDubStep('uploading'); setDubError(''); setDubFailure(null); setDubTracks([]); setDubPrepStage('download');
     setDubPrepProgress({ percent: null, speedBps: null, etaS: null, stageStartedAt: Date.now() });
     const ctrl = new AbortController();
     dubAbortCtrlRef.current = ctrl;
@@ -208,16 +217,16 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
     dubClientJobIdRef.current = clientJobId;
     setDubJobId(clientJobId);
     const inputType = useAppStore.getState().dubInputType || 'video';  // #119
-    useAppStore.getState().showPill('loading-model', inputType === 'audio' ? t('dub_workflow.preparing_audio') : t('dub_workflow.preparing_video'), { cancellable: true });
+    useAppStore.getState().showPill('loading-model', inputType === 'audio' ? t('dub_workflow.preparing_audio') : t('dub_workflow.preparing_video'), { cancellable: true, homeMode: 'dub' });
     try {
       const data = await dubUpload(dubVideoFile, clientJobId, { signal: ctrl.signal, inputType });
       setDubJobId(data.job_id); if (data.filename) setDubFilename(data.filename);
       setDubTaskId(data.task_id); setDubPrepStage('extract');
-      useAppStore.getState().showPill('loading-model', t('dub_workflow.extracting_audio_scenes'), { cancellable: true });
+      useAppStore.getState().showPill('loading-model', t('dub_workflow.extracting_audio_scenes'), { cancellable: true, homeMode: 'dub' });
       await _waitForPrep(data.task_id, ctrl);
       setDubStep('transcribing'); setDubPrepStage(null);
       setTranscribeStart(Date.now()); setDubSegments([]);
-      useAppStore.getState().showPill('transcribing', t('dub_workflow.transcribing_audio'), { cancellable: true });
+      useAppStore.getState().showPill('transcribing', t('dub_workflow.transcribing_audio'), { cancellable: true, homeMode: 'dub' });
       await _waitForTranscribe(data.job_id, ctrl);
       setTranscribeStart(null); setDubStep('editing');
       useAppStore.getState().completePill(t('dub_workflow.transcription_complete'));
@@ -225,7 +234,7 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
     } catch (err) {
       setDubPrepStage(null);
       if (err.name === 'AbortError') { toast(t('dub_workflow.upload_cancelled')); setDubStep('idle'); useAppStore.getState().dismissPill(); }
-      else { setDubError(err.message); setDubStep('idle'); toast.error(t('dub_workflow.upload_failed', { message: err.message })); useAppStore.getState().errorPill(err.message); }
+      else { setDubError(err.message); setDubStep('idle'); toastErrorWithReport(t('dub_workflow.upload_failed', { message: err.message }), err); useAppStore.getState().errorPill(err.message); }
       setTranscribeStart(null);
     } finally { dubAbortCtrlRef.current = null; }
   }, [setDubStep, setDubError, setDubFailure, setDubTracks, setDubPrepStage, setDubJobId, setDubFilename, setDubTaskId, setDubSegments, _waitForPrep, _waitForTranscribe, loadProjects, loadProfiles]);
@@ -233,22 +242,22 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
   const handleDubIngestUrl = useCallback(async (url, opts = {}) => {
     const clean = (url || '').trim();
     if (!clean) return;
-    setDubStep('uploading'); setDubError(''); setDubFailure(null); setDubTracks([]); setDubPrepStage('download');
+    addBreadcrumb('dub:ingest-url'); setDubStep('uploading'); setDubError(''); setDubFailure(null); setDubTracks([]); setDubPrepStage('download');
     setDubPrepProgress({ percent: null, speedBps: null, etaS: null, stageStartedAt: Date.now() });
     const ctrl = new AbortController();
     dubAbortCtrlRef.current = ctrl;
     const clientJobId = Math.random().toString(36).slice(2, 10);
     dubClientJobIdRef.current = clientJobId;
     setDubJobId(clientJobId);
-    useAppStore.getState().showPill('loading-model', t('dub_workflow.downloading_video'), { cancellable: true });
+    useAppStore.getState().showPill('loading-model', t('dub_workflow.downloading_video'), { cancellable: true, homeMode: 'dub' });
     try {
       const data = await dubIngestUrl(clean, clientJobId, { signal: ctrl.signal, fetchSubs: !!opts.fetchSubs, subLangs: opts.subLangs });
       setDubJobId(data.job_id); setDubTaskId(data.task_id);
-      useAppStore.getState().showPill('loading-model', t('dub_workflow.extracting_audio_scenes'), { cancellable: true });
+      useAppStore.getState().showPill('loading-model', t('dub_workflow.extracting_audio_scenes'), { cancellable: true, homeMode: 'dub' });
       await _waitForPrep(data.task_id, ctrl);
       setDubStep('transcribing'); setDubPrepStage(null);
       setTranscribeStart(Date.now()); setDubSegments([]);
-      useAppStore.getState().showPill('transcribing', t('dub_workflow.transcribing_audio'), { cancellable: true });
+      useAppStore.getState().showPill('transcribing', t('dub_workflow.transcribing_audio'), { cancellable: true, homeMode: 'dub' });
       await _waitForTranscribe(data.job_id, ctrl);
       setTranscribeStart(null); setDubStep('editing');
       useAppStore.getState().completePill(t('dub_workflow.transcription_complete'));
@@ -257,7 +266,7 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
     } catch (err) {
       setDubPrepStage(null);
       if (err.name === 'AbortError') { toast(t('dub_workflow.ingest_cancelled')); setDubStep('idle'); useAppStore.getState().dismissPill(); }
-      else { setDubError(err.message); setDubStep('idle'); toast.error(t('dub_workflow.ingest_failed', { message: err.message })); useAppStore.getState().errorPill(err.message); }
+      else { setDubError(err.message); setDubStep('idle'); toastErrorWithReport(t('dub_workflow.ingest_failed', { message: err.message }), err); useAppStore.getState().errorPill(err.message); }
       setTranscribeStart(null);
     } finally { dubAbortCtrlRef.current = null; }
   }, [setDubStep, setDubError, setDubFailure, setDubTracks, setDubPrepStage, setDubJobId, setDubTaskId, setDubSegments, _waitForPrep, _waitForTranscribe, loadProjects, loadProfiles]);
@@ -280,7 +289,7 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
     } catch (err) {
       setTranscribeStart(null);
       if (err.name === 'AbortError') { toast(t('dub_workflow.retry_cancelled')); setDubStep('idle'); }
-      else { setDubError(err.message); setDubStep('idle'); toast.error(t('dub_workflow.transcription_failed', { message: err.message })); }
+      else { setDubError(err.message); setDubStep('idle'); toastErrorWithReport(t('dub_workflow.transcription_failed', { message: err.message }), err); }
     } finally { dubAbortCtrlRef.current = null; }
   }, [dubJobId, setDubError, setDubSegments, setDubStep, _waitForTranscribe, loadProjects]);
 
@@ -339,6 +348,9 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
         target_lang: dubLangCode,
         provider: translateProvider,
         quality: translateQuality,
+        // #280: regional dialect — only sent when it matches the target
+        // language so a stale "es-AR" never rides on a French translate.
+        dialect: dialectMatchesLang(dubDialect, dubLangCode) ? dubDialect : undefined,
         glossary: glossaryTerms.length
           ? glossaryTerms.map(t => ({ source: t.source, target: t.target, note: t.note || '' }))
           : undefined,
@@ -363,7 +375,17 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
         };
       }));
       if (data.cinematic_skipped === 'no-llm-configured') {
-        toast(t('dub_workflow.cinematic_no_llm'), { icon: 'ℹ️', duration: 7000 });
+        toast(t('dub_workflow.cinematic_no_llm'), { icon: 'ℹ️', duration: 8000 });
+        // #372: the backend fell back to Fast — reflect that in the toggle so
+        // the UI doesn't claim Cinematic while delivering Fast.
+        useAppStore.getState().setTranslateQuality?.('fast');
+      }
+      // #280: the user picked a dialect but the chosen engine can't honor it
+      // (Argos/NLLB/Google in Fast mode). Tell them how to make it count.
+      // #372: skip when the cinematic toast above already fired — both at once
+      // sent users in a circle ("pick Cinematic" ↔ "Cinematic needs an LLM").
+      if (data.dialect && data.dialect_applied === false && data.cinematic_skipped !== 'no-llm-configured') {
+        toast(t('dub_workflow.dialect_not_applied'), { icon: 'ℹ️', duration: 8000 });
       }
       if (errors.length) {
         const unique = [...new Set(errors.map(e => e.error))];
@@ -374,36 +396,43 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
       }
     } catch (err) { setDubError(t('dub_workflow.translation_failed', { message: err.message })); }
     setIsTranslating(false);
-  }, [dubSegments, dubLangCode, translateProvider, translateQuality, glossaryTerms, setIsTranslating, setDubSegments, setDubError]);
+  }, [dubSegments, dubLangCode, dubDialect, translateProvider, translateQuality, glossaryTerms, setIsTranslating, setDubSegments, setDubError]);
 
   const handleDubGenerate = useCallback(async (opts = {}) => {
+    addBreadcrumb('dub:generate');
     const regenOnly = Array.isArray(opts.regenOnly) && opts.regenOnly.length ? opts.regenOnly : null;
     const preview = !!opts.preview;
+    // Batch multi-language: the caller loops over languages and passes each one
+    // here, overriding the store's single selection (which is stale inside the
+    // loop). Each run appends its track to the job's dubbed_tracks.
+    const langOv = opts.langOverride || null;
     setDubStep('generating');
     setDubProgress({ current: 0, total: dubSegments.length, text: '' });
     setDubError('');
     const genLabel = regenOnly ? t('dub_workflow.regenerating', { count: regenOnly.length }) : t('dub_workflow.generating_dub');
-    useAppStore.getState().showPill('generating', genLabel, { cancellable: true });
+    useAppStore.getState().showPill('generating', genLabel, { cancellable: true, homeMode: 'dub' });
     try {
       const body = {
         segment_ids: dubSegments.map(s => String(s.id)),
         regen_only: regenOnly,
-        segments: dubSegments.map(s => {
-          let fin_prof = s.profile_id || '';
-          let fin_inst = s.instruct || '';
-          if (fin_prof.startsWith('preset:')) {
-            const pr = PRESETS.find(p => p.id === fin_prof.replace('preset:', ''));
-            if (pr) { const parts = Object.values(pr.attrs).filter(v => v !== 'Auto'); if (fin_inst.trim()) parts.push(fin_inst.trim()); fin_inst = parts.join(', '); }
-            fin_prof = '';
-          }
-          return { start: s.start, end: s.end, text: s.text, instruct: fin_inst, profile_id: fin_prof, speed: s.speed || undefined, gain: s.gain !== undefined && s.gain !== 1.0 ? s.gain : undefined, target_lang: s.target_lang || undefined, direction: s.direction || undefined };
-        }),
-        language: dubLang === 'Auto' ? 'Auto' : dubLang,
-        language_code: dubLangCode,
+        // Generation inputs come from the shared helper so the stored
+        // fingerprints (seg_hashes) match what /tools/incremental recomputes
+        // later — see utils/segments.js (#281).
+        segments: dubSegments.map(s => ({
+          start: s.start,
+          end: s.end,
+          gain: s.gain !== undefined && s.gain !== 1.0 ? s.gain : undefined,
+          ...segmentGenInputs(s),
+        })),
+        language: langOv ? langOv.language : (dubLang === 'Auto' ? 'Auto' : dubLang),
+        language_code: langOv ? langOv.language_code : dubLangCode,
         instruct: dubInstruct,
         num_step: steps, guidance_scale: cfg, speed,
         preview,
         timing_strategy: timingStrategy || 'concise',
+        // Smart Fit knob overrides — only when the user customised them;
+        // otherwise the backend's canonical defaults apply.
+        ...(timingStrategy === 'smart_fit' && fitOptions ? { fit_options: fitOptions } : {}),
       };
       const data = await dubGenerate(dubJobId, body);
       setDubTaskId(data.task_id);
@@ -430,6 +459,9 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
                 sawDone = true;
                 setDubStep('done');
                 setDubTracks(evt.tracks || []);
+                // Invalidate the dubbed preview-video URL so the player
+                // re-fetches the freshly generated dub (#281).
+                useAppStore.getState().bumpDubGenNonce();
                 // Merge sync_scores (back-compat) and the new richer
                 // fit_status array onto each segment so the row badge can
                 // show truthful "Fits / Overflows +0.4s / Video stretched
@@ -448,7 +480,7 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
                 if (evt.seg_hashes && Object.keys(evt.seg_hashes).length > 0) {
                   setLastGenFingerprints(evt.seg_hashes);
                 } else {
-                  try { const plan = await apiPost('/tools/incremental', { segments: dubSegments.map(s => ({ id: String(s.id), text: s.text, target_lang: s.target_lang, profile_id: s.profile_id, instruct: s.instruct, speed: s.speed, direction: s.direction })) }); setLastGenFingerprints(plan.fingerprints || {}); } catch (err) { console.warn('Incremental plan fallback failed:', err); }
+                  try { const plan = await apiPost('/tools/incremental', { segments: dubSegments.map(s => ({ id: String(s.id), ...segmentGenInputs(s) })) }); setLastGenFingerprints(plan.fingerprints || {}); } catch (err) { console.warn('Incremental plan fallback failed:', err); }
                 }
               } else if (evt.type === 'cancelled') {
                 wasCancelled = true; setDubStep('editing'); setDubError(t('dub_workflow.generation_aborted')); toast(t('dub_workflow.dubbing_aborted'), { icon: '⏹' });
@@ -468,7 +500,7 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
       setDubError(err.message); setDubStep('editing'); setDubTaskId(null);
       useAppStore.getState().errorPill(err.message);
     }
-  }, [dubJobId, dubSegments, dubLang, dubLangCode, dubInstruct, steps, cfg, speed, dubStep, timingStrategy, setDubStep, setDubProgress, setDubError, setDubTracks, setDubSegments, setDubTaskId, setPreviewSegIds, setLastGenFingerprints, loadDubHistory, loadProjects]);
+  }, [dubJobId, dubSegments, dubLang, dubLangCode, dubInstruct, steps, cfg, speed, dubStep, timingStrategy, fitOptions, setDubStep, setDubProgress, setDubError, setDubTracks, setDubSegments, setDubTaskId, setPreviewSegIds, setLastGenFingerprints, loadDubHistory, loadProjects]);
 
   const handleDubStop = useCallback(async () => {
     if (!dubTaskId) return;

@@ -24,6 +24,7 @@
     "engines": "Motoren",
     "capture": "Sneltoetsen",
     "credentials": "Inloggegevens",
+    "updates": "Updates",
     "logs": "Logboeken",
     "about": "Over",
     "privacy": "Privacy",
@@ -73,7 +74,16 @@
     "shortcut_set": "Dicteersnelkoppeling ingesteld op {{shortcut}}",
     "shortcut_register_failed": "Kon niet registreren: {{message}}",
     "shortcut_reset": "Resetten naar standaard",
-    "shortcut_reset_failed": "Reset mislukt: {{message}}"
+    "shortcut_reset_failed": "Reset mislukt: {{message}}",
+    "cancel": "Annuleer",
+    "hf_token_also_clear": "Ook wissen",
+    "hf_token_clear_btn": "Token wissen",
+    "hf_token_clear_confirm": "De HuggingFace-token uit de app-bron wissen?",
+    "hf_token_clear_dialog": "Token wissen",
+    "hf_token_input": "HuggingFace-token",
+    "hf_token_sources": "HF-tokenbronnen",
+    "hf_token_test_now": "Nu testen",
+    "hf_token_test_now_title": "Voer whoami opnieuw uit voor elke bron"
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -103,7 +113,17 @@
     "region_russia": "Rusland (spiegel)",
     "region_restricted": "Beperkt (spiegel)",
     "unknown_error": "Onbekende fout",
-    "retrying": "Opnieuw proberen…"
+    "retrying": "Opnieuw proberen…",
+    "hint_readme": "README.md ontbrak in het pakket. Dit wordt nu automatisch hersteld — opnieuw proberen zou moeten werken.",
+    "hint_python_mirror": "Het netwerk kon de Python-download (github.com-release) niet bereiken. Wissel van regio in Instellingen → Netwerk (China / Rusland / Beperkt lopen via een mirror), of installeer Python 3.11+ systeembreed zodat de app die gebruikt.",
+    "hint_uv_timeout": "Netwerk-time-out bij het downloaden van uv. Controleer je internetverbinding of probeer een andere regio in Instellingen → Netwerk.",
+    "hint_uv_sync": "Installatie van afhankelijkheden mislukt. \"Wissen & Opnieuw proberen\" verwijdert de gecachte venv en begint opnieuw.",
+    "hint_build_backend": "Fout in de Python-build-backend. \"Wissen & Opnieuw proberen\" verwijdert de kapotte venv zodat die opnieuw wordt opgebouwd.",
+    "hint_ffmpeg": "ffmpeg-download mislukt. Dit is niet fataal — probeer opnieuw of installeer ffmpeg handmatig.",
+    "hint_port": "Poort 3900 is al in gebruik. Sluit andere OmniVoice-instanties of apps die deze poort gebruiken.",
+    "hint_silent_crash": "De backend is zonder foutmelding gecrasht. \"Wissen & Opnieuw proberen\" verhelpt vaak problemen met een corrupte venv.",
+    "hint_github_blocked": "Je netwerk blokkeert mogelijk GitHub. Installeer Python 3.11+ van python.org (voeg toe aan PATH) en herstart, of stel UV_PYTHON_INSTALL_MIRROR in — zie docs/install/troubleshooting.md.",
+    "hint_default": "Probeer eerst \"Opnieuw proberen\". Mislukt het weer, dan bouwt \"Wissen & Opnieuw proberen\" de omgeving helemaal opnieuw op."
   },
   "stories": {
     "title": "Verhalen-editor",
@@ -220,7 +240,7 @@
     "designed_voices": "Ontworpen stemmen",
     "dubbing_projects": "Dubben van projecten",
     "empty_hint": "Hier is nog niets. Kies hierboven een kaart.",
-    "demo_callout": "👋 Probeer de demostem: druk op Genereer om deze te horen.",
+    "demo_callout": "Probeer de demostem: druk op Genereer om deze te horen.",
     "locked": "GESLOTEN",
     "open": "Openen",
     "try_it": "Probeer het",
@@ -274,7 +294,7 @@
     "preset_surprised_woman": "😲 Verrast",
     "preset_elderly_story": "👴 Ouderling",
     "preset_sichuan": "🌶️四川话",
-    "prompt_placeholder": "Wat moet deze stem zeggen? ✍️",
+    "prompt_placeholder": "Wat moet deze stem zeggen?",
     "design_placeholder": "Beschrijf de stem en typ wat er staat...",
     "speed": "Snelheid",
     "tshift": "t_verschuiving",
@@ -302,7 +322,17 @@
     "opt_high_pitch": "hoge toon",
     "opt_very_high_pitch": "zeer hoge toon",
     "opt_whisper": "fluisteren",
-    "style_placeholder": "bijv. fluisteren"
+    "style_placeholder": "bijv. fluisteren",
+    "stop_playback": "Afspelen stoppen",
+    "describe_label": "Beschrijf je stem",
+    "describe_placeholder": "bijv. a warm elderly British storyteller, slightly raspy",
+    "describe_hint": "Je beschrijving (in het Engels) stelt de regelaars hieronder in — je kunt ze daarna bijstellen.",
+    "describe_unmatched": "Kon niet toewijzen: {{items}}",
+    "describe_no_match": "Nog geen stemkenmerken herkend — probeer woorden als deep, elderly of British.",
+    "define_by_design": "Via ontwerp",
+    "define_from_audio": "Vanuit audio",
+    "define_voice": "Stem definiëren",
+    "save_design_as_profile": "Ontwerp opslaan als profiel"
   },
   "about": {
     "app": "App",
@@ -337,7 +367,17 @@
     "channel_stable": "Stabiel",
     "channel_preview": "Voorbeeld",
     "channel_set": "Updatekanaal ingesteld op {{channel}}",
-    "channel_preview_hint": "Voorbeeld volgt de nieuwste main-build — nieuwere functies, minder getest. Valt terug op stabiel als er een nieuwere stabiele release is."
+    "channel_preview_hint": "Voorbeeld volgt de nieuwste main-build — nieuwere functies, minder getest. Valt terug op stabiel als er een nieuwere stabiele release is.",
+    "self_check": "Zelfcontrole uitvoeren",
+    "self_check_failed": "Zelfcontrole mislukt: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Waarschuwing",
+    "self_check_fail": "Mislukt",
+    "self_check_healthy": "Alle controles geslaagd — deze installatie ziet er gezond uit.",
+    "self_check_attention": "{{count}} controle(s) mislukt — zie de hints hierboven.",
+    "save_bundle": "Diagnosepakket opslaan",
+    "bundle_saved": "Diagnosepakket opgeslagen: {{filename}}",
+    "bundle_failed": "Kon het diagnosepakket niet maken: {{message}}"
   },
   "privacy": {
     "desc": "Alles draait op <1>deze machine</1>. Uw audio, video en transcripties verlaten uw computer nooit, tenzij u expliciet een online vertaler (Google, DeepL, enz.) gebruikt of naar HuggingFace pusht.",
@@ -436,9 +476,12 @@
     "mic_denied": "Microfoontoegang geweigerd",
     "mic_denied_toast": "Microfoontoegang geweigerd. {{hint}}",
     "mic_hint_mac": "macOS: open Systeeminstellingen → Privacy en beveiliging → Microfoon en schakel OmniVoice in.",
-    "mic_hint_windows": "Windows: open Instellingen → Privacy en beveiliging → Microfoon en sta OmniVoice toe.",
+    "mic_hint_windows": "Windows: open Instellingen → Privacy en beveiliging → Microfoon, schakel 'Microfoontoegang' en 'Desktop-apps toegang geven tot je microfoon' in en sta OmniVoice toe.",
     "mic_hint_linux": "Linux: controleer of uw gebruiker in de audiogroep zit en of de WebView microfoontoegang heeft.",
-    "transcription_failed": "Transcriptie mislukt: {{message}}"
+    "transcription_failed": "Transcriptie mislukt: {{message}}",
+    "mic_not_found": "Geen microfoon gevonden. Sluit een microfoon aan of schakel er een in en probeer het opnieuw.",
+    "mic_in_use": "De microfoon is bezet of niet beschikbaar. Sluit andere apps die hem mogelijk gebruiken en probeer het opnieuw.",
+    "mic_error_generic": "Kon de microfoon niet starten: {{message}}"
   },
   "logs": {
     "no_tauri_log": "Nog geen Tauri-inlogschijf: start via de desktop-build om er een te maken",
@@ -564,7 +607,7 @@
     "prep_extract": "Audio extraheren…",
     "prep_demucs": "Zang/muziek scheiden (Demucs)…",
     "prep_scene": "Scènefragmenten detecteren…",
-    "prep_cached": "⚡ Gecachte resultaten gebruiken...",
+    "prep_cached": "Gecachte resultaten gebruiken...",
     "prep_preparing": "Voorbereiden…",
     "prep_chip_download": "downloaden",
     "prep_chip_extract": "uittreksel",
@@ -629,6 +672,8 @@
     "dual_subs_title": "Exporteer ondertitels met de vertaalde tekst bovenaan en het origineel cursief eronder.",
     "burn_subs": "Ondertitels branden",
     "burn_subs_title": "Geef ondertitels rechtstreeks weer in de MP4-videostream (hardsubs). Gebruikt het formaat met dubbele ondertiteling wanneer dubbele ondertiteling is ingeschakeld.",
+    "timing_smart_fit": "Slimme aanpassing",
+    "timing_smart_fit_title": "Verdeelt de aanpassing: versnelt de audio licht (toonhoogte behouden, tot 1,5×) en vertraagt dat videosegment licht (tot 2×) zodat spraak op natuurlijk tempo past. Wat daarbuiten valt wordt afgekapt en gemarkeerd. Exporteren hercodeert de video.",
     "default_track": "Standaardnummer:",
     "original_track": "Origineel",
     "selected_dub": "{{code}} (geselecteerde kopie)",
@@ -654,7 +699,20 @@
     "diagnostic_copied": "Diagnostiek gekopieerd",
     "copy_failed": "Kopiëren mislukt",
     "open_docs": "Documenten openen",
-    "copy_diagnostic": "Diagnostiek kopiëren"
+    "copy_diagnostic": "Diagnostiek kopiëren",
+    "dialect_label": "Dialect",
+    "dialect_default": "Standaard",
+    "dialect_title": "Regionaal dialect en vocabulaire voor de vertaling (bijv. Argentinië → “vos sos” in plaats van “tú eres”). Toegepast door LLM-engines (OpenAI/Ollama) en Cinematic-kwaliteit.",
+    "num_speakers_label": "Sprekers",
+    "num_speakers_auto": "Automatisch",
+    "num_speakers_help": "Hoeveel sprekers zijn er in deze video? Laat leeg voor automatische detectie. Stel een aantal in als de detectie meerdere sprekers samenvoegt tot één.",
+    "advanced": "Geavanceerd",
+    "cinematic_needs_llm_hint": "Filmisch heeft een LLM nodig. Stel er een in via Instellingen → Inloggegevens → LLM-eindpunt (Ollama draait lokaal, geen sleutel nodig).",
+    "generate_dub_multi": "{{count}} dubs genereren",
+    "pipeline": "Dubbing-pipeline",
+    "preview_language": "Voorbeeldtaal",
+    "target_language": "Dubben naar",
+    "transcript_after_extract": "Het afschrift verschijnt na extractie."
   },
   "glossary": {
     "title": "Woordenlijst",
@@ -740,6 +798,20 @@
     "fit_compressed_title": "TTS-audio is {{pct}}% van de sleuf – zwaar gecomprimeerd.",
     "fit_audio_title": "Audio past in de sleuf.",
     "fit_ratio_title": "TTS-audio is {{pct}}% van de sleuf."
+  },
+  "timeline": {
+    "track_label": "Segmenttijdlijn",
+    "keyboard_hint": "Pijltjestoetsen selecteren een segment · Enter schakelt de bewerkmodus · Delete verwijdert · S klikt vast op de dichtstbijzijnde spraakinzet",
+    "segment_aria": "Segment {{index}}: {{start}} tot {{end}}",
+    "overlap_warning": "Overlapt een aangrenzend segment — beide regels klinken tegelijk",
+    "moved_announce": "Segment {{index}} verplaatst naar {{start}}",
+    "resized_announce": "Segment {{index}}: {{start}} tot {{end}}",
+    "deleted_announce": "Segment {{index}} verwijderd",
+    "snapped_announce": "Rand vastgeklikt op spraakinzet bij {{time}}",
+    "edit_mode_on": "Bewerkmodus: pijltjes verschuiven het begin, Shift het einde, Alt het hele segment, Esc sluit af",
+    "edit_mode_off": "Bewerkmodus uit",
+    "play_slot": "Dit fragment afspelen",
+    "preview_dub": "Dub hier voorbeluisteren"
   },
   "voice": {
     "personality": "Persoonlijkheid",
@@ -903,7 +975,15 @@
     "save_failed": "Kan profiel niet opslaan.",
     "confirm_delete": "\"{{name}}\" verwijderen?",
     "trim_load_failed": "Kan audio voor bijsnijden niet laden.",
-    "delete": "Verwijderen"
+    "delete": "Verwijderen",
+    "community_empty": "Nog geen community-stemmen geladen — maak verbinding met internet en open opnieuw, of wees de eerste die er een indient.",
+    "community_explainer": "Ontworpen presets en opgenomen stemmen gedeeld door de community, geladen vanuit de omnivoice-gallery.",
+    "no_designer": "Opgenomen stem — gebruik in plaats daarvan \"Gebruik stem\".",
+    "no_preview": "Geen voorbeeld — voeg de stem toe met \"Gebruik stem\" om hem te horen.",
+    "submit_failed": "Het indieningsformulier kon niet worden geopend.",
+    "submit_preset": "Preset indienen",
+    "submit_voice": "Stem indienen",
+    "zone_community": "Community"
   },
   "transcriptions": {
     "title": "Transcripties",
@@ -956,7 +1036,9 @@
     "open": "Openen",
     "install_required_models": "Installeer de vereiste modellen hierboven om door te gaan.",
     "try_dictation": "Probeer dicteren",
-    "next_try_dictation": "Volgende: Probeer dicteren"
+    "next_try_dictation": "Volgende: Probeer dicteren",
+    "step_aria": "Stap {{num}}: {{label}}",
+    "step_completed": "voltooid"
   },
   "donate": {
     "title": "Ondersteuning",
@@ -977,7 +1059,7 @@
     "back": "Terug naar Studio",
     "badge": "Commerciële licentie",
     "hero_title": "Verzend AI-stemmen in productie",
-    "hero_desc": "OmniVoice Studio is bron-beschikbaar onder de Functionele Bronlicentie (FSL). De meeste gebruikers kunnen zonder commerciële overeenkomst evalueren, prototypen maken en zelfs intern implementeren. U heeft alleen een commerciële licentie nodig als u een concurrerend product of dienst bouwt, of als uw gebruiksscenario buiten de grenzen van de FSL valt.",
+    "hero_desc": "OmniVoice Studio is vrije en open-source software onder de GNU Affero General Public License v3 (AGPL-3.0) — gratis te gebruiken, ook voor commercieel en intern zakelijk gebruik. Een commerciële licentie is alleen nodig als je OmniVoice Studio wilt inbouwen in een closed-source of propriëtair product of dienst zonder de copyleft-verplichtingen van de AGPL-3.0.",
     "why_title": "Waarom bedrijven voor OmniVoice kiezen",
     "pricing_title": "Prijzen",
     "faq_title": "Veelgestelde vragen",
@@ -998,7 +1080,7 @@
     "benefit_source_desc": "Volledig zicht op de stapel. Audit, fork en pas aan binnen de licentievoorwaarden.",
     "benefit_lang": "646 talen",
     "benefit_lang_desc": "Transcribeer, vertaal en kopieer in 646 talen met kwaliteit op menselijk niveau.",
-    "hero_note": "Intern gebruik – zelfs op grote schaal – is gratis onder de FSL; een commerciële licentie is alleen vereist om OmniVoice aan anderen aan te bieden als een concurrerend product of dienst (een gehoste of pay-per-use API, een doorverkochte of white-labeled app). Prijsniveaus volgen binnenkort. Neem in de tussentijd contact met ons op."
+    "hero_note": "Gebruik, self-hosting en commercieel gebruik zijn allemaal gratis onder de AGPL-3.0 — ook op grote schaal. De AGPL is een netwerk-copyleft-licentie: als je OmniVoice aanpast en die aangepaste versie via een netwerk aan anderen aanbiedt, moet je je gewijzigde broncode onder dezelfde voorwaarden delen. Een commerciële licentie heft die copyleft-verplichtingen op voor propriëtaire closed-source-implementaties. Prijsplannen volgen binnenkort — neem in de tussentijd contact op."
   },
   "exportModal": {
     "export": "Exporteren",
@@ -1047,6 +1129,7 @@
     "current_target": "Huidig doel ({{code}})",
     "all_selected_dubs": "Alle geselecteerde dubs ({{count}})",
     "subs_note": "Ondertitels worden gegenereerd op basis van segmenttekst zoals ze zijn. Bewerk de segmenttabel voordat u deze exporteert als u typefouten tegenkomt.",
+    "retime_note": "Het per segment hertimen van de video hercodeert bij het exporteren de hele video — reken op ongeveer 0,5–2× de videolengte op de CPU.",
     "pkg_clips_title": "Clips per segment (.zip)",
     "pkg_clips_body": "Elk gegenereerd segment als een genummerde WAV in een zip – goed voor beoordeling, voice-overpost of het bouwen van datasets.",
     "pkg_clips_cta": "Clips zip exporteren",
@@ -1097,7 +1180,8 @@
     "script_french": "Niet-Engels (Frans)",
     "aria_pause": "Pauze {{label}}",
     "aria_hear": "Hoor {{label}}",
-    "aria_replay": "Speel {{label}} opnieuw af via de transcriber"
+    "aria_replay": "Speel {{label}} opnieuw af via de transcriber",
+    "dictation_lede_hotkey_only": "Houd de sneltoets hierboven overal op je bureaublad ingedrukt, spreek, laat los — de tekst belandt in de app met focus. Druk nu om te verifiëren."
   },
   "direction": {
     "title": "Richting voor segment #{{id}}",
@@ -1122,7 +1206,10 @@
     "title": "Dit tabblad stuitte op een probleem.",
     "desc": "Maak je geen zorgen: de rest van de app werkt nog steeds. U kunt van tabblad wisselen of het hieronder opnieuw proberen.",
     "tryAgain": "Probeer het opnieuw",
-    "openDocs": "Open documenten voor deze fout"
+    "openDocs": "Open documenten voor deze fout",
+    "report": "Deze bug melden",
+    "searchIssues": "Vergelijkbare problemen zoeken",
+    "unexpected": "Onverwachte fout: {{message}}"
   },
   "keyboard": {
     "title": "Sneltoetsen",
@@ -1278,7 +1365,8 @@
     "dub_label": "Dub",
     "save_label": "Opslaan",
     "lock_identity": "Stemidentiteit vergrendelen",
-    "in_folder": "in {{folder}}"
+    "in_folder": "in {{folder}}",
+    "search": "Zoeken…"
   },
   "trimmer": {
     "title": "Referentie-audio trimmen",
@@ -1411,13 +1499,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Heb ik een licentie nodig voor interne tools?",
-    "a_internal_tools": "Intern gebruik door uw werknemers en contractanten is een toegestaan doel onder de FSL – er is geen licentie vereist. Een commerciële licentie is nodig wanneer u OmniVoice beschikbaar stelt aan anderen als onderdeel van een concurrerend product of dienst (wederverkoop, gehoste SaaS, white-label).",
+    "a_internal_tools": "Nee. Gebruik door je medewerkers en contractors — inclusief intern aanpassen en self-hosten — is gratis onder de AGPL-3.0. Een commerciële licentie is alleen nodig als je OmniVoice inbouwt in een closed-source of propriëtair product of dienst en niet wilt voldoen aan de broncode-deelverplichtingen van de AGPL.",
     "q_try_before": "Kan ik het proberen voordat ik me vastleg?",
-    "a_try_before": "Ja. De volledige app kan gratis worden gedownload en lokaal worden uitgevoerd voor evaluatie onder de FSL. Wanneer u klaar bent om een ​​commerciële implementatie te bespreken, kunt u ons een e-mail sturen, zodat we samen de details kunnen doornemen.",
+    "a_try_before": "Ja. De volledige app is gratis te downloaden, draaien en zelf te hosten onder de AGPL-3.0 — geen overeenkomst nodig. Wil je een commerciële licentie (propriëtair gebruik) bespreken, mail ons dan en we werken de details samen uit.",
     "q_watermark": "Hoe zit het met het watermerk?",
-    "a_watermark": "Het onzichtbare AudioSeal-watermerk is standaard ingesloten. Commerciële licentiehouders kunnen dit uitschakelen via Instellingen → Privacy. Bij gratis/persoonlijk gebruik is altijd het watermerk inbegrepen.",
-    "q_apache": "Wordt de bron ooit Apache 2.0?",
-    "a_apache": "Ja. Elke release wordt automatisch geconverteerd naar de Apache-licentie, versie 2.0, op de tweede verjaardag van de publicatie ervan. Dat betekent dat de release van vandaag over twee jaar Apache 2.0 is, zonder dat er actie van ons nodig is; de FSL garandeert dit onherroepelijk."
+    "a_watermark": "Het onzichtbare AudioSeal-watermerk is standaard voor iedereen ingesloten. Commerciële licentiehouders kunnen dit uitschakelen via Instellingen → Privacy."
   },
   "gallery_extra": {
     "save_prompt": "Voer een naam in voor dit stemprofiel:",
@@ -1452,6 +1538,7 @@
     "segments_clean": "Segmenten zijn al schoon",
     "cleanup_failed": "Opschonen mislukt: {{message}}",
     "cinematic_no_llm": "Filmische kwaliteit heeft een LLM nodig: stel TRANSLATE_BASE_URL + TRANSLATE_API_KEY in (Ollama werkt lokaal). Terugvallend op Snel.",
+    "dialect_not_applied": "Het gekozen dialect heeft een LLM nodig — zet de engine op OpenAI/Ollama of kies Cinematic-kwaliteit.",
     "translate_errors": "{{errorCount}}/{{totalCount}} segment(en) mislukt: {{firstError}}",
     "translated_segments": "Vertaald {{count}} segment(en) → {{lang}}",
     "translated_cinematic_suffix": "(filmisch)",
@@ -1597,5 +1684,90 @@
     "none": "Geen releases gevonden",
     "load_error": "Kan releases niet laden (offline?)",
     "retry_load": "Opnieuw proberen"
+  },
+  "firstrun": {
+    "loading": "Installatie voorbereiden…",
+    "title": "OmniVoice Studio instellen",
+    "subtitle": "Er is nog niets geïnstalleerd — controleer waar alles komt te staan en start daarna. Later te wijzigen in Instellingen.",
+    "language": "Taal",
+    "mode_title": "Installatiemodus",
+    "mode_installed": "Geïnstalleerd",
+    "mode_installed_desc": "Gebruikt de standaard systeemmappen. Aanbevolen voor de meeste gebruikers.",
+    "mode_portable": "Draagbaar",
+    "mode_portable_desc": "Alles staat in één map naast de app — verplaats hem als geheel naar een andere schijf of machine.",
+    "mode_portable_unavailable": "Niet beschikbaar: de map naast de app is niet beschrijfbaar.",
+    "storage_title": "Opslag",
+    "portable_folder": "Draagbare map",
+    "portable_folder_desc": "Omgeving, modellen en je stemdata — één map, volledig verplaatsbaar.",
+    "env_dir": "App-omgeving",
+    "env_dir_desc": "Python-runtime en AI-bibliotheken.",
+    "data_dir": "Stemdata & projecten",
+    "data_dir_desc": "Je stemmen, dubs, uitvoer en de projectdatabase.",
+    "models_dir": "Modelcache",
+    "models_dir_desc": "Gedownloade AI-modellen — het grootste en best verplaatsbare deel.",
+    "needs": "vereist ~{{size}}",
+    "free": "{{size}} vrij",
+    "checking": "controleren…",
+    "not_writable": "niet beschrijfbaar",
+    "change": "Wijzigen…",
+    "compute_title": "Rekenkracht",
+    "compute_label": "GPU / versneller",
+    "compute_auto": "Auto (NVIDIA CUDA / Apple MPS / CPU)",
+    "compute_rocm": "AMD GPU (ROCm, Linux)",
+    "channel_label": "Updatekanaal",
+    "channel_stable": "Stabiel",
+    "channel_preview": "Preview (nieuwste main)",
+    "network_title": "Netwerk",
+    "region_label": "Downloadregio",
+    "mirrors_title": "Eigen mirrors (geavanceerd)",
+    "mirror_pypi": "PyPI-index-URL",
+    "mirror_hf": "Hugging Face-endpoint",
+    "mirror_python": "Python-downloadmirror",
+    "insufficient_space": "Onvoldoende ruimte: deze indeling vereist ~{{need}} op één schijf, slechts {{free}} beschikbaar. Kies een andere locatie.",
+    "blocked_not_writable": "Een gekozen map is niet beschrijfbaar — kies een andere locatie.",
+    "total_required": "Totaal benodigde schijfruimte: ~{{size}} (eenmalige download bij eerste gebruik)",
+    "start": "Installatie starten",
+    "starting": "Starten…",
+    "compute_detected": "Gedetecteerd",
+    "compute_match": "past bij deze machine",
+    "compute_auto_desc": "Kiest tijdens runtime de beste backend van deze machine — CUDA op NVIDIA, MPS op Apple Silicon, anders CPU.",
+    "compute_rocm_desc": "Installeert PyTorch ROCm-wheels voor AMD-kaarten op Linux. Laat op Auto staan bij twijfel.",
+    "channel_stable_desc": "Alleen geteste releases — updates komen na validatie door de community.",
+    "channel_preview_desc": "Doorlopende builds van de nieuwste main — nieuwe engines en fixes eerst, af en toe een ruw randje.",
+    "installing_title": "Installeren",
+    "activity_title": "Activiteit",
+    "stage_setup": "Installatie",
+    "stage_models": "Modellen & engines",
+    "chip_required": "vereist",
+    "chip_optional": "optioneel",
+    "chip_engine": "engine",
+    "lib_download": "Downloaden",
+    "lib_downloading": "downloaden…",
+    "lib_use": "Gebruik",
+    "lib_active": "actief",
+    "lib_in_settings": "later installeren in Instellingen",
+    "lib_show_all": "Toon {{count}} optionele modellen",
+    "trust_line": "Alles draait en blijft op deze machine — geen account, geen cloud, geen telemetrie.",
+    "resume_note": "Onderbroken downloads hervatten automatisch — de app sluiten is veilig.",
+    "eta_left": "nog ~{{eta}}",
+    "first_sound_text": "Welkom in je studio. Elk woord dat je hoort is zojuist op deze machine gegenereerd.",
+    "first_sound_done": "Die stem? Seconden geleden lokaal gegenereerd. Welkom.",
+    "hf_token_title": "Hugging Face-token (optioneel)",
+    "hf_token_hint": "Ontgrendelt afgeschermde modellen — bijv. sprekerdiarisatie voor dubben met meerdere stemmen (pyannote). Token van gratis account; blijft op deze machine.",
+    "hf_token_save": "Opslaan",
+    "hf_token_saving": "opslaan…",
+    "hf_token_saved": "Hugging Face-token opgeslagen",
+    "hf_token_error": "Token kon niet worden opgeslagen — probeer opnieuw of stel het later in via Instellingen → Inloggegevens."
+  },
+  "history": {
+    "dub_title": "Dubgeschiedenis",
+    "empty": "Hier is nog niets — je generaties verschijnen rechts.",
+    "empty_dub": "Je dubs verschijnen hier.",
+    "title": "Geschiedenis"
+  },
+  "recording": {
+    "cleaned_loaded": "Opname opgeschoond en geladen!",
+    "loaded_raw": "Opname geladen (ruw — ruisonderdrukking niet beschikbaar)",
+    "too_short": "Opname te kort"
   }
 }

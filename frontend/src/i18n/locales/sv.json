@@ -24,6 +24,7 @@
     "engines": "Motorer",
     "capture": "Genvägar",
     "credentials": "Autentisering",
+    "updates": "Uppdateringar",
     "logs": "Loggar",
     "about": "Om",
     "privacy": "Integritet",
@@ -73,7 +74,16 @@
     "shortcut_set": "Dikteringsgenväg inställd på {{shortcut}}",
     "shortcut_register_failed": "Kunde inte registrera: {{message}}",
     "shortcut_reset": "Återställ till standard",
-    "shortcut_reset_failed": "Återställning misslyckades: {{message}}"
+    "shortcut_reset_failed": "Återställning misslyckades: {{message}}",
+    "cancel": "Avbryt",
+    "hf_token_also_clear": "Rensa också",
+    "hf_token_clear_btn": "Rensa token",
+    "hf_token_clear_confirm": "Rensa HuggingFace-token från App-källan?",
+    "hf_token_clear_dialog": "Rensa token",
+    "hf_token_input": "HuggingFace-token",
+    "hf_token_sources": "HF-tokenkällor",
+    "hf_token_test_now": "Testa nu",
+    "hf_token_test_now_title": "Kör whoami igen för varje källa"
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -103,7 +113,17 @@
     "region_russia": "Ryssland (spegel)",
     "region_restricted": "Begränsad (spegel)",
     "unknown_error": "Okänt fel",
-    "retrying": "Försöker igen..."
+    "retrying": "Försöker igen...",
+    "hint_readme": "README.md saknades i paketet. Detta åtgärdas nu automatiskt — ett nytt försök bör fungera.",
+    "hint_python_mirror": "Nätverket kunde inte nå Python-nedladdningen (github.com-release). Byt region i Inställningar → Nätverk (Kina / Ryssland / Begränsad går via en spegel), eller installera Python 3.11+ systemvitt så att appen använder den.",
+    "hint_uv_timeout": "Nätverkstimeout vid nedladdning av uv. Kontrollera din internetanslutning eller prova en annan region i Inställningar → Nätverk.",
+    "hint_uv_sync": "Installation av beroenden misslyckades. \"Rensa & Försök igen\" raderar den cachade venv:n och börjar om.",
+    "hint_build_backend": "Fel i Pythons byggbackend. \"Rensa & Försök igen\" tar bort den trasiga venv:n så att den byggs om från grunden.",
+    "hint_ffmpeg": "Nedladdningen av ffmpeg misslyckades. Detta är inte kritiskt — försök igen eller installera ffmpeg manuellt.",
+    "hint_port": "Port 3900 används redan. Stäng andra OmniVoice-instanser eller appar som använder porten.",
+    "hint_silent_crash": "Backenden kraschade utan felmeddelande. \"Rensa & Försök igen\" löser ofta problem med en korrupt venv.",
+    "hint_github_blocked": "Ditt nätverk kan blockera GitHub. Installera Python 3.11+ från python.org (lägg till i PATH) och starta om, eller sätt UV_PYTHON_INSTALL_MIRROR — se docs/install/troubleshooting.md.",
+    "hint_default": "Prova \"Försök igen\" först. Misslyckas det igen bygger \"Rensa & Försök igen\" om miljön från grunden."
   },
   "stories": {
     "title": "Redaktör för berättelser",
@@ -220,7 +240,7 @@
     "designed_voices": "Designade röster",
     "dubbing_projects": "Dubbningsprojekt",
     "empty_hint": "Inget här ännu - välj ett kort ovan.",
-    "demo_callout": "👋 Prova demorösten — tryck på Generera för att höra den.",
+    "demo_callout": "Prova demorösten — tryck på Generera för att höra den.",
     "locked": "LÅST",
     "open": "Öppna",
     "try_it": "Prova det",
@@ -274,7 +294,7 @@
     "preset_surprised_woman": "😲 Förvånad",
     "preset_elderly_story": "👴 Äldre",
     "preset_sichuan": "🌶️ 四川话",
-    "prompt_placeholder": "Vad ska den här rösten säga? ✍️",
+    "prompt_placeholder": "Vad ska den här rösten säga?",
     "design_placeholder": "Beskriv rösten och skriv sedan vad den säger...",
     "speed": "Hastighet",
     "tshift": "t_shift",
@@ -302,7 +322,17 @@
     "opt_high_pitch": "hög tonhöjd",
     "opt_very_high_pitch": "mycket hög tonhöjd",
     "opt_whisper": "viska",
-    "style_placeholder": "t.ex. viska"
+    "style_placeholder": "t.ex. viska",
+    "stop_playback": "Stoppa uppspelning",
+    "describe_label": "Beskriv din röst",
+    "describe_placeholder": "t.ex. a warm elderly British storyteller, slightly raspy",
+    "describe_hint": "Din beskrivning (på engelska) ställer in kontrollerna nedan — du kan finjustera dem efteråt.",
+    "describe_unmatched": "Kunde inte mappa: {{items}}",
+    "describe_no_match": "Inga röstdrag har känts igen ännu — prova ord som deep, elderly eller British.",
+    "define_by_design": "Via design",
+    "define_from_audio": "Från ljud",
+    "define_voice": "Definiera röst",
+    "save_design_as_profile": "Spara design som profil"
   },
   "about": {
     "app": "App",
@@ -337,7 +367,17 @@
     "channel_stable": "Stabil",
     "channel_preview": "Förhandsvisning",
     "channel_set": "Uppdateringskanal inställd på {{channel}}",
-    "channel_preview_hint": "Förhandsvisning följer det senaste main-bygget – nyare funktioner, mindre testade. Återgår till stabil om en stabil version ligger före."
+    "channel_preview_hint": "Förhandsvisning följer det senaste main-bygget – nyare funktioner, mindre testade. Återgår till stabil om en stabil version ligger före.",
+    "self_check": "Kör självtest",
+    "self_check_failed": "Självtestet misslyckades: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Varning",
+    "self_check_fail": "Misslyckades",
+    "self_check_healthy": "Alla kontroller godkända — installationen ser frisk ut.",
+    "self_check_attention": "{{count}} kontroll(er) misslyckades — se tipsen ovan.",
+    "save_bundle": "Spara diagnostikpaket",
+    "bundle_saved": "Diagnostikpaket sparat: {{filename}}",
+    "bundle_failed": "Kunde inte skapa diagnostikpaketet: {{message}}"
   },
   "privacy": {
     "desc": "Allt körs på <1>denna maskin</1>. Ditt ljud, video och transkriptioner lämnar aldrig din dator om du inte uttryckligen använder en onlineöversättare (Google, DeepL, etc.) eller trycker till HuggingFace.",
@@ -436,9 +476,12 @@
     "mic_denied": "Mikrofonåtkomst nekad",
     "mic_denied_toast": "Mikrofonåtkomst nekad. {{hint}}",
     "mic_hint_mac": "macOS: öppna Systeminställningar → Sekretess och säkerhet → Mikrofon och aktivera OmniVoice.",
-    "mic_hint_windows": "Windows: öppna Inställningar → Sekretess och säkerhet → Mikrofon och tillåt OmniVoice.",
+    "mic_hint_windows": "Windows: öppna Inställningar → Sekretess och säkerhet → Mikrofon, aktivera 'Mikrofonåtkomst' och 'Låt skrivbordsappar komma åt din mikrofon' och tillåt sedan OmniVoice.",
     "mic_hint_linux": "Linux: kontrollera att din användare är i ljudgruppen och att WebView har mikrofonåtkomst.",
-    "transcription_failed": "Transkription misslyckades: {{message}}"
+    "transcription_failed": "Transkription misslyckades: {{message}}",
+    "mic_not_found": "Ingen mikrofon hittades. Anslut eller aktivera en mikrofon och försök igen.",
+    "mic_in_use": "Mikrofonen är upptagen eller otillgänglig. Stäng andra appar som kan använda den och försök igen.",
+    "mic_error_generic": "Kunde inte starta mikrofonen: {{message}}"
   },
   "logs": {
     "no_tauri_log": "Ingen Tauri-inloggningsskiva än - starta via skrivbordsbygget för att skapa en",
@@ -564,7 +607,7 @@
     "prep_extract": "Extraherar ljud...",
     "prep_demucs": "Separerar sång/musik (Demucs)...",
     "prep_scene": "Upptäcker scenklipp...",
-    "prep_cached": "⚡ Använder cachade resultat...",
+    "prep_cached": "Använder cachade resultat...",
     "prep_preparing": "Förbereder...",
     "prep_chip_download": "ladda ner",
     "prep_chip_extract": "extrakt",
@@ -629,6 +672,8 @@
     "dual_subs_title": "Exportera undertexter med översatt text överst och originalet kursivt under.",
     "burn_subs": "Bränn undertexter",
     "burn_subs_title": "Återge undertexter direkt i MP4-videoströmmen (hardsubs). Använder formatet med dubbla undertexter när dubbla undertexter är på.",
+    "timing_smart_fit": "Smart anpassning",
+    "timing_smart_fit_title": "Delar upp anpassningen: snabbar upp ljudet något (tonhöjd bevaras, upp till 1,5×) och saktar ner det videosegmentet något (upp till 2×) så att tal i naturligt tempo får plats. Det som ändå inte ryms klipps och flaggas. Export omkodar videon.",
     "default_track": "Standardspår:",
     "original_track": "Original",
     "selected_dub": "{{code}} (vald dub)",
@@ -654,7 +699,20 @@
     "diagnostic_copied": "Diagnostiken kopierad",
     "copy_failed": "Kopieringen misslyckades",
     "open_docs": "Öppna dokument",
-    "copy_diagnostic": "Kopiera diagnostik"
+    "copy_diagnostic": "Kopiera diagnostik",
+    "dialect_label": "Dialekt",
+    "dialect_default": "Standard",
+    "dialect_title": "Regional dialekt och ordförråd för översättningen (t.ex. Argentina → ”vos sos” i stället för ”tú eres”). Tillämpas av LLM-motorer (OpenAI/Ollama) och Cinematic-kvalitet.",
+    "num_speakers_label": "Talare",
+    "num_speakers_auto": "Auto",
+    "num_speakers_help": "Hur många talare finns i videon? Lämna tomt för automatisk identifiering. Ange ett antal om identifieringen slår ihop flera talare till en.",
+    "advanced": "Avancerat",
+    "cinematic_needs_llm_hint": "Filmisk kvalitet behöver en LLM. Konfigurera en i Inställningar → Autentisering → LLM-slutpunkt (Ollama körs lokalt, ingen nyckel behövs).",
+    "generate_dub_multi": "Generera {{count}} dubbar",
+    "pipeline": "Dubbningspipeline",
+    "preview_language": "Förhandsgranskningsspråk",
+    "target_language": "Dubba till",
+    "transcript_after_extract": "Avskriften visas efter extraktionen."
   },
   "glossary": {
     "title": "Ordlista",
@@ -740,6 +798,20 @@
     "fit_compressed_title": "TTS-ljud är {{pct}}% av kortplatsen — kraftigt komprimerat.",
     "fit_audio_title": "Ljudet passar in i öppningen.",
     "fit_ratio_title": "TTS-ljud är {{pct}}% av kortplatsen."
+  },
+  "timeline": {
+    "track_label": "Segmenttidslinje",
+    "keyboard_hint": "Piltangenterna väljer ett segment · Enter växlar redigeringsläge · Delete tar bort · S fäster vid närmaste talstart",
+    "segment_aria": "Segment {{index}}: {{start}} till {{end}}",
+    "overlap_warning": "Överlappar ett intilliggande segment — båda replikerna spelas samtidigt",
+    "moved_announce": "Segment {{index}} flyttat till {{start}}",
+    "resized_announce": "Segment {{index}}: {{start}} till {{end}}",
+    "deleted_announce": "Segment {{index}} borttaget",
+    "snapped_announce": "Kanten fäst vid talstart vid {{time}}",
+    "edit_mode_on": "Redigeringsläge: pilarna flyttar början, Skift slutet, Alt hela segmentet, Esc avslutar",
+    "edit_mode_off": "Redigeringsläge av",
+    "play_slot": "Spela upp det här avsnittet",
+    "preview_dub": "Förhandslyssna på dubbningen här"
   },
   "voice": {
     "personality": "Personlighet",
@@ -903,7 +975,15 @@
     "save_failed": "Det gick inte att spara profilen.",
     "confirm_delete": "Ta bort \"{{name}}\"?",
     "trim_load_failed": "Det gick inte att ladda ljudet för trimning.",
-    "delete": "Ta bort"
+    "delete": "Ta bort",
+    "community_empty": "Inga communityröster har laddats ännu — anslut till internet och öppna igen, eller bli först med att skicka in en.",
+    "community_explainer": "Designade förinställningar och inspelade röster som delas av communityn, laddade från omnivoice-gallery.",
+    "no_designer": "Inspelad röst — använd \"Använd röst\" i stället.",
+    "no_preview": "Ingen förhandsgranskning — lägg till den med \"Använd röst\" för att höra den.",
+    "submit_failed": "Det gick inte att öppna inskickningsformuläret.",
+    "submit_preset": "Skicka in en förinställning",
+    "submit_voice": "Skicka in en röst",
+    "zone_community": "Community"
   },
   "transcriptions": {
     "title": "Transkriptioner",
@@ -956,7 +1036,9 @@
     "open": "Öppna",
     "install_required_models": "Installera de modeller som krävs ovan för att fortsätta.",
     "try_dictation": "Prova diktering",
-    "next_try_dictation": "Nästa: Prova diktering"
+    "next_try_dictation": "Nästa: Prova diktering",
+    "step_aria": "Steg {{num}}: {{label}}",
+    "step_completed": "klart"
   },
   "donate": {
     "title": "Support",
@@ -977,7 +1059,7 @@
     "back": "Tillbaka till Studio",
     "badge": "Kommersiell licens",
     "hero_title": "Ship AI-röster i produktion",
-    "hero_desc": "OmniVoice Studio är källtillgänglig under Functional Source License (FSL). De flesta användare kan utvärdera, prototyper och till och med distribuera internt utan ett kommersiellt avtal. Du behöver endast en kommersiell licens om du bygger en konkurrerande produkt eller tjänst, eller om ditt användningsfall faller utanför FSL:s gränser.",
+    "hero_desc": "OmniVoice Studio är fri programvara med öppen källkod under GNU Affero General Public License v3 (AGPL-3.0) — gratis att använda, även för kommersiellt och internt företagsbruk. En kommersiell licens behövs bara om du vill bädda in OmniVoice Studio i en proprietär produkt eller tjänst med stängd källkod utan AGPL-3.0:s copyleft-skyldigheter.",
     "why_title": "Varför företag väljer OmniVoice",
     "pricing_title": "Prissättning",
     "faq_title": "Vanliga frågor",
@@ -998,7 +1080,7 @@
     "benefit_source_desc": "Full insyn i stapeln. Granska, fördela och anpassa inom licensvillkoren.",
     "benefit_lang": "646 språk",
     "benefit_lang_desc": "Transkribera, översätt och dubba på 646 språk med kvalitet på mänsklig nivå.",
-    "hero_note": "Intern användning – även i stor skala – är gratis enligt FSL; en kommersiell licens krävs endast för att erbjuda OmniVoice till andra som en konkurrerande produkt eller tjänst (ett värd- eller pay-per-use API, en vidaresåld eller vitmärkt app). Prisnivåer kommer snart - hör av dig under tiden."
+    "hero_note": "Användning, självhosting och kommersiellt bruk är gratis under AGPL-3.0 — även i stor skala. AGPL är en nätverks-copyleft-licens: om du modifierar OmniVoice och erbjuder den modifierade versionen till andra över ett nätverk måste du dela din modifierade källkod på samma villkor. En kommersiell licens lyfter dessa copyleft-skyldigheter för proprietära driftsättningar med stängd källkod. Prisplaner kommer snart — hör av dig under tiden."
   },
   "exportModal": {
     "export": "Exportera",
@@ -1047,6 +1129,7 @@
     "current_target": "Nuvarande mål ({{code}})",
     "all_selected_dubs": "Alla valda dubbar ({{count}})",
     "subs_note": "Undertexter genereras från segmenttexten i befintligt skick – redigera segmenttabellen innan du exporterar om du upptäckt stavfel.",
+    "retime_note": "Omtajming av video per segment kodar om hela videon vid export — räkna med ungefär 0,5–2× videons längd på CPU.",
     "pkg_clips_title": "Klipp per segment (.zip)",
     "pkg_clips_body": "Varje genererat segment som en numrerad WAV inuti en zip - bra för granskning, voice-over-inlägg eller datauppsättning.",
     "pkg_clips_cta": "Exportera klipp zip",
@@ -1097,7 +1180,8 @@
     "script_french": "Icke-engelska (franska)",
     "aria_pause": "Pausa {{label}}",
     "aria_hear": "Hör {{label}}",
-    "aria_replay": "Spela om {{label}} genom transcriber"
+    "aria_replay": "Spela om {{label}} genom transcriber",
+    "dictation_lede_hotkey_only": "Håll ner kortkommandot ovan var som helst på skrivbordet, tala, släpp — texten hamnar i appen med fokus. Tryck nu för att verifiera."
   },
   "direction": {
     "title": "Riktning för segment #{{id}}",
@@ -1122,7 +1206,10 @@
     "title": "Den här fliken träffade en hake.",
     "desc": "Oroa dig inte – resten av appen fungerar fortfarande. Du kan byta flik eller försöka igen nedan.",
     "tryAgain": "Försök igen",
-    "openDocs": "Öppna dokument för detta fel"
+    "openDocs": "Öppna dokument för detta fel",
+    "report": "Rapportera den här buggen",
+    "searchIssues": "Sök liknande problem",
+    "unexpected": "Oväntat fel: {{message}}"
   },
   "keyboard": {
     "title": "Kortkommandon",
@@ -1278,7 +1365,8 @@
     "dub_label": "Dub",
     "save_label": "Spara",
     "lock_identity": "Lås röstidentitet",
-    "in_folder": "i {{folder}}"
+    "in_folder": "i {{folder}}",
+    "search": "Sök…"
   },
   "trimmer": {
     "title": "Trimma referensljud",
@@ -1411,13 +1499,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Behöver jag en licens för interna verktyg?",
-    "a_internal_tools": "Intern användning av dina anställda och entreprenörer är ett tillåtet syfte enligt FSL - ingen licens krävs. En kommersiell licens behövs när du gör OmniVoice tillgänglig för andra som en del av en konkurrerande produkt eller tjänst (återförsäljning, värd SaaS, white-label).",
+    "a_internal_tools": "Nej. Användning av dina anställda och konsulter — inklusive intern modifiering och självhosting — är gratis under AGPL-3.0. En kommersiell licens behövs bara om du bäddar in OmniVoice i en proprietär produkt eller tjänst med stängd källkod och inte vill följa AGPL:s krav på källkodsdelning.",
     "q_try_before": "Kan jag prova innan jag binder mig?",
-    "a_try_before": "Ja. Den fullständiga appen är gratis att ladda ner och köra lokalt för utvärdering under FSL. När du är redo att diskutera en kommersiell implementering, maila oss så går vi igenom detaljerna tillsammans.",
+    "a_try_before": "Ja. Hela appen är gratis att ladda ner, köra och självhosta under AGPL-3.0 — inget avtal krävs. När du vill diskutera en kommersiell licens (proprietär användning), mejla oss så går vi igenom detaljerna tillsammans.",
     "q_watermark": "Hur är det med vattenstämpeln?",
-    "a_watermark": "Den osynliga AudioSeal-vattenstämpeln är inbäddad som standard. Kommersiella licenstagare kan inaktivera det i Inställningar → Sekretess. Gratis/personligt bruk inkluderar alltid vattenstämpeln.",
-    "q_apache": "Blir källan någonsin Apache 2.0?",
-    "a_apache": "Ja. Varje utgåva konverteras automatiskt till Apache-licensen, version 2.0 på tvåårsdagen av dess publicering. Det betyder att dagens version är Apache 2.0 om två år, ingen åtgärd krävs från oss – FSL garanterar det oåterkalleligt."
+    "a_watermark": "Den osynliga AudioSeal-vattenstämpeln är inbäddad som standard för alla. Kommersiella licenstagare kan inaktivera den i Inställningar → Sekretess."
   },
   "gallery_extra": {
     "save_prompt": "Ange ett namn för denna röstprofil:",
@@ -1452,6 +1538,7 @@
     "segments_clean": "Segmenten är redan rena",
     "cleanup_failed": "Rensa misslyckades: {{message}}",
     "cinematic_no_llm": "Filmkvalitet behöver en LLM — ställ in TRANSLATE_BASE_URL + TRANSLATE_API_KEY (Ollama fungerar lokalt). Faller tillbaka till Fast.",
+    "dialect_not_applied": "Den valda dialekten kräver en LLM — byt motor till OpenAI/Ollama eller välj Cinematic-kvalitet.",
     "translate_errors": "{{errorCount}}/{{totalCount}} segment(er) misslyckades: {{firstError}}",
     "translated_segments": "Översatta {{count}} segment(er) → {{lang}}",
     "translated_cinematic_suffix": "(Cinematic)",
@@ -1597,5 +1684,90 @@
     "none": "Inga utgåvor hittades",
     "load_error": "Det gick inte att läsa in utgåvor (offline?)",
     "retry_load": "Försök igen"
+  },
+  "firstrun": {
+    "loading": "Förbereder installationen…",
+    "title": "Konfigurera OmniVoice Studio",
+    "subtitle": "Inget är installerat ännu — granska var allt hamnar och starta sedan. Kan ändras senare i Inställningar.",
+    "language": "Språk",
+    "mode_title": "Installationsläge",
+    "mode_installed": "Installerad",
+    "mode_installed_desc": "Använder systemets standardmappar. Rekommenderas för de flesta.",
+    "mode_portable": "Portabel",
+    "mode_portable_desc": "Allt ligger i en mapp bredvid appen — flytta den som en enhet till en annan disk eller dator.",
+    "mode_portable_unavailable": "Otillgängligt: mappen bredvid appen är inte skrivbar.",
+    "storage_title": "Lagring",
+    "portable_folder": "Portabel mapp",
+    "portable_folder_desc": "Miljö, modeller och dina röstdata — en mapp, helt flyttbar.",
+    "env_dir": "Appmiljö",
+    "env_dir_desc": "Python-runtime och AI-bibliotek.",
+    "data_dir": "Röstdata & projekt",
+    "data_dir_desc": "Dina röster, dubbningar, utdata och projektdatabasen.",
+    "models_dir": "Modellcache",
+    "models_dir_desc": "Nedladdade AI-modeller — den största och mest flyttbara delen.",
+    "needs": "kräver ~{{size}}",
+    "free": "{{size}} ledigt",
+    "checking": "kontrollerar…",
+    "not_writable": "ej skrivbar",
+    "change": "Ändra…",
+    "compute_title": "Beräkning",
+    "compute_label": "GPU / accelerator",
+    "compute_auto": "Auto (NVIDIA CUDA / Apple MPS / CPU)",
+    "compute_rocm": "AMD GPU (ROCm, Linux)",
+    "channel_label": "Uppdateringskanal",
+    "channel_stable": "Stabil",
+    "channel_preview": "Förhandsvisning (senaste main)",
+    "network_title": "Nätverk",
+    "region_label": "Nedladdningsregion",
+    "mirrors_title": "Egna speglar (avancerat)",
+    "mirror_pypi": "PyPI-index-URL",
+    "mirror_hf": "Hugging Face-endpoint",
+    "mirror_python": "Python-nedladdningsspegel",
+    "insufficient_space": "Otillräckligt utrymme: den här layouten kräver ~{{need}} på en disk, endast {{free}} ledigt. Välj en annan plats.",
+    "blocked_not_writable": "En vald mapp är inte skrivbar — välj en annan plats.",
+    "total_required": "Totalt diskbehov: ~{{size}} (engångsnedladdning vid första användning)",
+    "start": "Starta installationen",
+    "starting": "Startar…",
+    "compute_detected": "Identifierad",
+    "compute_match": "matchar den här datorn",
+    "compute_auto_desc": "Väljer den bästa backenden på den här datorn vid körning — CUDA på NVIDIA, MPS på Apple Silicon, annars CPU.",
+    "compute_rocm_desc": "Installerar PyTorch ROCm-paket för AMD-grafikkort på Linux. Lämna på Auto om du är osäker.",
+    "channel_stable_desc": "Endast testade utgåvor — uppdateringar kommer efter community-validering.",
+    "channel_preview_desc": "Rullande byggen från senaste main — nya motorer och fixar först, ibland lite ojämnt.",
+    "installing_title": "Installerar",
+    "activity_title": "Aktivitet",
+    "stage_setup": "Installation",
+    "stage_models": "Modeller & motorer",
+    "chip_required": "krävs",
+    "chip_optional": "valfri",
+    "chip_engine": "motor",
+    "lib_download": "Ladda ner",
+    "lib_downloading": "laddar ner…",
+    "lib_use": "Använd",
+    "lib_active": "aktiv",
+    "lib_in_settings": "installera senare i Inställningar",
+    "lib_show_all": "Visa {{count}} valfria modeller",
+    "trust_line": "Allt körs och stannar på den här datorn — inget konto, inget moln, ingen telemetri.",
+    "resume_note": "Avbrutna nedladdningar återupptas automatiskt — det är säkert att stänga appen.",
+    "eta_left": "~{{eta}} kvar",
+    "first_sound_text": "Välkommen till din studio. Varje ord du hör genererades på den här datorn, alldeles nyss.",
+    "first_sound_done": "Den rösten? Genererad för några sekunder sedan, lokalt. Välkommen.",
+    "hf_token_title": "Hugging Face-token (valfritt)",
+    "hf_token_hint": "Låser upp begränsade modeller — t.ex. talardiarisering för dubbning med flera röster (pyannote). Token från gratiskonto; stannar på den här datorn.",
+    "hf_token_save": "Spara",
+    "hf_token_saving": "sparar…",
+    "hf_token_saved": "Hugging Face-token sparad",
+    "hf_token_error": "Kunde inte spara token — försök igen eller ange den senare i Inställningar → Uppgifter."
+  },
+  "history": {
+    "dub_title": "Dubbhistorik",
+    "empty": "Inget här ännu — dina generationer visas till höger.",
+    "empty_dub": "Dina dubbar visas här.",
+    "title": "Historik"
+  },
+  "recording": {
+    "cleaned_loaded": "Inspelningen rensad och laddad!",
+    "loaded_raw": "Inspelningen laddad (rå — brusreducering otillgänglig)",
+    "too_short": "Inspelningen är för kort"
   }
 }

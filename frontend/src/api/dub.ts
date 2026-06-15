@@ -39,8 +39,14 @@ export async function dubIngestUrl(
   );
 }
 
-export function transcribeStreamUrl(jobId: string): string {
-  return `${API}/dub/transcribe-stream/${jobId}`;
+export function transcribeStreamUrl(jobId: string, numSpeakers?: number | null): string {
+  const base = `${API}/dub/transcribe-stream/${jobId}`;
+  // Optional pyannote speaker-count hint (#274). Only appended when a positive
+  // integer; otherwise the backend auto-detects.
+  if (numSpeakers && Number.isFinite(numSpeakers) && numSpeakers > 0) {
+    return `${base}?num_speakers=${Math.floor(numSpeakers)}`;
+  }
+  return base;
 }
 
 export async function dubAbort(jobId: string): Promise<void> {
@@ -96,4 +102,25 @@ export async function listDubHistory(): Promise<DubHistoryResponse> {
 
 export async function clearDubHistory(): Promise<Response> {
   return apiFetch('/dub/history', { method: 'DELETE' });
+}
+
+export interface DubQCResponse {
+  engine: string;
+  total: number;
+  flagged_count: number;
+  drift_threshold: number;
+  segments: {
+    seg_id: string; drift: number; flagged: boolean;
+    recognized_text: string; measured_start: number | null; measured_end: number | null;
+  }[];
+}
+
+/** Wave 3.3: second-pass ASR QC — re-recognize the dubbed audio and flag
+ *  lines whose recognized text drifts from the target. Non-destructive. */
+export async function dubQc(jobId: string, lang?: string, driftThreshold?: number): Promise<DubQCResponse> {
+  const qs = new URLSearchParams();
+  if (lang) qs.set('lang', lang);
+  if (driftThreshold != null) qs.set('drift_threshold', String(driftThreshold));
+  const suffix = qs.toString() ? `?${qs}` : '';
+  return apiPost<DubQCResponse>(`/dub/qc/${jobId}${suffix}`);
 }

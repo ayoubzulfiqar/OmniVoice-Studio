@@ -2,6 +2,7 @@ import os
 import time
 import asyncio
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 # ── Lazy imports ─────────────────────────────────────────────────────
@@ -110,7 +111,8 @@ def __getattr__(name: str):
 model = None  # type: ignore
 _model_lock = asyncio.Lock()
 _last_used = time.time()
-_IDLE_TIMEOUT_SECONDS = IDLE_TIMEOUT_SECONDS
+# Idle timeout is resolved per-tick in _resolve_idle_timeout() (MM2-05) from
+# prefs/env/core.config — no module-level duplicate of IDLE_TIMEOUT_SECONDS.
 
 # ── Loading sub-stage tracker ────────────────────────────────────────
 # Updated by _load_model_sync() so get_model_status() can report
@@ -195,12 +197,23 @@ def get_best_device():
     """Detect the best available compute device.
 
     Priority: CUDA/ROCm > Intel XPU > DirectML > MPS > CPU
-    """
-    torch = _lazy_torch()
 
-    # ── NVIDIA CUDA or AMD ROCm ──────────────────────────────────────
-    # ROCm-enabled PyTorch reports through torch.cuda, so this covers both.
-    if torch.cuda.is_available():
+    The *family* decision delegates to ``core.device_caps.detect_host_caps()``
+    (the single source of truth) so the probe and this loader can never
+    disagree. This function keeps the side-effects the probe deliberately
+    avoids: the ROCm ``HSA_OVERRIDE_GFX_VERSION`` env override and the
+    DirectML device-string return (DirectML is not a torch device family, so
+    the probe reports it as ``cpu`` — we still resolve the real device string
+    here for Windows DirectML users). The string contract is unchanged:
+    ``"cuda"`` / ``"xpu"`` / a DirectML device string / ``"mps"`` / ``"cpu"``.
+    """
+    from core.device_caps import detect_host_caps
+
+    torch = _lazy_torch()
+    family = detect_host_caps().family
+
+    # ── NVIDIA CUDA or AMD ROCm (both present through torch.cuda) ─────
+    if family in ("cuda", "rocm"):
         _configure_rocm_if_needed(torch)
         compatible, warning = check_device_compatibility()
         if not compatible:
@@ -208,15 +221,23 @@ def get_best_device():
         return "cuda"
 
     # ── Intel Arc / discrete GPU via IPEX ────────────────────────────
-    try:
-        import intel_extension_for_pytorch  # noqa: F401
-        if hasattr(torch, "xpu") and torch.xpu.is_available():
+    if family == "xpu":
+        try:
             logger.info("Using Intel XPU device: %s", torch.xpu.get_device_name(0))
-            return "xpu"
-    except ImportError:
-        pass
+        except Exception:
+            logger.info("Using Intel XPU device")
+        return "xpu"
 
-    # ── DirectML — universal Windows GPU (AMD, Intel, NVIDIA fallback)
+    # ── Apple Silicon MPS ────────────────────────────────────────────
+    # Checked BEFORE DirectML to mirror the probe's family-priority order
+    # (cuda > rocm > xpu > mps; DirectML is not a torch family) so the loader
+    # and detect_host_caps() never disagree on a host that somehow exposes both.
+    if family == "mps":
+        return "mps"
+
+    # ── DirectML — universal Windows GPU (probe reports this as "cpu") ─
+    # Reached only when no torch family was detected (family == "cpu"), which is
+    # exactly the DirectML case — the probe classifies DirectML hosts as cpu.
     try:
         import torch_directml
         if torch_directml.device_count() > 0:
@@ -225,11 +246,183 @@ def get_best_device():
     except ImportError:
         pass
 
-    # ── Apple Silicon MPS ────────────────────────────────────────────
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
-
     return "cpu"
+
+_COMPILE_ERR_MODULE_PREFIXES = ("torch._dynamo", "torch._inductor", "torch.fx", "triton")
+_COMPILE_ERR_TB_MARKERS = ("/_dynamo/", "/_inductor/", "/triton/", "torch/fx/")
+_COMPILE_ERR_MSG_MARKERS = (
+    "dynamo", "inductor", "triton", "cudagraph",
+    "symbolically trace", "torch.compile", "fx graph",
+)
+
+
+def _is_compile_runtime_failure(exc: BaseException) -> bool:
+    """True when an exception originates in the torch.compile stack (Dynamo /
+    Inductor / Triton / FX / CUDA-graph trees) rather than in the model itself.
+
+    #278: on GPU architectures Triton doesn't support yet (e.g. Blackwell
+    sm_120), the compiled model dies mid-generation with errors like
+    "Detected that you are using FX to symbolically trace a dynamo-optimized
+    function" or an AssertionError out of torch/_inductor/cudagraph_trees.py.
+    Walks the exception chain and checks (a) the exception type's module,
+    (b) the message, (c) the traceback file paths — the cudagraph case is a
+    bare AssertionError, so the traceback check is load-bearing.
+    """
+    import traceback as _tb
+
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        mod = type(cur).__module__ or ""
+        if mod.startswith(_COMPILE_ERR_MODULE_PREFIXES):
+            return True
+        msg = str(cur).lower()
+        if any(marker in msg for marker in _COMPILE_ERR_MSG_MARKERS):
+            return True
+        try:
+            for frame in _tb.extract_tb(cur.__traceback__):
+                filename = (frame.filename or "").replace("\\", "/")
+                if any(marker in filename for marker in _COMPILE_ERR_TB_MARKERS):
+                    return True
+        except Exception as traceback_scan_error:
+            logging.debug(
+                "Skipping traceback marker scan while classifying compile runtime failure: %s",
+                traceback_scan_error,
+            )
+        # Follow the chain, honoring `raise ... from None` (the eager-retry
+        # path suppresses the original compile error so a genuine eager
+        # failure isn't misclassified as a compile failure).
+        if cur.__cause__ is not None:
+            cur = cur.__cause__
+        elif not cur.__suppress_context__:
+            cur = cur.__context__
+        else:
+            cur = None
+    return False
+
+
+def _install_compile_fallback(_model) -> None:
+    """Wrap ``model.generate`` so a torch.compile failure at inference time
+    falls back to the eager (uncompiled) model instead of failing the
+    generation (#278).
+
+    All TTS paths (generate, archetype previews, dub, stream, batch) funnel
+    through ``model.generate``, so this is the single choke point. On a
+    compile-stack failure we: log a clear warning, restore the eager module
+    (``OptimizedModule._orig_mod``), disable compile for the rest of the
+    session via ``engine_env.mark_compile_runtime_failure``, reset dynamo
+    state, and retry the call once eagerly. Non-compile errors (real OOM,
+    validation, …) propagate unchanged — fully backward compatible for users
+    whose torch.compile works.
+    """
+    orig_generate = _model.generate
+
+    def _generate_with_compile_fallback(*args, **kwargs):
+        try:
+            return orig_generate(*args, **kwargs)
+        except Exception as exc:
+            compiled = getattr(_model, "llm", None)
+            eager = getattr(compiled, "_orig_mod", None)
+            if eager is None or not _is_compile_runtime_failure(exc):
+                raise
+            logger.warning(
+                "torch.compile runtime failure during generation (%s: %s) — "
+                "falling back to the eager model and disabling torch.compile "
+                "for this session. Generation is being retried without it.",
+                type(exc).__name__, exc,
+            )
+            from services import engine_env
+            engine_env.mark_compile_runtime_failure(f"{type(exc).__name__}: {exc}")
+            _model.llm = eager
+            try:
+                torch = _lazy_torch()
+                torch._dynamo.reset()
+            except Exception as reset_exc:
+                logger.debug(
+                    "Non-fatal: failed to reset torch._dynamo state after compile failure (%s: %s). "
+                    "Continuing with eager fallback.",
+                    type(reset_exc).__name__,
+                    reset_exc,
+                )
+            try:
+                return orig_generate(*args, **kwargs)
+            except Exception as eager_exc:
+                # `from None` so a genuine eager failure (e.g. a real OOM)
+                # isn't chained to — and misclassified as — the compile error.
+                raise eager_exc from None
+
+    _model.generate = _generate_with_compile_fallback
+
+
+# ── #315: thread affinity for cudagraph-compiled models ─────────────────────
+# `torch.compile(mode="reduce-overhead")` captures CUDA graphs, and captured
+# graph state is **thread-local** (torch/_inductor/cudagraph_trees keys its
+# tree manager off the capturing thread). The `_gpu_pool` runs up to
+# `_GPU_WORKER_CAP` threads, so render #1 captures the graph on worker A and a
+# later render dispatched to worker B replays against mismatched cudagraph
+# state — silently corrupting the audio (static / slowed playback, no
+# exception, so the #278 eager fallback never fires). Fix: every call into a
+# cudagraph-compiled model executes on ONE dedicated thread; uncompiled
+# models (CPU / MPS / Windows-no-Triton / compile-disabled) keep the full pool.
+
+_TORCH_COMPILE_MODE = "reduce-overhead"
+# Compile modes that enable CUDA graphs under the hood — these need the
+# single-thread affinity below. "default" / "max-autotune-no-cudagraphs"
+# would not.
+_CUDAGRAPH_COMPILE_MODES = frozenset({"reduce-overhead", "max-autotune"})
+
+_compiled_inference_executor: "ThreadPoolExecutor | None" = None
+_compiled_inference_thread_ident: "int | None" = None
+
+
+def _get_compiled_inference_executor() -> ThreadPoolExecutor:
+    """The single-thread executor that owns ALL inference on a compiled model.
+
+    Created lazily the first time a model is compiled with a cudagraph mode;
+    reused across model reloads (idle unload → reload keeps the same thread,
+    which is fine — a fresh compile simply captures its graphs there too).
+    The worker is spun up eagerly so its thread ident is known for the
+    re-entrancy guard in `_install_compile_thread_affinity`.
+    """
+    global _compiled_inference_executor, _compiled_inference_thread_ident
+    if _compiled_inference_executor is None:
+        _compiled_inference_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="compiled-infer",
+        )
+        _compiled_inference_thread_ident = _compiled_inference_executor.submit(
+            threading.get_ident
+        ).result()
+    return _compiled_inference_executor
+
+
+def _install_compile_thread_affinity(_model) -> None:
+    """Pin every ``model.generate`` call to the dedicated compile thread (#315).
+
+    Wraps ``model.generate`` (the single choke point all TTS paths funnel
+    through — generate, archetype previews, dub, stream, batch) so the call
+    body always runs on `_get_compiled_inference_executor()`'s one thread.
+    That makes the thread that *captures* the CUDA graph on the first render
+    and the thread that *replays* it on every later render the same thread,
+    deterministically, regardless of which `_gpu_pool` worker dispatched it.
+
+    Installed AFTER `_install_compile_fallback`, so the call-time order is:
+    caller thread → hop to the dedicated thread → eager-fallback wrapper →
+    real generate (the #278 classification/retry also runs on the dedicated
+    thread, with native tracebacks). The hop is a no-op when already on the
+    dedicated thread — a 1-worker executor submitting to itself would
+    deadlock, so the re-entrancy guard is load-bearing.
+    """
+    executor = _get_compiled_inference_executor()
+    inner_generate = _model.generate
+
+    def _generate_on_compile_thread(*args, **kwargs):
+        if threading.get_ident() == _compiled_inference_thread_ident:
+            return inner_generate(*args, **kwargs)
+        return executor.submit(inner_generate, *args, **kwargs).result()
+
+    _model.generate = _generate_on_compile_thread
+
 
 def _set_loading(sub_stage: str, detail: str = "", error: str | None = None, progress: float | None = None):
     """Update the loading detail dict atomically."""
@@ -290,9 +483,23 @@ def _load_model_sync():
             logger.info("Preloading PyTorch Whisper with TTS model.")
         else:
             logger.info("Skipping PyTorch Whisper preload; ASR will load on demand.")
-        _model = OmniVoice.from_pretrained(
-            checkpoint, device_map=device, dtype=torch.float16, load_asr=preload_asr,
-        )
+        try:
+            _model = OmniVoice.from_pretrained(
+                checkpoint, device_map=device, dtype=torch.float16, load_asr=preload_asr,
+            )
+        except OSError as e:
+            # #352: a truncated HF cache surfaces here as "does not appear to
+            # have a file named pytorch_model.bin or model.safetensors".
+            # Translate to an actionable message instead of the raw
+            # transformers error.
+            if "does not appear to have a file named" in str(e):
+                raise RuntimeError(
+                    f"The TTS model cache for {checkpoint} is incomplete "
+                    "(weights missing — usually an interrupted download). "
+                    "Open Settings → Models, delete the OmniVoice TTS model, "
+                    "and install it again."
+                ) from e
+            raise
 
         try:
             # plan-02 (#65): gate on Triton availability (+ user setting), not
@@ -303,8 +510,38 @@ def _load_model_sync():
 
             if should_torch_compile(device):
                 _set_loading("compiling", "Compiling model (torch.compile)…")
-                _model.llm = torch.compile(_model.llm, mode="reduce-overhead")
-                logger.info("torch.compile applied.")
+                try:
+                    _model.llm = torch.compile(_model.llm, mode=_TORCH_COMPILE_MODE)
+                except Exception as compile_exc:
+                    # #278: compile is an optimization, never a point of
+                    # failure — keep the eager model and remember the failure
+                    # so later loads this session skip compile up front.
+                    from services.engine_env import mark_compile_runtime_failure
+                    mark_compile_runtime_failure(f"{type(compile_exc).__name__}: {compile_exc}")
+                    logger.warning(
+                        "torch.compile failed (%s) — continuing with the eager model.",
+                        compile_exc,
+                    )
+                else:
+                    # Compilation is lazy: Dynamo/Inductor/Triton can still
+                    # blow up on the first *forward* (e.g. unsupported new GPU
+                    # archs, #278). Wrap generate so that falls back to eager
+                    # instead of failing the generation.
+                    _install_compile_fallback(_model)
+                    if _TORCH_COMPILE_MODE in _CUDAGRAPH_COMPILE_MODES:
+                        # #315: reduce-overhead uses CUDA graphs, whose
+                        # captured state is thread-local. Pin all inference to
+                        # one dedicated thread so a later render dispatched to
+                        # a different _gpu_pool worker can't replay a graph it
+                        # didn't capture (static / slowed audio from the 2nd
+                        # render onward).
+                        _install_compile_thread_affinity(_model)
+                        logger.info(
+                            "torch.compile mode %r uses CUDA graphs — compiled-model "
+                            "inference pinned to a single dedicated thread (#315).",
+                            _TORCH_COMPILE_MODE,
+                        )
+                    logger.info("torch.compile applied.")
         except Exception as e:
             logger.info("torch.compile skipped: %s", e)
 
@@ -443,13 +680,28 @@ def get_model_status():
             result["error"] = err
     return result
 
+def _resolve_idle_timeout() -> float:
+    """In-process model idle timeout in seconds (MM2-05): prefs store → env →
+    core.config default, env winning. Resolved per-tick so a settings change
+    takes effect without a restart."""
+    try:
+        from core import prefs
+        return float(prefs.resolve(
+            "idle_timeout_seconds",
+            env="OMNIVOICE_IDLE_TIMEOUT_S",
+            default=IDLE_TIMEOUT_SECONDS,
+        ))
+    except (TypeError, ValueError, ImportError):
+        return float(IDLE_TIMEOUT_SECONDS)
+
+
 async def idle_worker():
     global model
     torch = _lazy_torch()
     while True:
         await asyncio.sleep(30)
         async with _model_lock:
-            if model is not None and time.time() - _last_used > _IDLE_TIMEOUT_SECONDS:
+            if model is not None and time.time() - _last_used > _resolve_idle_timeout():
                 logger.info("Idle timeout reached. Unloading OmniVoice model to free VRAM.")
                 model = None
                 free_vram()
@@ -633,6 +885,18 @@ def get_diarization_pipeline(return_error: bool = False):
     try:
         torch = _lazy_torch()
         _ensure_pyannote_hf_token_compat()  # #167: use_auth_token -> token
+        # PyTorch 2.6 flipped torch.load's default to weights_only=True, whose
+        # secure unpickler rejects the pyannote checkpoint's metadata globals
+        # (torch_version.TorchVersion, omegaconf nodes, …) — surfacing as
+        # "Weights only load failed / Unsupported global" and breaking
+        # diarization on torch>=2.6 even after the license is accepted (#270).
+        # Reuse the exact allowlist the WhisperX VAD load registers so the
+        # secure load path succeeds; it is idempotent and per-process.
+        try:
+            from services.asr_backend import WhisperXBackend
+            WhisperXBackend._allow_vad_pickle_globals()
+        except Exception as _glob_e:
+            logger.debug("pyannote safe-globals allowlist skipped: %s", _glob_e)
         from pyannote.audio import Pipeline
         logger.info("Loading Pyannote Diarization Pipeline...")
         _diar_pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=hf_token)

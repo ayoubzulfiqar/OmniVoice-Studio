@@ -24,6 +24,7 @@
     "engines": "Silniki",
     "capture": "Skróty klawiszowe",
     "credentials": "Dane uwierzytelniające",
+    "updates": "Aktualizacje",
     "logs": "Logi",
     "about": "O programie",
     "privacy": "Prywatność",
@@ -73,7 +74,16 @@
     "shortcut_set": "Skrót do dyktowania ustawiony na {{shortcut}}",
     "shortcut_register_failed": "Nie udało się zarejestrować: {{message}}",
     "shortcut_reset": "Przywróć ustawienia domyślne",
-    "shortcut_reset_failed": "Resetowanie nie powiodło się: {{message}}"
+    "shortcut_reset_failed": "Resetowanie nie powiodło się: {{message}}",
+    "cancel": "Anuluj",
+    "hf_token_also_clear": "Wyczyść również",
+    "hf_token_clear_btn": "Wyczyść token",
+    "hf_token_clear_confirm": "Wyczyścić token HuggingFace ze źródła „Aplikacja”?",
+    "hf_token_clear_dialog": "Wyczyść token",
+    "hf_token_input": "Token HuggingFace",
+    "hf_token_sources": "Źródła tokenu HF",
+    "hf_token_test_now": "Testuj teraz",
+    "hf_token_test_now_title": "Uruchom ponownie whoami dla każdego źródła"
   },
   "bootstrap": {
     "title": "OmniVoice Studio",
@@ -103,7 +113,17 @@
     "region_russia": "Rosja (lustro)",
     "region_restricted": "Ograniczone (lustro)",
     "unknown_error": "Nieznany błąd",
-    "retrying": "Ponawiam próbę…"
+    "retrying": "Ponawiam próbę…",
+    "hint_readme": "W pakiecie brakowało README.md. Jest to już naprawiane automatycznie — ponowienie powinno zadziałać.",
+    "hint_python_mirror": "Sieć nie mogła pobrać Pythona (release z github.com). Zmień region w Ustawienia → Sieć (Chiny / Rosja / Ograniczony korzystają z mirrora) albo zainstaluj Pythona 3.11+ w systemie, aby aplikacja z niego korzystała.",
+    "hint_uv_timeout": "Przekroczono limit czasu pobierania uv. Sprawdź połączenie z internetem lub wybierz inny region w Ustawienia → Sieć.",
+    "hint_uv_sync": "Instalacja zależności nie powiodła się. „Wyczyść i ponów” usunie zbuforowany venv i zacznie od nowa.",
+    "hint_build_backend": "Błąd backendu budowania Pythona. „Wyczyść i ponów” usuwa uszkodzony venv, aby zbudować go od zera.",
+    "hint_ffmpeg": "Pobieranie ffmpeg nie powiodło się. To nie jest krytyczne — ponów próbę lub zainstaluj ffmpeg ręcznie.",
+    "hint_port": "Port 3900 jest już zajęty. Zamknij inne instancje OmniVoice lub aplikacje korzystające z tego portu.",
+    "hint_silent_crash": "Backend zakończył działanie bez komunikatu o błędzie. „Wyczyść i ponów” często naprawia problemy z uszkodzonym venv.",
+    "hint_github_blocked": "Twoja sieć może blokować GitHub. Zainstaluj Pythona 3.11+ z python.org (dodaj do PATH) i uruchom ponownie albo ustaw UV_PYTHON_INSTALL_MIRROR — zobacz docs/install/troubleshooting.md.",
+    "hint_default": "Najpierw spróbuj „Ponów”. Jeśli znowu się nie powiedzie, „Wyczyść i ponów” odbuduje środowisko od zera."
   },
   "stories": {
     "title": "Redaktor opowiadań",
@@ -220,7 +240,7 @@
     "designed_voices": "Zaprojektowane głosy",
     "dubbing_projects": "Projekty dubbingowe",
     "empty_hint": "Jeszcze nic tu nie ma — wybierz kartę powyżej.",
-    "demo_callout": "👋 Wypróbuj głos demonstracyjny — naciśnij Wygeneruj, aby go usłyszeć.",
+    "demo_callout": "Wypróbuj głos demonstracyjny — naciśnij Wygeneruj, aby go usłyszeć.",
     "locked": "ZABLOKOWANE",
     "open": "Otwórz",
     "try_it": "Spróbuj",
@@ -274,7 +294,7 @@
     "preset_surprised_woman": "😲 Zaskoczony",
     "preset_elderly_story": "👴 Starszy",
     "preset_sichuan": "🌶️ 四川话",
-    "prompt_placeholder": "Co powinien powiedzieć ten głos? ✍️",
+    "prompt_placeholder": "Co powinien powiedzieć ten głos?",
     "design_placeholder": "Opisz głos, a następnie napisz, co mówi…",
     "speed": "Prędkość",
     "tshift": "t_przesunięcie",
@@ -302,7 +322,17 @@
     "opt_high_pitch": "wysoki ton",
     "opt_very_high_pitch": "bardzo wysoki ton",
     "opt_whisper": "szeptać",
-    "style_placeholder": "np. szeptać"
+    "style_placeholder": "np. szeptać",
+    "stop_playback": "Zatrzymaj odtwarzanie",
+    "describe_label": "Opisz swój głos",
+    "describe_placeholder": "np. a warm elderly British storyteller, slightly raspy",
+    "describe_hint": "Twój opis (po angielsku) ustawia poniższe kontrolki — możesz je potem doprecyzować.",
+    "describe_unmatched": "Nie udało się dopasować: {{items}}",
+    "describe_no_match": "Nie rozpoznano jeszcze cech głosu — spróbuj słów takich jak deep, elderly lub British.",
+    "define_by_design": "Według projektu",
+    "define_from_audio": "Z audio",
+    "define_voice": "Zdefiniuj głos",
+    "save_design_as_profile": "Zapisz projekt jako profil"
   },
   "about": {
     "app": "Aplikacja",
@@ -337,7 +367,17 @@
     "channel_stable": "Stabilny",
     "channel_preview": "Podgląd",
     "channel_set": "Kanał aktualizacji ustawiony na {{channel}}",
-    "channel_preview_hint": "Podgląd śledzi najnowszą kompilację main — nowsze funkcje, mniej testów. Wraca do stabilnej, jeśli stabilne wydanie jest nowsze."
+    "channel_preview_hint": "Podgląd śledzi najnowszą kompilację main — nowsze funkcje, mniej testów. Wraca do stabilnej, jeśli stabilne wydanie jest nowsze.",
+    "self_check": "Uruchom autodiagnostykę",
+    "self_check_failed": "Autodiagnostyka nie powiodła się: {{message}}",
+    "self_check_ok": "OK",
+    "self_check_warn": "Ostrzeżenie",
+    "self_check_fail": "Niepowodzenie",
+    "self_check_healthy": "Wszystkie testy zaliczone — ta instalacja wygląda na sprawną.",
+    "self_check_attention": "{{count}} test(y) zakończone niepowodzeniem — zobacz wskazówki powyżej.",
+    "save_bundle": "Zapisz pakiet diagnostyczny",
+    "bundle_saved": "Pakiet diagnostyczny zapisany: {{filename}}",
+    "bundle_failed": "Nie udało się utworzyć pakietu diagnostycznego: {{message}}"
   },
   "privacy": {
     "desc": "Wszystko działa na <1>tej maszynie</1>. Twoje nagrania audio, wideo i transkrypcje nigdy nie opuszczają Twojego komputera, chyba że wyraźnie skorzystasz z tłumacza online (Google, DeepL itp.) lub przekażesz je do HuggingFace.",
@@ -436,9 +476,12 @@
     "mic_denied": "Odmowa dostępu do mikrofonu",
     "mic_denied_toast": "Odmowa dostępu do mikrofonu. {{hint}}",
     "mic_hint_mac": "macOS: otwórz Ustawienia systemowe → Prywatność i bezpieczeństwo → Mikrofon i włącz OmniVoice.",
-    "mic_hint_windows": "Windows: otwórz Ustawienia → Prywatność i bezpieczeństwo → Mikrofon i zezwól na OmniVoice.",
+    "mic_hint_windows": "Windows: otwórz Ustawienia → Prywatność i zabezpieczenia → Mikrofon, włącz „Dostęp do mikrofonu” i „Zezwalaj aplikacjom klasycznym na dostęp do mikrofonu”, a następnie zezwól OmniVoice.",
     "mic_hint_linux": "Linux: sprawdź, czy użytkownik należy do grupy audio i czy WebView ma dostęp do mikrofonu.",
-    "transcription_failed": "Transkrypcja nie powiodła się: {{message}}"
+    "transcription_failed": "Transkrypcja nie powiodła się: {{message}}",
+    "mic_not_found": "Nie znaleziono mikrofonu. Podłącz lub włącz mikrofon i spróbuj ponownie.",
+    "mic_in_use": "Mikrofon jest zajęty lub niedostępny. Zamknij inne aplikacje, które mogą go używać, i spróbuj ponownie.",
+    "mic_error_generic": "Nie można uruchomić mikrofonu: {{message}}"
   },
   "logs": {
     "no_tauri_log": "Brak jeszcze logowania Tauri na dysku — uruchom go za pomocą wersji desktopowej, aby go utworzyć",
@@ -564,7 +607,7 @@
     "prep_extract": "Wyodrębnianie dźwięku…",
     "prep_demucs": "Oddzielenie wokalu/muzyki (Demucs)…",
     "prep_scene": "Wykrywam fragmenty scen…",
-    "prep_cached": "⚡ Korzystanie z wyników zapisanych w pamięci podręcznej…",
+    "prep_cached": "Korzystanie z wyników zapisanych w pamięci podręcznej…",
     "prep_preparing": "Przygotowanie…",
     "prep_chip_download": "pobierz",
     "prep_chip_extract": "ekstrakt",
@@ -629,6 +672,8 @@
     "dual_subs_title": "Eksportuj napisy z przetłumaczonym tekstem na górze i oryginalną kursywą pod spodem.",
     "burn_subs": "Wypal napisy",
     "burn_subs_title": "Renderuj napisy bezpośrednio do strumienia wideo MP4 (hardsub). Używa formatu podwójnych napisów, gdy opcja Podwójne napisy jest włączona.",
+    "timing_smart_fit": "Inteligentne dopasowanie",
+    "timing_smart_fit_title": "Dzieli dopasowanie: lekko przyspiesza dźwięk (z zachowaniem wysokości tonu, do 1,5×) i lekko spowalnia dany fragment wideo (do 2×), aby mowa w naturalnym tempie się zmieściła. Nadmiar jest przycinany i oznaczany. Eksport ponownie koduje wideo.",
     "default_track": "Domyślny utwór:",
     "original_track": "Oryginał",
     "selected_dub": "{{code}} (wybrany dubbing)",
@@ -654,7 +699,20 @@
     "diagnostic_copied": "Diagnostyka skopiowana",
     "copy_failed": "Kopiowanie nie powiodło się",
     "open_docs": "Otwórz dokumenty",
-    "copy_diagnostic": "Kopiuj diagnostykę"
+    "copy_diagnostic": "Kopiuj diagnostykę",
+    "dialect_label": "Dialekt",
+    "dialect_default": "Domyślny",
+    "dialect_title": "Regionalny dialekt i słownictwo tłumaczenia (np. Argentyna → „vos sos” zamiast „tú eres”). Stosowane przez silniki LLM (OpenAI/Ollama) i jakość Cinematic.",
+    "num_speakers_label": "Mówcy",
+    "num_speakers_auto": "Automatycznie",
+    "num_speakers_help": "Ilu mówców jest w tym wideo? Pozostaw puste, aby wykryć automatycznie. Podaj liczbę, jeśli automatyczne wykrywanie łączy kilku mówców w jednego.",
+    "advanced": "Zaawansowane",
+    "cinematic_needs_llm_hint": "Tryb Filmowy wymaga LLM. Skonfiguruj go w Ustawienia → Dane uwierzytelniające → Punkt końcowy LLM (Ollama działa lokalnie, bez klucza).",
+    "generate_dub_multi": "Wygeneruj dubbingi ({{count}})",
+    "pipeline": "Proces dubbingu",
+    "preview_language": "Język podglądu",
+    "target_language": "Dubbinguj na",
+    "transcript_after_extract": "Transkrypcja pojawi się po ekstrakcji."
   },
   "glossary": {
     "title": "Glosariusz",
@@ -740,6 +798,20 @@
     "fit_compressed_title": "Dźwięk TTS stanowi {{pct}}% szczeliny — jest mocno skompresowany.",
     "fit_audio_title": "Dźwięk mieści się w gnieździe.",
     "fit_ratio_title": "Dźwięk TTS zajmuje {{pct}}% szczeliny."
+  },
+  "timeline": {
+    "track_label": "Oś czasu segmentów",
+    "keyboard_hint": "Strzałki wybierają segment · Enter przełącza tryb edycji · Delete usuwa · S przyciąga do najbliższego początku mowy",
+    "segment_aria": "Segment {{index}}: od {{start}} do {{end}}",
+    "overlap_warning": "Nakłada się na sąsiedni segment — obie kwestie zagrają jednocześnie",
+    "moved_announce": "Segment {{index}} przesunięty do {{start}}",
+    "resized_announce": "Segment {{index}}: od {{start}} do {{end}}",
+    "deleted_announce": "Segment {{index}} usunięty",
+    "snapped_announce": "Krawędź przyciągnięta do początku mowy w {{time}}",
+    "edit_mode_on": "Tryb edycji: strzałki przesuwają początek, Shift koniec, Alt cały segment, Esc kończy",
+    "edit_mode_off": "Tryb edycji wyłączony",
+    "play_slot": "Odtwórz ten fragment",
+    "preview_dub": "Odsłuchaj dubbing tutaj"
   },
   "voice": {
     "personality": "Osobowość",
@@ -903,7 +975,15 @@
     "save_failed": "Nie udało się zapisać profilu.",
     "confirm_delete": "Usunąć „{{name}}”?",
     "trim_load_failed": "Nie można wczytać dźwięku do przycięcia.",
-    "delete": "Usuń"
+    "delete": "Usuń",
+    "community_empty": "Nie załadowano jeszcze głosów społeczności — połącz się z internetem i otwórz ponownie albo prześlij pierwszy.",
+    "community_explainer": "Zaprojektowane ustawienia wstępne i nagrane głosy udostępnione przez społeczność, ładowane z omnivoice-gallery.",
+    "no_designer": "Nagrany głos — użyj zamiast tego opcji „Użyj głosu”.",
+    "no_preview": "Brak podglądu — dodaj go opcją „Użyj głosu”, aby odsłuchać.",
+    "submit_failed": "Nie udało się otworzyć formularza zgłoszenia.",
+    "submit_preset": "Prześlij ustawienie wstępne",
+    "submit_voice": "Prześlij głos",
+    "zone_community": "Społeczność"
   },
   "transcriptions": {
     "title": "Transkrypcje",
@@ -956,7 +1036,9 @@
     "open": "Otwórz",
     "install_required_models": "Aby kontynuować, zainstaluj wymagane modele powyżej.",
     "try_dictation": "Spróbuj dyktowania",
-    "next_try_dictation": "Dalej: Wypróbuj dyktowanie"
+    "next_try_dictation": "Dalej: Wypróbuj dyktowanie",
+    "step_aria": "Krok {{num}}: {{label}}",
+    "step_completed": "ukończono"
   },
   "donate": {
     "title": "Wsparcie",
@@ -977,7 +1059,7 @@
     "back": "Powrót do Studia",
     "badge": "Licencja komercyjna",
     "hero_title": "Wysyłaj głosy AI w produkcji",
-    "hero_desc": "OmniVoice Studio jest dostępne w formie źródłowej na podstawie licencji Functional Source License (FSL). Większość użytkowników może oceniać, tworzyć prototypy, a nawet wdrażać wewnętrznie bez umowy komercyjnej. Licencja komercyjna jest Ci potrzebna tylko wtedy, gdy budujesz konkurencyjny produkt lub usługę lub jeśli Twój przypadek użycia wykracza poza granice FSL.",
+    "hero_desc": "OmniVoice Studio to wolne i otwarte oprogramowanie na licencji GNU Affero General Public License v3 (AGPL-3.0) — bezpłatne w użyciu, także komercyjnym i wewnętrznym firmowym. Licencja komercyjna jest potrzebna tylko wtedy, gdy chcesz osadzić OmniVoice Studio w zamkniętym lub własnościowym produkcie bądź usłudze bez zobowiązań copyleft licencji AGPL-3.0.",
     "why_title": "Dlaczego firmy wybierają OmniVoice",
     "pricing_title": "Ceny",
     "faq_title": "Często zadawane pytania",
@@ -998,7 +1080,7 @@
     "benefit_source_desc": "Pełna widoczność stosu. Audytuj, rozwidlaj i dostosowuj zgodnie z warunkami licencji.",
     "benefit_lang": "646 języków",
     "benefit_lang_desc": "Transkrypcja, tłumaczenie i kopiowanie w 646 językach z jakością na poziomie ludzkim.",
-    "hero_note": "Do użytku wewnętrznego — nawet na dużą skalę — jest bezpłatne w ramach FSL; licencja komercyjna jest wymagana jedynie do oferowania OmniVoice innym jako konkurencyjny produkt lub usługa (interfejs API hostowany lub płatny za użycie, aplikacja odsprzedawana lub z białą etykietą). Poziomy cenowe już wkrótce — skontaktuj się z nami w międzyczasie."
+    "hero_note": "Użytkowanie, self-hosting i zastosowania komercyjne są bezpłatne na licencji AGPL-3.0 — również na dużą skalę. AGPL to licencja copyleft działająca także przez sieć: jeśli zmodyfikujesz OmniVoice i udostępnisz tę zmodyfikowaną wersję innym przez sieć, musisz udostępnić swój zmodyfikowany kod źródłowy na tych samych warunkach. Licencja komercyjna znosi te zobowiązania copyleft dla wdrożeń własnościowych o zamkniętym kodzie. Cenniki pojawią się wkrótce — w międzyczasie napisz do nas."
   },
   "exportModal": {
     "export": "Eksportuj",
@@ -1047,6 +1129,7 @@
     "current_target": "Aktualny cel ({{code}})",
     "all_selected_dubs": "Wszystkie wybrane duby ({{count}})",
     "subs_note": "Napisy są generowane na podstawie tekstu segmentu w niezmienionej postaci — edytuj tabelę segmentów przed eksportem, jeśli zauważysz literówki.",
+    "retime_note": "Przetaktowanie wideo per segment wymaga ponownego kodowania całego wideo przy eksporcie — spodziewaj się około 0,5–2× długości wideo na CPU.",
     "pkg_clips_title": "Klipy segmentowe (.zip)",
     "pkg_clips_body": "Każdy wygenerowany segment w postaci ponumerowanego pliku WAV w zipie — nadaje się do recenzji, wpisów z narracją lub tworzenia zestawu danych.",
     "pkg_clips_cta": "Eksportuj klipy zip",
@@ -1097,7 +1180,8 @@
     "script_french": "Język inny niż angielski (francuski)",
     "aria_pause": "Wstrzymaj {{label}}",
     "aria_hear": "Usłysz {{label}}",
-    "aria_replay": "Odtwórz ponownie {{label}} przez transkrypcję"
+    "aria_replay": "Odtwórz ponownie {{label}} przez transkrypcję",
+    "dictation_lede_hotkey_only": "Przytrzymaj powyższy skrót w dowolnym miejscu pulpitu, mów i puść — tekst trafi do aktywnej aplikacji. Naciśnij teraz, aby zweryfikować."
   },
   "direction": {
     "title": "Kierunek odcinka #{{id}}",
@@ -1122,7 +1206,10 @@
     "title": "Ta zakładka napotkała przeszkodę.",
     "desc": "Nie martw się — reszta aplikacji nadal działa. Możesz przełączyć karty lub spróbować ponownie poniżej.",
     "tryAgain": "Spróbuj ponownie",
-    "openDocs": "Otwórz dokumenty dotyczące tego błędu"
+    "openDocs": "Otwórz dokumenty dotyczące tego błędu",
+    "report": "Zgłoś ten błąd",
+    "searchIssues": "Szukaj podobnych problemów",
+    "unexpected": "Nieoczekiwany błąd: {{message}}"
   },
   "keyboard": {
     "title": "Skróty klawiaturowe",
@@ -1278,7 +1365,8 @@
     "dub_label": "Dub",
     "save_label": "Zapisz",
     "lock_identity": "Zablokuj tożsamość głosową",
-    "in_folder": "w {{folder}}"
+    "in_folder": "w {{folder}}",
+    "search": "Szukaj…"
   },
   "trimmer": {
     "title": "Przytnij dźwięk referencyjny",
@@ -1411,13 +1499,11 @@
   },
   "enterprise_faq": {
     "q_internal_tools": "Czy potrzebuję licencji na narzędzia wewnętrzne?",
-    "a_internal_tools": "Wewnętrzne użycie przez Twoich pracowników i wykonawców jest celem dozwolonym w ramach FSL – nie jest wymagana żadna licencja. Licencja komercyjna jest wymagana, jeśli udostępniasz OmniVoice innym jako część konkurencyjnego produktu lub usługi (odsprzedaż, hostowany SaaS, white-label).",
+    "a_internal_tools": "Nie. Użycie przez Twoich pracowników i współpracowników — w tym wewnętrzne modyfikacje i self-hosting — jest bezpłatne na licencji AGPL-3.0. Licencja komercyjna jest potrzebna tylko wtedy, gdy osadzasz OmniVoice w zamkniętym lub własnościowym produkcie bądź usłudze i nie chcesz spełniać wymogów AGPL dotyczących udostępniania kodu źródłowego.",
     "q_try_before": "Czy mogę spróbować przed zatwierdzeniem?",
-    "a_try_before": "Tak. Pełną aplikację można pobrać bezpłatnie i uruchomić lokalnie w celu oceny w ramach licencji FSL. Kiedy będziesz gotowy, aby omówić wdrożenie komercyjne, napisz do nas e-mail, a wspólnie omówimy szczegóły.",
+    "a_try_before": "Tak. Pełną aplikację można bezpłatnie pobrać, uruchomić i hostować samodzielnie na licencji AGPL-3.0 — bez żadnej umowy. Gdy zechcesz porozmawiać o licencji komercyjnej (użycie własnościowe), napisz do nas, a wspólnie ustalimy szczegóły.",
     "q_watermark": "A co ze znakiem wodnym?",
-    "a_watermark": "Domyślnie osadzony jest niewidoczny znak wodny AudioSeal. Licencjobiorcy komercyjni mogą wyłączyć tę funkcję w Ustawieniach → Prywatność. Do użytku bezpłatnego/osobistego zawsze dołączany jest znak wodny.",
-    "q_apache": "Czy źródłem kiedykolwiek stał się Apache 2.0?",
-    "a_apache": "Tak. Każde wydanie jest automatycznie konwertowane do licencji Apache w wersji 2.0 w drugą rocznicę jego publikacji. Oznacza to, że dzisiejszą wersją będzie Apache 2.0 dostępny za dwa lata i nie wymaga to od nas żadnych działań — FSL gwarantuje to nieodwołalnie."
+    "a_watermark": "Niewidoczny znak wodny AudioSeal jest domyślnie osadzany dla wszystkich. Licencjobiorcy komercyjni mogą go wyłączyć w Ustawieniach → Prywatność."
   },
   "gallery_extra": {
     "save_prompt": "Wprowadź nazwę tego profilu głosowego:",
@@ -1452,6 +1538,7 @@
     "segments_clean": "Segmenty już czyste",
     "cleanup_failed": "Czyszczenie nie powiodło się: {{message}}",
     "cinematic_no_llm": "Jakość kinowa wymaga LLM — ustaw TRANSLATE_BASE_URL + TRANSLATE_API_KEY (Ollama działa lokalnie). Wracając do Fasta.",
+    "dialect_not_applied": "Wybrany dialekt wymaga LLM — przełącz silnik na OpenAI/Ollama lub wybierz jakość Cinematic.",
     "translate_errors": "{{errorCount}}/{{totalCount}} segment(y) nie powiodły się: {{firstError}}",
     "translated_segments": "Przetłumaczone segmenty {{count}} → {{lang}}",
     "translated_cinematic_suffix": "(Kinowy)",
@@ -1597,5 +1684,90 @@
     "none": "Nie znaleziono żadnych wydań",
     "load_error": "Nie można wczytać wersji (offline?)",
     "retry_load": "Spróbuj ponownie"
+  },
+  "firstrun": {
+    "loading": "Przygotowywanie konfiguracji…",
+    "title": "Skonfiguruj OmniVoice Studio",
+    "subtitle": "Nic nie zostało jeszcze zainstalowane — sprawdź, gdzie wszystko trafi, a potem rozpocznij. Można to później zmienić w Ustawieniach.",
+    "language": "Język",
+    "mode_title": "Tryb instalacji",
+    "mode_installed": "Zainstalowana",
+    "mode_installed_desc": "Używa standardowych folderów systemowych. Zalecane dla większości.",
+    "mode_portable": "Przenośna",
+    "mode_portable_desc": "Wszystko mieści się w jednym folderze obok aplikacji — przenieś go na inny dysk lub komputer w całości.",
+    "mode_portable_unavailable": "Niedostępne: folder obok aplikacji nie jest zapisywalny.",
+    "storage_title": "Pamięć",
+    "portable_folder": "Folder przenośny",
+    "portable_folder_desc": "Środowisko, modele i dane głosowe — jeden folder, w pełni przenośny.",
+    "env_dir": "Środowisko aplikacji",
+    "env_dir_desc": "Środowisko Python i biblioteki AI.",
+    "data_dir": "Dane głosowe i projekty",
+    "data_dir_desc": "Twoje głosy, dubbingi, pliki wyjściowe i baza projektów.",
+    "models_dir": "Pamięć podręczna modeli",
+    "models_dir_desc": "Pobrane modele AI — największa i najłatwiejsza do przeniesienia część.",
+    "needs": "potrzebuje ~{{size}}",
+    "free": "{{size}} wolne",
+    "checking": "sprawdzanie…",
+    "not_writable": "brak zapisu",
+    "change": "Zmień…",
+    "compute_title": "Obliczenia",
+    "compute_label": "GPU / akcelerator",
+    "compute_auto": "Auto (NVIDIA CUDA / Apple MPS / CPU)",
+    "compute_rocm": "GPU AMD (ROCm, Linux)",
+    "channel_label": "Kanał aktualizacji",
+    "channel_stable": "Stabilny",
+    "channel_preview": "Podgląd (najnowszy main)",
+    "network_title": "Sieć",
+    "region_label": "Region pobierania",
+    "mirrors_title": "Własne serwery lustrzane (zaawansowane)",
+    "mirror_pypi": "URL indeksu PyPI",
+    "mirror_hf": "Endpoint Hugging Face",
+    "mirror_python": "Mirror pobierania Pythona",
+    "insufficient_space": "Za mało miejsca: ten układ wymaga ~{{need}} na jednym dysku, dostępne tylko {{free}}. Wybierz inną lokalizację.",
+    "blocked_not_writable": "Wybrany folder nie jest zapisywalny — wybierz inną lokalizację.",
+    "total_required": "Łącznie potrzeba: ~{{size}} (jednorazowe pobranie przy pierwszym użyciu)",
+    "start": "Rozpocznij instalację",
+    "starting": "Uruchamianie…",
+    "compute_detected": "Wykryto",
+    "compute_match": "pasuje do tej maszyny",
+    "compute_auto_desc": "Wybiera najlepszy backend tej maszyny w czasie działania — CUDA na NVIDIA, MPS na Apple Silicon, inaczej CPU.",
+    "compute_rocm_desc": "Instaluje pakiety PyTorch ROCm dla kart AMD w Linuksie. W razie wątpliwości zostaw Auto.",
+    "channel_stable_desc": "Tylko przetestowane wydania — aktualizacje przychodzą po walidacji społeczności.",
+    "channel_preview_desc": "Kroczące kompilacje z najnowszego main — nowe silniki i poprawki najpierw, czasem drobne niedociągnięcia.",
+    "installing_title": "Instalowanie",
+    "activity_title": "Aktywność",
+    "stage_setup": "Konfiguracja",
+    "stage_models": "Modele i silniki",
+    "chip_required": "wymagany",
+    "chip_optional": "opcjonalny",
+    "chip_engine": "silnik",
+    "lib_download": "Pobierz",
+    "lib_downloading": "pobieranie…",
+    "lib_use": "Użyj",
+    "lib_active": "aktywny",
+    "lib_in_settings": "zainstaluj później w Ustawieniach",
+    "lib_show_all": "Pokaż opcjonalne modele: {{count}}",
+    "trust_line": "Wszystko działa i pozostaje na tym komputerze — bez konta, chmury i telemetrii.",
+    "resume_note": "Przerwane pobierania wznawiają się same — zamknięcie aplikacji jest bezpieczne.",
+    "eta_left": "pozostało ~{{eta}}",
+    "first_sound_text": "Witaj w swoim studiu. Każde słowo, które słyszysz, zostało wygenerowane na tym komputerze — przed chwilą.",
+    "first_sound_done": "Ten głos? Wygenerowany sekundy temu, lokalnie. Witaj.",
+    "hf_token_title": "Token Hugging Face (opcjonalny)",
+    "hf_token_hint": "Odblokowuje modele z ograniczeniami — np. diaryzację mówców do dubbingu wielogłosowego (pyannote). Token darmowego konta; zostaje na tym komputerze.",
+    "hf_token_save": "Zapisz",
+    "hf_token_saving": "zapisywanie…",
+    "hf_token_saved": "Token Hugging Face zapisany",
+    "hf_token_error": "Nie udało się zapisać tokenu — spróbuj ponownie lub ustaw go później w Ustawieniach → Dane logowania."
+  },
+  "history": {
+    "dub_title": "Historia dubbingu",
+    "empty": "Nic tu jeszcze nie ma — Twoje generacje pojawią się po prawej stronie.",
+    "empty_dub": "Tutaj pojawią się Twoje dubbingi.",
+    "title": "Historia"
+  },
+  "recording": {
+    "cleaned_loaded": "Nagranie oczyszczone i załadowane!",
+    "loaded_raw": "Nagranie załadowane (surowe — odszumianie niedostępne)",
+    "too_short": "Nagranie zbyt krótkie"
   }
 }

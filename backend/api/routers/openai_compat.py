@@ -82,6 +82,33 @@ class SpeechRequest(BaseModel):
         "E.g. 'young female, warm tone, slight British accent'.",
     )
     instruct: Optional[str] = Field(default=None, description="Style instruction for the TTS engine.")
+    duration: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="OmniVoice extension: target output duration in seconds.",
+    )
+    seed: Optional[int] = Field(
+        default=None,
+        description="OmniVoice extension: deterministic sampling seed.",
+    )
+    denoise: bool = Field(
+        default=True,
+        description="OmniVoice extension: prepend denoise control when supported.",
+    )
+    preprocess_prompt: bool = Field(
+        default=True,
+        description="OmniVoice extension: trim/preprocess reference prompt when supported.",
+    )
+    chunk_duration: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="OmniVoice GGUF extension: long-form internal chunk duration.",
+    )
+    chunk_threshold: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="OmniVoice GGUF extension: long-form internal chunk threshold.",
+    )
 
 
 class TranscriptionResponse(BaseModel):
@@ -209,7 +236,14 @@ def _run_tts(backend, text: str, kw: dict):
     from services.audio_dsp import apply_mastering, normalize_audio
     wav = backend.generate(text, **kw)
     sr = backend.sample_rate
-    wav = apply_mastering(wav, sample_rate=sr)
+    # Engines that already emit mastered, studio-grade audio (e.g. VoxCPM2's
+    # native 48 kHz) opt out of apply_mastering via `applies_own_mastering`.
+    # That chain's Compressor + 8% Reverb is tuned for OmniVoice's 24 kHz clone
+    # output; applied to a studio engine it adds an audible level pump and a
+    # reverb tail that degrade the very output we want clean. Loudness
+    # normalisation still runs — it's a benign peak scale, not dynamics.
+    if not getattr(backend, "applies_own_mastering", False):
+        wav = apply_mastering(wav, sample_rate=sr)
     wav = normalize_audio(wav, target_dBFS=-2.0)
     return wav, sr
 
@@ -219,10 +253,28 @@ async def create_speech(req: SpeechRequest):
     """Generate audio from text. Compatible with OpenAI's POST /v1/audio/speech."""
     backend = _resolve_engine(req.model)
 
+    # Routing gate (#21 — no silent CPU fallback), identical to REST /generate.
+    from core.device_caps import detect_host_caps
+    from services.engine_routing import resolve_routing, routing_notice
+    _routing = resolve_routing(getattr(backend, "gpu_compat", ("cpu",)), detect_host_caps())
+    if _routing["routing_status"] == "unavailable":
+        raise HTTPException(status_code=400, detail=_routing["routing_reason"])
+    _routing_notice = routing_notice(_routing)  # (status, reason) or None
+
     # Build kwargs for the backend's generate() method
     kw: dict = {
         "speed": req.speed,
+        "denoise": req.denoise,
+        "preprocess_prompt": req.preprocess_prompt,
     }
+    if req.duration is not None:
+        kw["duration"] = req.duration
+    if req.seed is not None:
+        kw["seed"] = req.seed
+    if req.chunk_duration is not None:
+        kw["chunk_duration"] = req.chunk_duration
+    if req.chunk_threshold is not None:
+        kw["chunk_threshold"] = req.chunk_threshold
     if req.language:
         kw["language"] = req.language
     if req.instruct:
@@ -251,6 +303,8 @@ async def create_speech(req: SpeechRequest):
                     kw["ref_text"] = row["ref_text"]
                 if row["instruct"] and not req.instruct:
                     kw["instruct"] = row["instruct"]
+                if req.seed is None and row["seed"] is not None:
+                    kw["seed"] = row["seed"]
             else:
                 # Not a profile ID — forward as engine preset name
                 kw["voice"] = voice
@@ -267,13 +321,20 @@ async def create_speech(req: SpeechRequest):
 
     audio_bytes, mime_type, ext = _encode_audio(wav, sr, req.response_format)
 
+    _headers = {
+        "Content-Length": str(len(audio_bytes)),
+        "Content-Disposition": f'inline; filename="speech.{ext}"',
+    }
+    if _routing_notice:
+        from services.engine_routing import header_safe_reason
+        _headers["X-OmniVoice-Routing"] = _routing_notice[0]
+        _hr = header_safe_reason(_routing_notice[1])
+        if _hr:
+            _headers["X-OmniVoice-Routing-Reason"] = _hr
     return StreamingResponse(
         io.BytesIO(audio_bytes),
         media_type=mime_type,
-        headers={
-            "Content-Length": str(len(audio_bytes)),
-            "Content-Disposition": f'inline; filename="speech.{ext}"',
-        },
+        headers=_headers,
     )
 
 

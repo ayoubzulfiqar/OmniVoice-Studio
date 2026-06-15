@@ -7,7 +7,7 @@
   <p>
     <a href="https://github.com/debpalash/OmniVoice-Studio/stargazers"><img src="https://img.shields.io/github/stars/debpalash/OmniVoice-Studio?style=flat-square&color=f59e0b" alt="Stars" /></a>
     <a href="https://github.com/debpalash/OmniVoice-Studio/releases/latest"><img src="https://img.shields.io/github/v/release/debpalash/OmniVoice-Studio?style=flat-square&color=10b981" alt="Release" /></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue?style=flat-square" alt="License" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="License" /></a>
     <a href="https://github.com/debpalash/OmniVoice-Studio/issues"><img src="https://img.shields.io/github/issues/debpalash/OmniVoice-Studio?style=flat-square&color=ef4444" alt="Issues" /></a>
     <a href="https://discord.gg/bzQavDfVV9"><img src="https://img.shields.io/badge/Discord-Join_Community-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord" /></a>
   </p>
@@ -24,10 +24,14 @@
   </p>
 
   <p>
-    <a href="https://github.com/debpalash/OmniVoice-Studio/releases/download/v0.2.7/OmniVoice.Studio_0.2.7_aarch64.dmg"><img src="https://img.shields.io/badge/macOS-DMG_(Apple_Silicon)-000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS DMG" /></a>
-    <a href="https://github.com/debpalash/OmniVoice-Studio/releases/download/v0.2.7/OmniVoice.Studio_0.2.7_x64_en-US.msi"><img src="https://img.shields.io/badge/Windows-MSI_(x64)-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows MSI" /></a>
-    <a href="https://github.com/debpalash/OmniVoice-Studio/releases/download/v0.2.7/OmniVoice.Studio_0.2.7_amd64.AppImage"><img src="https://img.shields.io/badge/Linux-AppImage_(x64)-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Download Linux AppImage" /></a>
-    <a href="https://github.com/debpalash/OmniVoice-Studio/releases/download/v0.2.7/OmniVoice.Studio_0.2.7_amd64.deb"><img src="https://img.shields.io/badge/Debian-.deb-A81D33?style=for-the-badge&logo=debian&logoColor=white" alt="Download Debian .deb" /></a>
+    <a href="https://github.com/debpalash/OmniVoice-Studio/releases/latest"><img src="https://img.shields.io/badge/macOS-DMG_(Apple_Silicon)-000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS DMG" /></a>
+    <!-- Pre-built macOS bundle is Apple Silicon. Intel Macs: build from source (docs/install/macos.md); a pre-built Intel target is tracked in #279. -->
+    <a href="https://github.com/debpalash/OmniVoice-Studio/releases/latest"><img src="https://img.shields.io/badge/Windows-MSI_(x64)-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows MSI" /></a>
+    <a href="https://github.com/debpalash/OmniVoice-Studio/releases/latest"><img src="https://img.shields.io/badge/Linux-AppImage_(x64)-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Download Linux AppImage" /></a>
+    <a href="https://github.com/debpalash/OmniVoice-Studio/releases/latest"><img src="https://img.shields.io/badge/Debian-.deb-A81D33?style=for-the-badge&logo=debian&logoColor=white" alt="Download Debian .deb" /></a>
+  </p>
+  <p>
+    <sub><b>macOS:</b> first launch needs a one-time approval — right-click → <b>Open</b> (or System Settings → Privacy &amp; Security → <b>"Open Anyway"</b> on macOS 15). No Terminal needed. <a href="docs/install/macos.md#gatekeeper-quarantine">Why?</a></sub>
   </p>
 </div>
 
@@ -120,16 +124,22 @@ Per-OS install guides — pick yours and follow it end-to-end:
 - **macOS** — [docs/install/macos.md](docs/install/macos.md)
 - **Windows** — [docs/install/windows.md](docs/install/windows.md)
 - **Linux** — [docs/install/linux.md](docs/install/linux.md)
-- **Docker** — [docs/install/docker.md](docs/install/docker.md)
+- **Docker** — [docs/install/docker.md](docs/install/docker.md) · [Docker Hub: `palashdeb/omnivoice-studio`](https://hub.docker.com/r/palashdeb/omnivoice-studio)
 
-Stuck? See [docs/install/troubleshooting.md](docs/install/troubleshooting.md)
-for the top 10 install errors. The in-app error UI deeplinks to those entries
-when something breaks at runtime.
+Stuck? Run the built-in self-check first — **Settings → About → "Run
+self-check"** in the app, or `uv run python backend/main.py --diagnose` from
+a checkout (`--deep` also test-loads the active engine). Then see
+[docs/install/troubleshooting.md](docs/install/troubleshooting.md) for the
+top 10 install errors. The in-app error UI deeplinks to those entries when
+something breaks at runtime, and **Settings → About → "Save diagnostic
+bundle"** packages scrubbed logs + the self-check report for bug reports.
 
 For Hugging Face token setup, see
 [docs/setup/huggingface-token.md](docs/setup/huggingface-token.md). For
 diarization-specific gating, see
-[docs/features/diarization.md](docs/features/diarization.md).
+[docs/features/diarization.md](docs/features/diarization.md). For download
+speed, the ⚡ fast-download (Xet) status, and restricted-network / mirror
+options, see [docs/downloading-models.md](docs/downloading-models.md).
 
 ## Screenshots
 
@@ -187,7 +197,7 @@ ElevenLabs charges **$5–$330/mo** and processes your audio on their servers. O
 
 | | **ElevenLabs** | **OmniVoice Studio** |
 |---|---|---|
-| **Pricing** | $5–$330/mo, per-character billing | Free for personal use · [Commercial license](#license) for business |
+| **Pricing** | $5–$330/mo, per-character billing | Free & open-source (AGPL-3.0) · [Commercial license](#license) for proprietary use |
 | **Voice Cloning** | ✅ 3s clip | ✅ 3s clip, zero-shot |
 | **Voice Design** | ✅ Gender, age | ✅ Gender, age, accent, pitch, style, dialect |
 | **Languages** | 32 | **646** |
@@ -358,7 +368,7 @@ Yes. MPS acceleration is auto-detected. MLX-optimized Whisper models are availab
 <details>
 <summary><b>Can I use this commercially?</b></summary>
 <br/>
-Personal, educational, internal-team, and non-commercial use is free under <a href="https://fsl.software/">FSL-1.1-ALv2</a>. Building a competing product or service on top of OmniVoice Studio requires a commercial license — see <a href="#license">License</a>. Pricing tiers coming soon. Each release converts to Apache 2.0 two years after publication.
+<b>Yes — commercial use is free.</b> OmniVoice Studio is free and open-source under the <a href="https://www.gnu.org/licenses/agpl-3.0.html">GNU AGPL-3.0</a>. So personal, educational, research, <b>and commercial / business use are all free</b>: run it, sell the audio you make with it, dub your own or a client's videos, deploy it across your team. Because AGPL is a <b>network copyleft</b> license, if you <b>modify</b> OmniVoice Studio and make that modified version available to others over a network, you must offer those users the source of your modified version under the same AGPL terms. Want to embed OmniVoice in a <b>closed-source or proprietary</b> product without those obligations? A <b>commercial license</b> is available — see <a href="#license">License</a>.
 </details>
 
 <details>
@@ -377,13 +387,13 @@ Yes. OmniVoice uses a <b>built-in backend registry</b>. To add an engine in ~50 
 
 ## License
 
-OmniVoice Studio is source-available under the [**Functional Source License (FSL-1.1-ALv2)**](https://fsl.software/).
+OmniVoice Studio is free and open-source software under the [**GNU Affero General Public License v3.0 (AGPL-3.0)**](https://www.gnu.org/licenses/agpl-3.0.html).
 
-**Free** for personal, educational, research, internal team, and non-commercial use. Each release **converts to Apache 2.0 automatically two years after publication**.
+**Free for any use — including commercial and internal business use.** Run it, sell the audio you produce with it, dub your own or clients' videos, roll it out across your team — all free, no license needed. As a **network copyleft** license, AGPL adds one obligation: if you **modify** OmniVoice Studio and offer that modified version to others over a network, you must make the complete corresponding source of your modified version available to them under the same AGPL-3.0 terms.
 
-**Business / enterprise** users building a competing product or service on top of OmniVoice Studio need a commercial license. **Pricing tiers coming soon.** For inquiries in the meantime, reach out at **OmniVoice@palash.dev**.
+A **commercial license** is available for organizations that want to embed OmniVoice Studio in a **closed-source or proprietary** product or service without the AGPL-3.0 copyleft obligations. **Pricing tiers coming soon.** Inquiries: **OmniVoice@palash.dev**.
 
-See [`LICENSE`](LICENSE) for the full terms.
+The bundled `omnivoice/` TTS model by Han Zhu remains Apache-2.0 upstream. See [`LICENSE`](LICENSE) for the full, binding terms.
 
 ---
 

@@ -5,9 +5,13 @@ import { Globe, Fingerprint, Wand2, Film, FolderOpen, RefreshCw, Settings2, Chev
 import { Button, Badge } from '../ui';
 import NotificationPanel from './NotificationPanel';
 import { useAppStore } from '../store';
+import { useSysinfo } from '../api/hooks';
 
 const VIEW_META = {
   launchpad:  { labelKey: 'header.label_launchpad',  Icon: Globe,       accent: '#f3a5b6', kickerKey: 'header.kicker_studio' },
+  studio:     { labelKey: 'nav.voice',                Icon: Fingerprint, accent: '#d3869b', kickerKey: 'header.kicker_studio' },
+  // Legacy ids — kept so a not-yet-shimmed persisted 'clone'/'design' mode
+  // still renders a sensible header (voice-studio-unification P4).
   clone:      { labelKey: 'header.label_clone',       Icon: Fingerprint, accent: '#d3869b', kickerKey: 'header.kicker_studio' },
   design:     { labelKey: 'header.label_design',      Icon: Wand2,       accent: '#8ec07c', kickerKey: 'header.kicker_studio' },
   dub:        { labelKey: 'header.label_dub',         Icon: Film,        accent: '#fe8019', kickerKey: 'header.kicker_studio' },
@@ -40,10 +44,14 @@ function WaveBars({ color = '#f3a5b6', active }) {
 }
 
 export default function Header({
-  mode, setMode, sysStats, modelStatus, doubleClickMaximize,
+  mode, setMode, modelStatus, doubleClickMaximize,
   activeProjectName, onFlushMemory,
 }) {
   const { t } = useTranslation();
+  // Sysinfo is subscribed here (not in App via useAppData) so the 5s poll
+  // only re-renders the header chrome, not the whole App tree.
+  const sysQuery = useSysinfo();
+  const sysStats = sysQuery.data ?? null;
   // Default OFF — chrome shouldn't double as a resource monitor. Power users
   // flip this on via Settings → Performance. Idle/Ready/Loading badge +
   // Flush button stay visible regardless (action-relevant).
