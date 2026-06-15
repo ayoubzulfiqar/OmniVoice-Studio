@@ -1,35 +1,31 @@
 import os
-import io
-import sys
 import uuid
-import json
-import time
 import asyncio
 import logging
 import shutil
 import subprocess
 import soundfile as sf
 import torch
-import torchaudio
-from typing import Optional, List
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Query
-from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
+from typing import Optional
+from fastapi import APIRouter, File, Form, UploadFile, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 
 from core.db import db_conn
-from core.config import DATA_DIR, DUB_DIR, PREVIEW_DIR, VOICES_DIR
+from core.config import PREVIEW_DIR
 from core.tasks import task_manager
 from core import event_bus
-from schemas.requests import DubRequest, TranslateRequest, DubIngestUrlRequest
-from services.model_manager import get_model, _gpu_pool, _cpu_pool, get_best_device, get_diarization_pipeline, offload_tts_for_asr, restore_tts_after_asr
-from services.audio_dsp import apply_mastering, normalize_audio
+from schemas.requests import DubIngestUrlRequest
+from services.model_manager import get_model, _gpu_pool, _cpu_pool, get_diarization_pipeline, offload_tts_for_asr, restore_tts_after_asr
 from services.audio_io import _safe_soundfile_write
-from services.ffmpeg_utils import find_ffmpeg, _get_semaphore, _spawn_with_retry
+from services.ffmpeg_utils import find_ffmpeg
 from services.segmentation import (
     segment_transcript,
     assign_speakers_from_diarization,
+    assign_speakers_from_turns,
     assign_speakers_heuristic,
     clean_up_segments,
 )
+from services.onset_align import snap_segment_starts
 from services import dub_pipeline
 
 router = APIRouter()
@@ -371,14 +367,32 @@ _prep_event_helper = dub_pipeline.prep_event  # alias; we keep the module-local 
 
 
 @router.get("/dub/transcribe-stream/{job_id}")
-async def dub_transcribe_stream(job_id: str):
+async def dub_transcribe_stream(
+    job_id: str,
+    num_speakers: Optional[int] = None,
+    per_segment_refs: bool = True,
+):
     """Stream per-chunk segments via SSE, then emit diarized final pass.
 
     Pre-flight checks (missing job, missing audio, ASR not loaded) are emitted
     as in-stream `error` events rather than HTTP errors, because EventSource
     on the client can't read non-2xx response bodies — a 503 there surfaces
     as an opaque "network error" instead of the actionable message we want.
+
+    `num_speakers` is an optional hint passed straight to pyannote. Left unset,
+    pyannote auto-detects the count — but its auto-detect can collapse a
+    multi-speaker clip to a single speaker (issue #274). When the user knows
+    the exact count, supplying it forces pyannote to return that many speakers.
     """
+    # Clamp to a sane range; ignore anything non-positive / absurd so a bad
+    # query string can never break the diarization call. None → auto-detect.
+    if num_speakers is not None:
+        try:
+            num_speakers = int(num_speakers)
+            num_speakers = num_speakers if 1 <= num_speakers <= 20 else None
+        except (TypeError, ValueError):
+            num_speakers = None
+
     job = _get_job(job_id)
 
     preflight_error: Optional[str] = None
@@ -389,24 +403,38 @@ async def dub_transcribe_stream(job_id: str):
     if not job:
         preflight_error = "Job not found. It may have been cleaned up or was never created."
     else:
-        _model = await get_model()
-        asr_audio_target = job.get("vocals_path")
-        if not asr_audio_target or not os.path.exists(asr_audio_target):
-            asr_audio_target = job.get("audio_path")
-        if not asr_audio_target or not os.path.exists(asr_audio_target):
-            preflight_error = "No audio available for transcription."
-        else:
-            from services.asr_backend import get_active_asr_backend
-            try:
-                _asr_backend = get_active_asr_backend(asr_pipe=getattr(_model, "_asr_pipe", None))
-                if _asr_backend.id == "pytorch-whisper" and getattr(_model, "_asr_pipe", None) is None:
-                    preflight_error = (
-                        "No ASR backend is ready. Install WhisperX/faster-whisper/MLX Whisper "
-                        "or set OMNIVOICE_PRELOAD_TTS_ASR=1 before launch to use the PyTorch fallback."
+        # Guard the model load: if it raises, the SSE stream would otherwise die
+        # before emitting any event, and the UI shows a misleading generic
+        # "stream dropped" message instead of the real cause (issue #255).
+        try:
+            _model = await get_model()
+        except Exception as e:
+            logger.exception("transcribe preflight: model load failed (job=%s)", job_id)
+            from core.failure import build_failure
+            f = build_failure(e, stage="transcribe-preflight", include_diagnostic=False)
+            preflight_error = f["reason"] + (f" — {f['hint']}" if f.get("hint") else "")
+            _model = None
+        if _model is not None:
+            asr_audio_target = job.get("vocals_path")
+            if not asr_audio_target or not os.path.exists(asr_audio_target):
+                asr_audio_target = job.get("audio_path")
+            if not asr_audio_target or not os.path.exists(asr_audio_target):
+                preflight_error = "No audio available for transcription."
+            else:
+                from services.asr_backend import get_active_asr_backend
+                try:
+                    # The PyTorch-Whisper backend lazily builds its own pipeline
+                    # when no preloaded `_asr_pipe` is present (issue #255), so it
+                    # no longer needs OMNIVOICE_PRELOAD_TTS_ASR=1 — don't reject it
+                    # here; any load failure surfaces per-chunk with a real cause.
+                    _asr_backend = get_active_asr_backend(asr_pipe=getattr(_model, "_asr_pipe", None))
+                except Exception as e:
+                    from core.failure import build_failure
+                    f = build_failure(e, stage="transcribe-preflight", include_diagnostic=False)
+                    preflight_error = "ASR backend initialization failed: " + f["reason"] + (
+                        f" — {f['hint']}" if f.get("hint") else ""
                     )
-            except Exception as e:
-                preflight_error = f"ASR backend initialization failed: {e}"
-            scene_cuts = job.get("scene_cuts") or []
+                scene_cuts = job.get("scene_cuts") or []
 
     async def gen():
         if preflight_error:
@@ -434,12 +462,20 @@ async def dub_transcribe_stream(job_id: str):
 
         # Free VRAM: move TTS model to CPU so WhisperX + VAD can fit.
         # Only offloads when free GPU memory is < 4 GB (e.g. laptop GPUs).
-        await loop.run_in_executor(_cpu_pool, offload_tts_for_asr)
+        # Non-fatal: an offload failure must not drop the stream (#255) —
+        # transcription can still proceed (it just has less headroom).
+        try:
+            await loop.run_in_executor(_cpu_pool, offload_tts_for_asr)
+        except Exception as e:
+            logger.warning("offload_tts_for_asr failed (continuing): %s", e)
 
         all_segments: list[dict] = []
         detected_lang = None
         next_seg_id = 0
         chunk_errors: list[str] = []
+        # Speaker turns from an ASR backend that diarizes inline (FunASR cam++).
+        # When present, _diarize() uses them and skips pyannote (Phase 2, #182).
+        asr_speaker_turns: list[dict] = []
 
         for i in range(chunks_n):
             if job.get("aborted"):
@@ -471,7 +507,16 @@ async def dub_transcribe_stream(job_id: str):
                         a0 = (ts[0] if ts[0] is not None else 0.0) + offset
                         a1 = (ts[1] if ts[1] is not None else 0.0) + offset
                         shifted.append({"text": c.get("text", ""), "timestamp": (a0, a1)})
-                    return {"chunks": shifted, "language": r.get("language")}
+                    # Inline-diarization speaker turns (FunASR cam++), offset-shifted
+                    # to the full-audio timeline so _diarize() can use them.
+                    turns = []
+                    for seg in r.get("segments", []) or []:
+                        spk = seg.get("speaker")
+                        s0, s1 = seg.get("start"), seg.get("end")
+                        if spk is None or s0 is None or s1 is None:
+                            continue
+                        turns.append({"start": s0 + offset, "end": s1 + offset, "speaker": spk})
+                    return {"chunks": shifted, "language": r.get("language"), "speaker_turns": turns}
                 except Exception as e:
                     logger.exception("chunk transcribe failed (backend=%s)", _asr_backend.id)
                     return {"chunks": [], "language": None, "error": str(e)}
@@ -506,7 +551,17 @@ async def dub_transcribe_stream(job_id: str):
                 logger.warning("Chunk %d/%d error: %s", i + 1, chunks_n, part["error"])
             if detected_lang is None and part.get("language"):
                 detected_lang = part["language"]
+            asr_speaker_turns.extend(part.get("speaker_turns") or [])
             chunk_segs = segment_transcript(part, duration=t1, scene_cuts=scene_cuts)
+            # #280: Whisper often stretches a segment's start back over
+            # leading music/silence (classic case: speech begins at 0:03,
+            # transcript says 0.0 → the dub plays 3 s early). Snap starts
+            # forward to the actual speech onset. `audio_np` is the same
+            # track ASR ran on — vocals.wav when Demucs succeeded.
+            try:
+                snap_segment_starts(chunk_segs, audio_np, sr)
+            except Exception as e:
+                logger.warning("onset alignment skipped for chunk %d: %s", i, e)
             chunk_segs = assign_speakers_heuristic(chunk_segs)
             for s in chunk_segs:
                 s["id"] = f"s{next_seg_id:05x}"
@@ -532,15 +587,23 @@ async def dub_transcribe_stream(job_id: str):
         # whisperx's VAD load, or an unsupported audio format.
         if not all_segments:
             # Deduplicate while preserving order so one root cause doesn't
-            # repeat N times in the UI toast.
+            # repeat N times in the UI toast. Sanitize each message so home
+            # paths / tokens from a backend traceback never leak (#255).
+            from core.failure import sanitize, build_failure
             seen = set()
             uniq: list[str] = []
             for msg in chunk_errors:
-                if msg and msg not in seen:
-                    seen.add(msg)
-                    uniq.append(msg)
+                s = sanitize(msg)
+                if s and s not in seen:
+                    seen.add(s)
+                    uniq.append(s)
             if uniq:
                 detail = "Transcription produced no segments. " + " | ".join(uniq[:3])
+                # Add the actionable hint for a recognized failure class
+                # (e.g. pkg_resources missing → install setuptools).
+                hint = build_failure(" ".join(uniq), stage="transcribe", include_diagnostic=False).get("hint")
+                if hint:
+                    detail += f" — {hint}"
             else:
                 detail = (
                     "Transcription produced no segments. The audio may be silent, "
@@ -564,9 +627,14 @@ async def dub_transcribe_stream(job_id: str):
             attach an `error_class` so the front-end's errorDocsMap can
             render a "See docs" deeplink instead of a dead-end toast.
             """
+            # The active ASR backend already diarized inline (FunASR cam++):
+            # use its speaker turns directly and skip pyannote entirely (#182).
+            if asr_speaker_turns:
+                logger.info("Using inline ASR diarization (%d turns); skipping pyannote.", len(asr_speaker_turns))
+                return assign_speakers_from_turns(all_segments, asr_speaker_turns), None
+
             from services.model_manager import (
                 DIARIZATION_ERR_LICENSE,
-                DIARIZATION_ERR_LOAD,
                 DIARIZATION_ERR_NO_TOKEN,
             )
             from core import error_docs_map
@@ -631,7 +699,15 @@ async def dub_transcribe_stream(job_id: str):
                     },
                 )
             try:
-                diar = diar_pipe(asr_audio_target)
+                # Pass the user's speaker-count hint through to pyannote when
+                # provided (#274). pyannote's apply() accepts num_speakers;
+                # omit it entirely when None so we don't depend on the kwarg
+                # existing in every pyannote build.
+                if num_speakers:
+                    logger.info("Diarizing with num_speakers=%d (user hint)", num_speakers)
+                    diar = diar_pipe(asr_audio_target, num_speakers=num_speakers)
+                else:
+                    diar = diar_pipe(asr_audio_target)
                 return assign_speakers_from_diarization(all_segments, diar), None
             except Exception as e:
                 logger.error(f"Diarization failed: {e}")
@@ -697,12 +773,41 @@ async def dub_transcribe_stream(job_id: str):
                     clones = done.pop().result()
                     break
                 yield _sse_event("ping", {})
-            if clones:
-                job["speaker_clones"] = clones
-                # Default each segment's profile_id to its speaker's auto-clone,
-                # but only if the user hasn't already assigned something.
+            # Wave 3.2: per-segment clone refs. Cut each long-enough segment's
+            # own reference from the vocals so the dub of each line matches the
+            # prosody of its source line. Short lines fall back to the
+            # per-speaker clone below. Default on; the user can force
+            # per-speaker by disabling it (job["per_segment_refs"]).
+            seg_clones = {}
+            job["per_segment_refs"] = per_segment_refs
+            if per_segment_refs:
+                try:
+                    from services.speaker_clone import extract_segment_refs
+                    seg_ids_for_clone = [s.get("id", i) for i, s in enumerate(final_segs)]
+                    seg_clones = await loop.run_in_executor(
+                        _cpu_pool, lambda: extract_segment_refs(
+                            vocals_for_clone, final_segs,
+                            os.path.dirname(vocals_for_clone),
+                            seg_ids=seg_ids_for_clone,
+                        ),
+                    )
+                    if seg_clones:
+                        job["segment_clones"] = seg_clones
+                except Exception as e:
+                    logger.warning("per-segment clone refs skipped: %s", e)
+
+            if clones or seg_clones:
+                if clones:
+                    job["speaker_clones"] = clones
+                # Default each segment's profile_id to its own per-segment ref
+                # when available, else its speaker's auto-clone — but only if
+                # the user hasn't already assigned something.
                 for s in final_segs:
                     if s.get("profile_id"):
+                        continue
+                    sid = str(s.get("id", ""))
+                    if sid and sid in seg_clones:
+                        s["profile_id"] = f"auto-seg:{sid}"
                         continue
                     spk = s.get("speaker_id") or "Speaker 1"
                     if spk in clones:
@@ -753,8 +858,6 @@ async def dub_transcribe(job_id: str):
     _model = await get_model()
 
     def _transcribe():
-        import re
-        import traceback
         
         asr_audio_target = job.get("vocals_path")
         if not asr_audio_target or not os.path.exists(asr_audio_target):
@@ -801,6 +904,14 @@ async def dub_transcribe(job_id: str):
 
         scene_cuts = job.get("scene_cuts") or []
         segments = segment_transcript(result, duration=job.get("duration", 0.0), scene_cuts=scene_cuts)
+
+        # #280: snap segment starts forward to the actual speech onset so the
+        # dub doesn't begin seconds before the original speaker does.
+        try:
+            audio_for_onset, onset_sr = sf.read(asr_audio_target, dtype="float32")
+            snap_segment_starts(segments, audio_for_onset, onset_sr)
+        except Exception as e:
+            logger.warning("onset alignment skipped: %s", e)
 
         diar_pipe = get_diarization_pipeline()
         if diar_pipe:

@@ -25,6 +25,11 @@ class DubSegment(BaseModel):
     speed: Optional[float] = None
     gain: Optional[float] = None  # Per-segment volume (0.0 - 2.0, default 1.0)
     target_lang: Optional[str] = None  # Per-segment language override (ISO code)
+    # Phase 4.2 free-form directorial note ("urgent, whispered…"). The client
+    # has always sent this; without the field pydantic silently dropped it,
+    # so directions never reached TTS and never entered the regen
+    # fingerprint (#281).
+    direction: Optional[str] = None
     effect_preset: str = "broadcast"   # NEW: DSP preset id (default: broadcast)
 
     @field_validator("effect_preset")
@@ -36,6 +41,19 @@ class DubSegment(BaseModel):
                 f"Valid: {list(EFFECT_PRESETS.keys())}"
             )
         return v
+
+class FitOptions(BaseModel):
+    """Optional knob overrides for the `smart_fit` timing strategy.
+
+    All fields default to None — the server fills in the canonical
+    defaults (services.fit_planner.FitParams) so old clients and sparse
+    payloads behave identically to a fully-populated default payload.
+    """
+    max_audio_only_rate: Optional[float] = None  # default 1.2
+    audio_rate_cap: Optional[float] = None       # default 1.5
+    video_slow_cap: Optional[float] = None       # default 2.0
+    gap_guard_s: Optional[float] = None          # default 0.05
+    allow_video_retime: Optional[bool] = None    # default True
 
 class DubRequest(BaseModel):
     segments: List[DubSegment]
@@ -75,18 +93,35 @@ class DubRequest(BaseModel):
     #                     each segment's video portion is stretched (via
     #                     ffmpeg setpts) to fit the natural-rate dub audio.
     #                     Audio plays at 1.0×; total video duration grows.
+    #   "smart_fit"     — dub-length fitting v2: split the burden between a
+    #                     mild pitch-preserving audio speed-up (≤1.2× alone,
+    #                     ≤1.5× in hybrid) and a mild per-segment video
+    #                     slow-down (≤2.0×), per services/fit_planner.py.
+    #                     Residual overflow is trimmed and surfaced.
     #   "strict_slot"   — legacy: keep `slot_fit` semantics (atempo squeeze
     #                     when audio > slot). Kept for back-compat.
-    timing_strategy: Optional[Literal["concise", "stretch_video", "strict_slot"]] = "concise"
+    timing_strategy: Optional[Literal["concise", "stretch_video", "strict_slot", "smart_fit"]] = "concise"
 
     # Per-job slip budget for "concise" mode. Hard-trim only kicks in once
     # gap absorption + this much extra time has been consumed.
     overflow_budget_s: Optional[float] = 0.0
 
+    # Knob overrides for `smart_fit` (ignored by other strategies). Omitted
+    # fields default server-side to fit_planner.FitParams values.
+    fit_options: Optional[FitOptions] = None
+
 class TranslateSegment(BaseModel):
     id: str
     text: str
     target_lang: Optional[str] = None
+    # Free-form delivery direction ("urgent, whispering") — feeds the
+    # cinematic reflect/adapt prompts. The frontend has sent this since
+    # Phase 4.2 but pydantic silently dropped it as an undeclared extra,
+    # so the per-segment direction hint never reached the LLM.
+    direction: Optional[str] = None
+    # Available time slot (end - start, seconds) for rate-ratio prediction
+    # and the cinematic slot-fit pass. Same silent-drop fix as `direction`.
+    slot_seconds: Optional[float] = None
 
 class TranslateRequest(BaseModel):
     segments: List[TranslateSegment]
@@ -96,6 +131,12 @@ class TranslateRequest(BaseModel):
     job_id: Optional[str] = None  # Dub job id, used to resolve detected source_lang
     quality: Optional[str] = "fast"  # "fast" (one-shot) | "cinematic" (reflect → adapt)
     glossary: Optional[List[dict]] = None  # [{"source": "...", "target": "...", "note": "..."}]
+    # Optional regional dialect (BCP-47, e.g. "es-AR", "pt-BR") — #280 item 2.
+    # Applied by LLM-backed paths (provider="openai" or quality="cinematic"):
+    # the prompt asks for that region's vocabulary/grammar (e.g. Argentinian
+    # voseo: "vos sos" instead of "tú eres"). Non-LLM providers (Argos, NLLB,
+    # Google) can't honor it; the response then carries dialect_applied=false.
+    dialect: Optional[str] = None
 
 class DubIngestUrlRequest(BaseModel):
     url: str

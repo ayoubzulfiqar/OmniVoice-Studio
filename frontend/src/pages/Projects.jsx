@@ -1,9 +1,13 @@
 import React, { useMemo, useState } from 'react';
+import { copyText } from "../utils/copyText";
 import { useTranslation } from 'react-i18next';
 import {
   Search, FolderOpen, Film, Fingerprint, Wand2, Music, Download,
-  LayoutGrid, List as ListIcon, Clock, FileText, Mic,
+  LayoutGrid, List as ListIcon, Clock, FileText, Mic, BookMarked, BookOpen,
 } from 'lucide-react';
+import { apiFetch } from '../api/client';
+import { loadTranscriptions, TRANSCRIPTION_EVENT } from '../utils/transcriptionsStore';
+import { audioUrl } from '../api/generate';
 import './Projects.css';
 
 /**
@@ -73,8 +77,10 @@ export default function Projects({
   profiles = [],
   history = [],
   exportHistory = [],
+  storyProjects = [],
   onOpenDub,           // (projectId) => void — loads project + switches to dub mode
   onOpenProfile,       // (voiceId)   => void
+  onOpenStory,         // (storyId)   => void — loads story + switches to stories mode
   onRevealExport,      // (path)      => void
 }) {
   const [filter, setFilter]   = useState('all');
@@ -85,25 +91,35 @@ export default function Projects({
   const FILTERS = [
     { id: 'all',      label: t('projects.all'),            Icon: FolderOpen  },
     { id: 'dubs',     label: t('projects.dub_projects'),   Icon: Film        },
+    { id: 'stories',  label: t('projects.stories'),        Icon: BookOpen    },
     { id: 'profiles', label: t('projects.voice_profiles'), Icon: Fingerprint },
     { id: 'transcripts', label: t('projects.transcripts'), Icon: Mic         },
+    { id: 'audiobooks', label: t('projects.audiobooks'),   Icon: BookMarked  },
     { id: 'history',  label: t('projects.history'),        Icon: Music       },
     { id: 'exports',  label: t('projects.exports'),        Icon: Download    },
   ];
 
+  // Finished Audiobook + Story renders (server-side longform library).
+  const [longformJobs, setLongformJobs] = useState([]);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiFetch('/longform/jobs');
+        const data = await res.json();
+        if (alive) setLongformJobs(data.jobs || []);
+      } catch { /* offline / no backend — leave empty */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+
   // Load transcriptions from localStorage (same source as TranscriptionsPage)
-  const [transcriptions, setTranscriptions] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('omni_transcriptions') || '[]'); }
-    catch { return []; }
-  });
+  const [transcriptions, setTranscriptions] = useState(loadTranscriptions);
   // Listen for new transcriptions
   React.useEffect(() => {
-    const handler = () => {
-      try { setTranscriptions(JSON.parse(localStorage.getItem('omni_transcriptions') || '[]')); }
-      catch {}
-    };
-    window.addEventListener('omni:transcription-added', handler);
-    return () => window.removeEventListener('omni:transcription-added', handler);
+    const handler = () => setTranscriptions(loadTranscriptions());
+    window.addEventListener(TRANSCRIPTION_EVENT, handler);
+    return () => window.removeEventListener(TRANSCRIPTION_EVENT, handler);
   }, []);
 
   // Normalise every source into a common shape so the filter + search +
@@ -120,6 +136,21 @@ export default function Projects({
         accent: '#fe8019',
         Icon: Film,
         onClick: () => onOpenDub?.(p.id),
+      });
+    }
+    for (const sp of storyProjects) {
+      const tracks = (sp.tracks || []).length;
+      const chars = new Set((sp.cast || []).map((c) => c.id)).size;
+      list.push({
+        type: 'stories',
+        id: sp.id,
+        title: sp.name || t('projects.untitled_story'),
+        subtitle: [tracks ? t('projects.story_lines', { count: tracks }) : '',
+                   chars ? t('projects.story_voices', { count: chars }) : ''].filter(Boolean).join(' · '),
+        ts: sp.updatedAt || 0,
+        accent: '#83a598',
+        Icon: BookOpen,
+        onClick: () => onOpenStory?.(sp.id),
       });
     }
     for (const pr of profiles) {
@@ -159,6 +190,20 @@ export default function Projects({
         onClick: () => e.path && onRevealExport?.(e.path),
       });
     }
+    for (const j of longformJobs) {
+      const mins = j.duration_s ? `${Math.round(j.duration_s / 60)} min` : '';
+      list.push({
+        type: 'audiobooks',
+        id: j.job_id,
+        title: j.title || j.output,
+        subtitle: [j.type === 'story' ? t('projects.story') : t('projects.audiobook'),
+                   j.chapters ? `${j.chapters} ch` : '', mins].filter(Boolean).join(' · '),
+        ts: (j.created_at || 0) * 1000,
+        accent: '#d3869b',
+        Icon: BookMarked,
+        onClick: () => j.output && window.open(audioUrl(j.output), '_blank'),
+      });
+    }
     for (const tr of transcriptions) {
       list.push({
         type: 'transcripts',
@@ -169,13 +214,13 @@ export default function Projects({
         accent: '#83a598',
         Icon: FileText,
         onClick: () => {
-          navigator.clipboard.writeText(tr.text || '');
+          copyText(tr.text || '');
         },
       });
     }
     list.sort((a, b) => (b.ts || 0) - (a.ts || 0));
     return list;
-  }, [studioProjects, profiles, history, exportHistory, transcriptions, onOpenDub, onOpenProfile, onRevealExport]);
+  }, [studioProjects, profiles, history, exportHistory, transcriptions, longformJobs, storyProjects, onOpenDub, onOpenProfile, onOpenStory, onRevealExport, t]);
 
   const counts = useMemo(() => {
     const c = { all: items.length };

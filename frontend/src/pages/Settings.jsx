@@ -1,5 +1,8 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { copyText } from "../utils/copyText";
 import { isTauri as _isTauri } from '../utils/media';
+import { normalizeChannel } from '../utils/updateChannel';
+import { setChannel } from '../utils/channelControl';
 import {
   flexRender,
   getCoreRowModel,
@@ -11,10 +14,12 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Cpu, FileText, Info, ShieldCheck, RefreshCw, Trash2, ExternalLink,
   CheckCircle, AlertCircle, Plug, Download, Copy, Building2, KeyRound,
-  Keyboard, Wifi,
+  Keyboard, Wifi, Palette, Activity, ArrowDownToLine,
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { openExternal } from '../api/external';
+import { API } from '../api/client';
+import { addBreadcrumb } from '../utils/breadcrumbs';
 import { Trans, useTranslation } from 'react-i18next';
 import { systemLogs, systemLogsTauri, clearSystemLogs, clearTauriLogs } from '../api/system';
 import i18n, { LANGUAGES } from '../i18n';
@@ -26,25 +31,34 @@ import { getFrontendLogs, clearFrontendLogs } from '../utils/consoleBuffer';
 import { Tabs, Segmented, Button, Badge, Table, Progress, Select } from '../ui';
 import { useAppStore } from '../store';
 import ApiKeysPanel from '../components/settings/ApiKeysPanel';
+import LLMEndpointPanel from '../components/settings/LLMEndpointPanel';
 import PerformancePanel from '../components/settings/PerformancePanel';
+import RefinementPanel from '../components/settings/RefinementPanel';
+import AecPanel from '../components/settings/AecPanel';
 import AppearancePanel from '../components/settings/AppearancePanel';
 import StoragePanel from '../components/settings/StoragePanel';
+import HFMirrorPanel from '../components/settings/HFMirrorPanel';
 import SharingPanel from '../components/settings/SharingPanel';
+import RemoteBackendPanel from '../components/settings/RemoteBackendPanel';
+import MCPBindingsPanel from '../components/settings/MCPBindingsPanel';
 import EngineCompatibilityMatrix from '../components/EngineCompatibilityMatrix';
 import DictationDemo from '../components/DictationDemo';
+import UpdatesPanel from '../components/UpdatesPanel';
 import ReportBugButton from '../components/ReportBugButton';
 import './Settings.css';
 
 const TAB_DEFS = [
-  { id: 'general',     icon: FileText,     accent: '#83a598' },
-  { id: 'models',      icon: Cpu,          accent: '#f3a5b6' },
-  { id: 'engines',     icon: Plug,         accent: '#d3869b' },
-  { id: 'capture',     icon: Keyboard,     accent: '#83a598' },
-  { id: 'sharing',     icon: Wifi,         accent: '#83a598' },
-  { id: 'credentials', icon: KeyRound,     accent: '#fe8019' },
-  { id: 'logs',        icon: FileText,     accent: '#fabd2f' },
-  { id: 'about',       icon: Info,         accent: '#8ec07c' },
-  { id: 'privacy',     icon: ShieldCheck,  accent: '#b8bb26' },
+  { id: 'general',     icon: FileText,      accent: '#83a598' },
+  { id: 'models',      icon: Cpu,           accent: '#f3a5b6' },
+  { id: 'engines',     icon: Plug,          accent: '#d3869b' },
+  { id: 'capture',     icon: Keyboard,      accent: '#83a598' },
+  { id: 'sharing',     icon: Wifi,          accent: '#83a598' },
+  { id: 'appearance',  icon: Palette,       accent: '#d3869b' },
+  { id: 'credentials', icon: KeyRound,      accent: '#fe8019' },
+  { id: 'updates',     icon: ArrowDownToLine, accent: '#b8bb26' },
+  { id: 'logs',        icon: FileText,      accent: '#fabd2f' },
+  { id: 'about',       icon: Info,          accent: '#8ec07c' },
+  { id: 'privacy',     icon: ShieldCheck,   accent: '#b8bb26' },
 ];
 
 const LOG_SOURCE_DEFS = [
@@ -100,7 +114,7 @@ function GeneralTab() {
         const d = await r.json().catch(() => ({}));
         toast.error(d.detail || t('credentials.save_failed'));
       }
-    } catch (e) { toast.error(`Save failed: ${e.message}`); }
+    } catch (e) { toast.error(t('settings.save_failed', { message: e.message })); }
     finally { setFfmpegSaving(false); }
   };
 
@@ -136,7 +150,7 @@ function GeneralTab() {
         const d = await r.json().catch(() => ({}));
         toast.error(d.detail || t('settings.proxy_save_failed'));
       }
-    } catch (e) { toast.error(`Save failed: ${e.message}`); }
+    } catch (e) { toast.error(t('settings.save_failed', { message: e.message })); }
     finally { setProxySaving(false); }
   };
 
@@ -161,7 +175,7 @@ function GeneralTab() {
       setProxySaved(false);
       toast.success(t('settings.proxy_cleared'));
       queryClient.invalidateQueries({ queryKey: queryKeys.systemInfo });
-    } catch (e) { toast.error(`Clear failed: ${e.message}`); }
+    } catch (e) { toast.error(t('settings.clear_failed', { message: e.message })); }
     finally { setProxySaving(false); }
   };
 
@@ -314,13 +328,16 @@ export function ModelStoreTab({ info, modelBadge }) {
   // Tick counter — forces re-render every second while a download is active
   // so speed/ETA displays update smoothly between SSE events.
   const [, setTick] = useState(0);
+  // Boolean derived from rowState so the interval effect below only re-runs
+  // when activity starts/stops — not on every SSE progress event (several per
+  // second during installs), which would clear + recreate the 1s tick forever.
+  const hasActive = useMemo(() => Object.values(rowState).some(s =>
+    ['install_start', 'active', 'delete_start'].includes(s.phase)), [rowState]);
   useEffect(() => {
-    const hasActive = Object.values(rowState).some(s =>
-      ['install_start', 'active', 'delete_start'].includes(s.phase));
     if (!hasActive) return;
     const iv = setInterval(() => setTick(t => t + 1), 1000);
     return () => clearInterval(iv);
-  }, [rowState]);
+  }, [hasActive]);
 
   // HF token inline — compact input in the toolbar
   const [hfToken, setHfToken] = useState('');
@@ -339,15 +356,15 @@ export function ModelStoreTab({ info, modelBadge }) {
         body: JSON.stringify({ key: 'HF_TOKEN', value }),
       });
       if (res.ok) {
-        toast.success('HuggingFace token set — faster downloads enabled');
+        toast.success(t('models.hf_token_set_toast'));
         setHfSaved(true);
         setHfToken('');
         setHfExpanded(false);
       } else {
         const d = await res.json().catch(() => ({}));
-        toast.error(d.detail || 'Failed to save token');
+        toast.error(d.detail || t('models.hf_token_save_failed'));
       }
-    } catch (e) { toast.error(`Save failed: ${e.message}`); }
+    } catch (e) { toast.error(t('settings.save_failed', { message: e.message })); }
     finally { setHfSaving(false); }
   };
   const hfTokenSet = hfSaved || info?.has_hf_token;
@@ -384,6 +401,33 @@ export function ModelStoreTab({ info, modelBadge }) {
           if (ev.phase === 'install_error') {
             return { ...prev, [ev.repo_id]: { ...cur, phase: 'install_error', error: ev.error } };
           }
+          if (ev.phase === 'install_cancelled') {
+            return { ...prev, [ev.repo_id]: { ...cur, phase: 'install_cancelled' } };
+          }
+          // Pre-flight plan (FDL-05): accurate total/cached/remaining BEFORE
+          // bytes flow. Keep the current phase (usually resolving) — the plan
+          // is metadata, not a state change.
+          if (ev.phase === 'install_plan') {
+            return { ...prev, [ev.repo_id]: { ...cur, plan: {
+              total_bytes: ev.total_bytes ?? null,
+              cached_bytes: ev.cached_bytes ?? null,
+              to_download_bytes: ev.to_download_bytes ?? null,
+              n_files: ev.n_files ?? null,
+              n_cached: ev.n_cached ?? null,
+            } } };
+          }
+          // Overall aggregate (FDL-06): one rolling event that is the source of
+          // truth for the overall bar / speed / remaining / ETA.
+          if (ev.phase === 'aggregate') {
+            return { ...prev, [ev.repo_id]: { ...cur, phase: 'active', agg: {
+              bytes_done: ev.bytes_done ?? 0,
+              total_bytes: ev.total_bytes ?? null,
+              rate: ev.rate ?? 0,
+              eta_seconds: ev.eta_seconds ?? null,
+              files_done: ev.files_done ?? 0,
+              files_total: ev.files_total ?? null,
+            } } };
+          }
           // Per-file tqdm events — aggregate across files.
           const files = { ...cur.files, [ev.filename]: {
             downloaded: ev.downloaded || 0,
@@ -403,7 +447,7 @@ export function ModelStoreTab({ info, modelBadge }) {
   // flips server-side info into the row.
   useEffect(() => {
     const term = Object.entries(rowState).find(([, s]) =>
-      ['install_done', 'delete_done', 'install_error'].includes(s.phase));
+      ['install_done', 'delete_done', 'install_error', 'install_cancelled'].includes(s.phase));
     if (!term) return;
     const t = setTimeout(() => {
       modelsQuery.refetch();
@@ -439,25 +483,25 @@ export function ModelStoreTab({ info, modelBadge }) {
   }, []);
 
   const onInstall = useCallback((repoId) =>
-    withBusy(repoId, () => installMutation.mutateAsync(repoId), 'Install started — progress in the row'),
+    withBusy(repoId, () => installMutation.mutateAsync(repoId), t('models.install_started')),
     [installMutation, withBusy]);
   const onDelete = useCallback(async (repoId) => {
-    if (!(await askConfirm(`Delete ${repoId}? You can reinstall it later.`, 'Delete model'))) return;
-    return withBusy(repoId, () => deleteMutation.mutateAsync(repoId), `Deleted ${repoId}`);
+    if (!(await askConfirm(t('models.delete_confirm', { repoId }), t('models.delete_confirm_title')))) return;
+    return withBusy(repoId, () => deleteMutation.mutateAsync(repoId), t('models.deleted', { repoId }));
   }, [deleteMutation, withBusy]);
   const onReinstall = useCallback(async (repoId) => {
-    if (!(await askConfirm(`Reinstall ${repoId}? This will delete the current copy and download again.`, 'Reinstall model'))) return;
+    if (!(await askConfirm(t('models.reinstall_confirm', { repoId }), t('models.reinstall_confirm_title')))) return;
     await withBusy(repoId, async () => {
       await deleteMutation.mutateAsync(repoId);
       await installMutation.mutateAsync(repoId);
-    }, 'Reinstalling');
+    }, t('models.reinstalling'));
   }, [deleteMutation, installMutation, withBusy]);
 
   const onInstallRecommended = async () => {
     if (!reco) return;
     const missing = reco.models.filter(m => !m.installed);
     if (missing.length === 0) {
-      toast.success('Recommended models are already installed.');
+      toast.success(t('models.recommended_installed'));
       return;
     }
     setInstallingReco(true);
@@ -465,9 +509,9 @@ export function ModelStoreTab({ info, modelBadge }) {
       // Parallel install — backend /models/install spawns each download on
       // its own asyncio task so ordering doesn't matter.
       await Promise.all(missing.map(m => installMutation.mutateAsync(m.repo_id)));
-      toast.success(`Started downloading ${missing.length} model${missing.length > 1 ? 's' : ''}`);
+      toast.success(t('models.started_downloading', { count: missing.length }));
     } catch (e) {
-      toast.error(`Install failed: ${e.message || e}`);
+      toast.error(t('models.install_failed', { message: e.message || e }));
     } finally {
       setInstallingReco(false);
     }
@@ -511,10 +555,33 @@ export function ModelStoreTab({ info, modelBadge }) {
       .filter(([, f]) => f.phase !== 'done' && f.rate > 0)
       .reduce((s, [, f]) => s + f.rate, 0);
     const hasFiles = fileList.length > 0;
-    const aggPct = totals.total > 0 ? (totals.downloaded / totals.total) * 100 : null;
     const showBar = ['install_start', 'resolving', 'install_retry', 'active', 'delete_start'].includes(phase);
     const activeFilename = fileList.find(([, f]) => f.phase !== 'done')?.[0];
     const unsupported = m.supported === false;
+
+    // Overall progress: prefer the backend aggregate (FDL-06) — it sums bytes
+    // across all parallel files/chunks and samples a windowed rate, which is
+    // accurate under Xet's parallel fetch. Fall back to per-file summation +
+    // the frontend speed sampler only until the first aggregate event lands.
+    const agg = rs?.agg || null;
+    const plan = rs?.plan || null;
+    const dispDownloaded = agg ? (agg.bytes_done || 0) : totals.downloaded;
+    // Denominator: aggregate total → preflight "to download" → per-file totals.
+    const dispTotal = (agg?.total_bytes ?? plan?.to_download_bytes ?? totals.total) || 0;
+    // Bar %: prefer byte-fraction, but under Xet the byte bars don't advance
+    // mid-download (only the file-count bar does), so fall back to the file
+    // fraction so the bar still moves. Take the max so whichever signal is
+    // live drives it; complete() flushes both to 100% at the end.
+    const bytePct = dispTotal > 0 ? (dispDownloaded / dispTotal) * 100 : 0;
+    const filesTotalForPct = agg?.files_total ?? plan?.n_files ?? 0;
+    const filePct = filesTotalForPct > 0 ? ((agg?.files_done ?? 0) / filesTotalForPct) * 100 : 0;
+    const aggPct = (dispTotal > 0 || filesTotalForPct > 0) ? Math.max(bytePct, filePct) : null;
+    const cachedBytes = plan?.cached_bytes ?? null;
+    const filesTotal = agg?.files_total ?? plan?.n_files ?? (hasFiles ? fileList.length : null);
+    const filesDone = agg?.files_done ?? totals.done;
+    // Backend rate (windowed aggregate) wins over the per-file rate sum.
+    const aggRate = agg?.rate ?? null;
+    const aggEtaSec = agg?.eta_seconds ?? null;
 
     return {
       rs,
@@ -530,6 +597,15 @@ export function ModelStoreTab({ info, modelBadge }) {
       activeFilename,
       unsupported,
       backendRate,
+      agg,
+      plan,
+      dispDownloaded,
+      dispTotal,
+      cachedBytes,
+      filesTotal,
+      filesDone,
+      aggRate,
+      aggEtaSec,
     };
   }, [busy, rowState]);
 
@@ -537,7 +613,7 @@ export function ModelStoreTab({ info, modelBadge }) {
     {
       id: 'name',
       accessorFn: m => `${m.label || ''} ${m.repo_id || ''}`,
-      header: 'Model',
+      header: t('models.column_model'),
       size: 260,
       meta: { className: 'models-row__name' },
       cell: ({ row }) => {
@@ -554,7 +630,7 @@ export function ModelStoreTab({ info, modelBadge }) {
                 {m.repo_id.split('/')[0].slice(0, 2).toUpperCase()}
               </span>
               {m.label}
-              {m.required && <span className="models-row__tag">required</span>}
+              {m.required && <span className="models-row__tag">{t('models.required_tag')}</span>}
             </span>
             <span className="models-row__repo">
               <code>{m.repo_id}</code>
@@ -569,63 +645,74 @@ export function ModelStoreTab({ info, modelBadge }) {
                 />
                 <span className="models-row__progresstext">
                   {(() => {
-                    if (rt.isDeleting) return 'Removing cached revisions…';
-                    if (!rt.hasFiles) {
+                    if (rt.isDeleting) return t('models.removing_cached');
+                    const hasAgg = !!rt.agg;
+                    if (!rt.hasFiles && !hasAgg) {
                       if (rt.phase === 'resolving') {
                         const dots = '.'.repeat((rt.rs?.resolvingStep || 0) % 4);
-                        return `Resolving repo metadata${dots}`;
+                        // Once the preflight plan lands we can show the real size
+                        // even before the first byte (FDL-05).
+                        const planBytes = rt.plan?.to_download_bytes;
+                        const planStr = planBytes ? ` · ${fmtBytes(planBytes)} ${t('models.to_download') || 'to download'}` : '';
+                        return `${t('models.resolving_metadata')}${dots}${planStr}`;
                       }
                       if (rt.phase === 'install_retry') {
-                        return `Retry attempt ${rt.rs?.retryAttempt || '?'} — ${rt.rs?.error || 'reconnecting'}`;
+                        return t('models.retry_attempt', { attempt: rt.rs?.retryAttempt || '?', error: rt.rs?.error || 'reconnecting' });
                       }
-                      return 'Connecting to HuggingFace…';
+                      return t('models.connecting_hf');
                     }
 
-                    // We have file events — compute speed
-                    const sp = speedRef.current[m.repo_id];
-                    const now = Date.now();
-                    if (sp && rt.totals.downloaded > 0) {
-                      const dt = (now - sp.lastTime) / 1000;
-                      if (dt >= 1) {
-                        sp.speed = Math.max(0, (rt.totals.downloaded - sp.lastBytes) / dt);
-                        sp.lastBytes = rt.totals.downloaded;
-                        sp.lastTime = now;
+                    // Prefer the backend aggregate's windowed rate (FDL-06).
+                    // Fall back to the frontend sampler only until it arrives.
+                    let speed = rt.aggRate ?? 0;
+                    if (!(speed > 0)) {
+                      const sp = speedRef.current[m.repo_id];
+                      const now = Date.now();
+                      if (sp && rt.dispDownloaded > 0) {
+                        const dt = (now - sp.lastTime) / 1000;
+                        if (dt >= 1) {
+                          sp.speed = Math.max(0, (rt.dispDownloaded - sp.lastBytes) / dt);
+                          sp.lastBytes = rt.dispDownloaded;
+                          sp.lastTime = now;
+                        }
+                      } else {
+                        speedRef.current[m.repo_id] = { lastBytes: rt.dispDownloaded, lastTime: now, speed: 0 };
                       }
-                    } else {
-                      speedRef.current[m.repo_id] = { lastBytes: rt.totals.downloaded, lastTime: now, speed: 0 };
+                      speed = rt.backendRate > 0 ? rt.backendRate : (sp?.speed || 0);
                     }
-                    const speed = rt.backendRate > 0 ? rt.backendRate : (sp?.speed || 0);
 
-                    // If total is unknown and nothing downloaded yet → still resolving
-                    if (rt.totals.total === 0 && rt.totals.downloaded === 0) {
+                    // Total unknown and nothing downloaded yet → still resolving
+                    if (rt.dispTotal === 0 && rt.dispDownloaded === 0) {
                       const activeFile = rt.activeFilename?.split('/').pop();
                       return activeFile
-                        ? `Resolving ${rt.fileList.length} file${rt.fileList.length > 1 ? 's' : ''}… · ${activeFile}`
-                        : `Resolving ${rt.fileList.length} file${rt.fileList.length > 1 ? 's' : ''}…`;
+                        ? t('models.resolving_files_active', { count: rt.fileList.length, file: activeFile })
+                        : t('models.resolving_files', { count: rt.fileList.length });
                     }
 
-                    // Build the info line
-                    const remaining = rt.totals.total - rt.totals.downloaded;
-                    const etaSec = speed > 0 && rt.totals.total > 0 ? remaining / speed : 0;
+                    // ETA: prefer the backend's, else derive from remaining/speed.
+                    const remaining = Math.max(0, rt.dispTotal - rt.dispDownloaded);
+                    const etaSec = rt.aggEtaSec != null ? rt.aggEtaSec
+                      : (speed > 0 && rt.dispTotal > 0 ? remaining / speed : 0);
                     const etaStr = etaSec > 0
                       ? etaSec < 60 ? `~${Math.ceil(etaSec)}s`
                       : etaSec < 3600 ? `~${Math.ceil(etaSec / 60)}m`
                       : `~${(etaSec / 3600).toFixed(1)}h`
                       : '';
-                    const dlStr = fmtBytes(rt.totals.downloaded) || '0 B';
-                    const totalStr = rt.totals.total > 0 ? fmtBytes(rt.totals.total) : '…';
+                    const dlStr = fmtBytes(rt.dispDownloaded) || '0 B';
+                    const totalStr = rt.dispTotal > 0 ? fmtBytes(rt.dispTotal) : '…';
                     const pctStr = rt.aggPct != null && rt.aggPct > 0 ? `${Math.round(rt.aggPct)}%` : '';
                     const speedStr = speed > 0 ? `${fmtBytes(speed)}/s` : '';
 
                     const parts = [
                       `${dlStr} / ${totalStr}`,
                       pctStr,
-                      speedStr || (rt.totals.downloaded > 0 ? 'measuring…' : ''),
+                      speedStr || (rt.dispDownloaded > 0 ? t('models.measuring') : ''),
                       etaStr,
                     ].filter(Boolean);
 
                     const extra = [];
-                    if (rt.fileList.length > 1) extra.push(`${rt.totals.done}/${rt.fileList.length} files`);
+                    if (rt.cachedBytes > 0) extra.push(`${fmtBytes(rt.cachedBytes)} ${t('models.cached') || 'cached'}`);
+                    if (rt.filesTotal > 1) extra.push(t('models.files_progress', { done: rt.filesDone, total: rt.filesTotal }));
                     if (rt.activeFilename) extra.push(rt.activeFilename.split('/').pop());
 
                     return extra.length
@@ -636,7 +723,7 @@ export function ModelStoreTab({ info, modelBadge }) {
               </div>
             )}
             {rt.phase === 'install_error' && rt.rs?.error && (
-              <span className="models-row__error">Install failed: {rt.rs.error}</span>
+              <span className="models-row__error">{t('models.install_error', { error: rt.rs.error })}</span>
             )}
           </>
         );
@@ -645,7 +732,7 @@ export function ModelStoreTab({ info, modelBadge }) {
     {
       id: 'role',
       accessorFn: m => (m.role || 'other').toLowerCase(),
-      header: 'Role',
+      header: t('models.column_role'),
       size: 58,
       filterFn: (row, id, value) => !value || row.getValue(id) === value,
       cell: ({ row }) => <span className="models-row__role">{MODEL_ROLE_LABEL[row.getValue('role')] || row.original.role || 'Other'}</span>,
@@ -653,7 +740,7 @@ export function ModelStoreTab({ info, modelBadge }) {
     {
       id: 'size',
       accessorFn: m => m.installed ? (m.size_on_disk_bytes || 0) : (m.size_gb || 0) * 1024 ** 3,
-      header: 'Size',
+      header: t('models.column_size'),
       size: 68,
       meta: { align: 'right', className: 'models-row__size' },
       cell: ({ row }) => {
@@ -669,23 +756,23 @@ export function ModelStoreTab({ info, modelBadge }) {
     {
       id: 'status',
       accessorFn: m => m.installed ? 2 : (m.supported === false ? 0 : 1),
-      header: 'Status',
+      header: t('models.column_status'),
       size: 96,
       meta: { align: 'center', className: 'models-row__status' },
       cell: ({ row }) => {
         const m = row.original;
         const rt = getRowRuntime(m);
         return rt.isInstalling
-          ? <Badge tone="warn" size="xs"><Download size={10} /> {rt.aggPct != null ? `${Math.round(rt.aggPct)}%` : 'downloading'}</Badge>
+          ? <Badge tone="warn" size="xs"><Download size={10} /> {rt.aggPct != null ? `${Math.round(rt.aggPct)}%` : t('models.downloading')}</Badge>
           : rt.isDeleting
-            ? <Badge tone="warn" size="xs"><Trash2 size={10} /> deleting</Badge>
+            ? <Badge tone="warn" size="xs"><Trash2 size={10} /> {t('models.deleting')}</Badge>
             : rt.rowBusy
-              ? <Badge tone="warn" size="xs"><RefreshCw size={10} className="spinner" /> working</Badge>
+              ? <Badge tone="warn" size="xs"><RefreshCw size={10} className="spinner" /> {t('models.working')}</Badge>
               : m.installed
-                ? <Badge tone="success" size="xs">installed</Badge>
+                ? <Badge tone="success" size="xs">{t('models.installed')}</Badge>
                 : rt.unsupported
                   ? <Badge tone="neutral" size="xs">{(m.platforms || []).join(', ')}</Badge>
-                  : <Badge tone="neutral" size="xs">not installed</Badge>;
+                  : <Badge tone="neutral" size="xs">{t('models.not_installed')}</Badge>;
       },
     },
     {
@@ -702,8 +789,8 @@ export function ModelStoreTab({ info, modelBadge }) {
             <Button
               variant="icon" iconSize="sm"
               onClick={() => openExternal(`https://huggingface.co/${m.repo_id}`)}
-              title="View on HuggingFace"
-              aria-label="View on HuggingFace"
+              title={t('models.view_on_hf')}
+              aria-label={t('models.view_on_hf')}
             >
               <ExternalLink size={11} />
             </Button>
@@ -713,7 +800,7 @@ export function ModelStoreTab({ info, modelBadge }) {
                 onClick={() => onInstall(m.repo_id)}
                 leading={<Download size={11} />}
               >
-                Install
+                {t('models.install_btn')}
               </Button>
             )}
             {m.installed && !rt.rowBusy && !rt.isDeleting && (
@@ -721,16 +808,16 @@ export function ModelStoreTab({ info, modelBadge }) {
                 <Button
                   variant="icon" iconSize="sm"
                   onClick={() => onReinstall(m.repo_id)}
-                  title="Reinstall"
-                  aria-label="Reinstall"
+                  title={t('models.reinstall_btn')}
+                  aria-label={t('models.reinstall_btn')}
                 >
                   <RefreshCw size={11} />
                 </Button>
                 <Button
                   variant="icon" iconSize="sm"
                   onClick={() => onDelete(m.repo_id)}
-                  title="Delete"
-                  aria-label="Delete"
+                  title={t('models.delete_btn')}
+                  aria-label={t('models.delete_btn')}
                 >
                   <Trash2 size={11} />
                 </Button>
@@ -740,7 +827,7 @@ export function ModelStoreTab({ info, modelBadge }) {
         );
       },
     },
-  ], [getRowRuntime, onDelete, onInstall, onReinstall]);
+  ], [getRowRuntime, onDelete, onInstall, onReinstall, t]);
 
   const table = useReactTable({
     data: allModels,
@@ -794,6 +881,19 @@ export function ModelStoreTab({ info, modelBadge }) {
           <span className="models-toolbar__cache" title={data.hf_cache_dir}><code>{data.hf_cache_dir?.replace(/^\/Users\/[^/]+/, '~')}</code></span>
           {info && <span className="models-toolbar__sep">·</span>}
           {info && <span>{modelBadge}</span>}
+          {info?.fast_download?.xet_enabled && (
+            <>
+              <span className="models-toolbar__sep">·</span>
+              <span
+                className="models-toolbar__fast"
+                title={t('models.fast_download_title', {
+                  version: info.fast_download.xet_version || 'Xet',
+                }) || `Fast downloads via Xet ${info.fast_download.xet_version || ''} — parallel chunked transfer`}
+              >
+                ⚡ {t('models.fast_download_badge') || 'fast download'}
+              </span>
+            </>
+          )}
         </div>
         <div className="models-toolbar__actions">
           {/* Compact HF token inline */}
@@ -801,9 +901,9 @@ export function ModelStoreTab({ info, modelBadge }) {
             <button
               className="models-toolbar__hf-btn"
               onClick={() => setHfExpanded(true)}
-              title="Set HuggingFace token for faster downloads"
+              title={t('models.hf_set_title')}
             >
-              <KeyRound size={11} /> HF Token
+              <KeyRound size={11} /> {t('models.hf_token_btn')}
             </button>
           )}
           {!hfTokenSet && hfExpanded && (
@@ -818,7 +918,7 @@ export function ModelStoreTab({ info, modelBadge }) {
                 autoFocus
               />
               <Button size="sm" variant="subtle" onClick={saveHfToken} disabled={hfSaving || !hfToken.trim()} loading={hfSaving}>
-                Save
+                {t('common.save')}
               </Button>
               <a
                 href="#"
@@ -826,7 +926,7 @@ export function ModelStoreTab({ info, modelBadge }) {
                 onClick={e => { e.preventDefault(); openExternal('https://huggingface.co/settings/tokens'); }}
                 title="Open huggingface.co/settings/tokens"
               >
-                Get token →
+                {t('models.get_token')}→
               </a>
             </div>
           )}
@@ -834,7 +934,7 @@ export function ModelStoreTab({ info, modelBadge }) {
             <span className="models-toolbar__hf-ok"><KeyRound size={10} /> ✓</span>
           )}
           <Button variant="subtle" size="sm" onClick={reload} loading={loading} leading={<RefreshCw size={11} />}>
-            Refresh
+            {t('common.refresh')}
           </Button>
         </div>
       </div>
@@ -842,14 +942,14 @@ export function ModelStoreTab({ info, modelBadge }) {
       {reco && reco.all_installed && (
         <div className="reco-banner reco-banner--ok">
           <CheckCircle size={12} color="#8ec07c" />
-          <span className="flex-1">Recommended bundle installed for <strong>{reco.device.label}</strong></span>
+          <span className="flex-1">{t('models.reco_installed_for', { device: reco.device.label })}</span>
           <span className="reco-banner__gb">{reco.total_gb} GB</span>
         </div>
       )}
       {reco && !reco.all_installed && (
         <div className="reco-banner reco-banner--pending">
           <div className="reco-banner__top">
-            <span className="reco-banner__title">Recommended for {reco.device.label}</span>
+            <span className="reco-banner__title">{t('models.reco_for', { device: reco.device.label })}</span>
             <div className="reco-banner__btns">
               {(() => {
                 const requiredMissing = reco.models.filter(m => m.required && !m.installed);
@@ -863,19 +963,19 @@ export function ModelStoreTab({ info, modelBadge }) {
                       setInstallingReco(true);
                       try {
                         await Promise.all(requiredMissing.map(m => installMutation.mutateAsync(m.repo_id)));
-                        toast.success(`Started downloading ${requiredMissing.length} required model${requiredMissing.length > 1 ? 's' : ''}`);
-                      } catch (e) { toast.error(`Install failed: ${e.message || e}`); }
+                        toast.success(t('models.started_downloading_required', { count: requiredMissing.length }));
+                      } catch (e) { toast.error(t('models.install_failed', { message: e.message || e })); }
                       finally { setInstallingReco(false); }
                     }}
                     disabled={installingReco}
                     leading={installingReco ? <RefreshCw size={12} className="spinner" /> : null}
                   >
-                    {installingReco ? 'Starting…' : `Required ~${requiredGb.toFixed(1)} GB`}
+                    {installingReco ? t('models.starting') : t('models.required_size', { size: requiredGb.toFixed(1) })}
                   </Button>
                 );
               })()}
               <Button variant="subtle" size="sm" onClick={onInstallRecommended} disabled={installingReco}>
-                {`All ~${reco.download_gb_remaining} GB`}
+                {t('models.all_size', { size: reco.download_gb_remaining })}
               </Button>
             </div>
           </div>
@@ -884,7 +984,7 @@ export function ModelStoreTab({ info, modelBadge }) {
               <span key={m.repo_id} className={`reco-banner__model ${m.installed ? 'reco-banner__model--ok' : ''}`}>
                 {m.installed ? '✓' : '○'} {m.label}
                 <span className="reco-banner__model-size">{m.size_gb}</span>
-                {m.required && <span className="reco-banner__req">req</span>}
+                {m.required && <span className="reco-banner__req">{t('models.req_tag')}</span>}
               </span>
             ))}
           </div>
@@ -914,10 +1014,10 @@ export function ModelStoreTab({ info, modelBadge }) {
         <input
           type="search"
           className="models-search"
-          placeholder="Search models…"
+          placeholder={t('models.search_placeholder')}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          aria-label="Search models"
+          aria-label={t('models.search_label')}
         />
       </div>
 
@@ -940,7 +1040,7 @@ export function ModelStoreTab({ info, modelBadge }) {
                     style={{ width: header.column.columnDef.size, flex: header.column.id === 'name' ? '1 1 auto' : '0 0 auto' }}
                     onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
                     disabled={!canSort}
-                    title={canSort ? `Sort by ${String(header.column.columnDef.header || '')}` : undefined}
+                    title={canSort ? t('models.sort_by', { column: String(header.column.columnDef.header || '') }) : undefined}
                   >
                     {flexRender(header.column.columnDef.header, header.getContext())}
                     {header.column.getIsSorted() === 'asc' && <span className="models-table__sortmark">↑</span>}
@@ -985,7 +1085,7 @@ export function ModelStoreTab({ info, modelBadge }) {
               );
             })}
             {tableRows.length === 0 && (
-              <div className="models-table__empty">No models match your filters.</div>
+              <div className="models-table__empty">{t('models.no_matches')}</div>
             )}
           </div>
         </div>
@@ -1006,10 +1106,11 @@ export function EnginesTab() {
   // its install / GPU / isolation state.
   const onSelect = useCallback(async (family, backendId) => {
     try {
+      addBreadcrumb(`engine:${family}=${backendId}`);
       const r = await selectEngine(family, backendId);
-      toast.success(`${family.toUpperCase()} → ${r.active}`);
+      toast.success(t('settings.engine_switched', { family: family.toUpperCase(), engine: r.active }));
     } catch (e) {
-      toast.error(e.message || 'Failed to switch engine');
+      toast.error(e.message || t('engines.switch_failed'));
     }
   }, []);
 
@@ -1063,6 +1164,7 @@ export default function Settings() {
   const [appVersion, setAppVersion] = useState(null);
   const [tauriVersion, setTauriVersion] = useState(null);
   const [updateState, setUpdateState] = useState('idle'); // idle|checking|downloading|uptodate|error
+  const updateChannel = useAppStore((s) => s.updateChannel);
 
   // TanStack Query — shared cache with App.jsx, no duplicate requests
   const { data: hw } = useSysinfo();
@@ -1080,7 +1182,56 @@ export default function Settings() {
     })();
   }, []);
 
+  const changeChannel = useCallback(async (ch) => {
+    try {
+      const next = await setChannel(useAppStore.getState(), ch);
+      toast.success(t('about.channel_set', { channel: t(`about.channel_${next}`) }));
+    } catch (e) {
+      toast.error(t('settings.channel_set_failed', { message: e?.message || e }));
+    }
+  }, [t]);
+
   // sysinfo polling is now handled by useSysinfo() hook above
+
+  // Self-check (/system/diagnose) — device, ffmpeg, HF token, disk, engines,
+  // hub reachability. The report comes back pre-scrubbed (backend core/scrub)
+  // so "Copy" output is safe to paste straight into a GitHub issue.
+  const [selfCheck, setSelfCheck] = useState(null);
+  const [selfCheckRunning, setSelfCheckRunning] = useState(false);
+  const runSelfCheck = useCallback(async () => {
+    setSelfCheckRunning(true);
+    try {
+      const r = await fetch(`${API}/system/diagnose`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setSelfCheck(await r.json());
+    } catch (e) {
+      toast.error(t('about.self_check_failed', { message: e?.message || e }));
+    } finally {
+      setSelfCheckRunning(false);
+    }
+  }, [t]);
+
+  // Diagnostic bundle — zip of self-check + error journal + scrubbed log
+  // tails, saved to the outputs dir and revealed so the user can drag it
+  // onto a GitHub issue (logs never fit in the prefilled-URL report).
+  const [bundleBuilding, setBundleBuilding] = useState(false);
+  const saveDiagnosticBundle = useCallback(async () => {
+    setBundleBuilding(true);
+    try {
+      const r = await fetch(`${API}/system/diagnostic-bundle`, { method: 'POST' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      toast.success(t('about.bundle_saved', { filename: j.filename }));
+      try {
+        const { exportReveal } = await import('../api/exports');
+        await exportReveal({ path: j.path });
+      } catch { /* reveal is best-effort — the toast already names the file */ }
+    } catch (e) {
+      toast.error(t('about.bundle_failed', { message: e?.message || e }));
+    } finally {
+      setBundleBuilding(false);
+    }
+  }, [t]);
 
   const copyDiagnostics = useCallback(async () => {
     const nav = typeof navigator !== 'undefined' ? navigator : {};
@@ -1109,51 +1260,58 @@ export default function Settings() {
       `- **Data directory:** ${info?.data_dir || '—'}`,
       `- **Outputs directory:** ${info?.outputs_dir || '—'}`,
       `- **Crash log:** ${info?.crash_log_path || '—'}`,
-      `- **Update endpoint:** https://github.com/debpalash/OmniVoice-Studio/releases/latest/download/latest.json`,
+      `- **Update channel:** ${updateChannel}`,
+      `- **Update endpoint:** ${updateChannel === 'preview'
+        ? 'https://github.com/debpalash/OmniVoice-Studio/releases/download/preview/latest.json'
+        : 'https://github.com/debpalash/OmniVoice-Studio/releases/latest/download/latest.json'}`,
       `- **User agent:** ${ua}`,
     ];
     const text = lines.join('\n');
     try {
-      await navigator.clipboard.writeText(text);
-      toast.success('Diagnostics copied — paste into your issue report.');
+      await copyText(text);
+      toast.success(t('settings.diagnostics_copied'));
     } catch (e) {
-      toast.error('Copy failed: ' + (e?.message || e));
+      toast.error(t('settings.copy_failed', { message: e?.message || e }));
     }
-  }, [appVersion, tauriVersion, info, status, hw]);
+  }, [appVersion, tauriVersion, info, status, hw, updateChannel, t]);
 
   const checkForUpdates = useCallback(async () => {
     if (!isTauri()) {
-      toast('Updater only runs in the desktop app.', { icon: 'ℹ️' });
+      toast(t('settings.updater_desktop'), { icon: 'ℹ️' });
       return;
     }
     setUpdateState('checking');
     try {
-      const [{ check }, { relaunch }, { ask }] = await Promise.all([
-        import('@tauri-apps/plugin-updater'),
+      const [{ invoke }, { relaunch }, { ask }] = await Promise.all([
+        import('@tauri-apps/api/core'),
         import('@tauri-apps/plugin-process'),
         import('@tauri-apps/plugin-dialog'),
       ]);
-      const update = await check();
+      const channel = normalizeChannel(updateChannel);
+      const update = await invoke('check_update', { channel });
       if (!update) {
         setUpdateState('uptodate');
-        toast.success("You're on the latest version.");
+        toast.success(t('settings.latest_version'));
         return;
       }
       const proceed = await ask(
-        `Version ${update.version} is available.\n\n${update.body || 'See release notes on GitHub.'}\n\nDownload and install now?`,
-        { title: 'Update available', kind: 'info' },
+        t('settings.updater_available_body', {
+          version: update.version,
+          notes: update.notes || t('settings.updater_notes_fallback'),
+        }),
+        { title: t('settings.updater_available_title'), kind: 'info' },
       );
       if (!proceed) { setUpdateState('idle'); return; }
       setUpdateState('downloading');
-      const t = toast.loading(`Downloading ${update.version}…`);
-      await update.downloadAndInstall();
-      toast.success('Installed — relaunching.', { id: t });
+      const tid = toast.loading(t('settings.updater_downloading', { version: update.version }));
+      await invoke('install_update', { channel });
+      toast.success(t('settings.updater_installed'), { id: tid });
       await relaunch();
     } catch (e) {
       setUpdateState('error');
-      toast.error('Update check failed: ' + (e?.message || e));
+      toast.error(t('settings.update_check_failed', { message: e?.message || e }));
     }
-  }, []);
+  }, [updateChannel, t]);
 
   // refreshInfo polling replaced by TanStack Query (useSystemInfo + useModelStatus)
   const refreshInfo = useCallback(() => {}, []);
@@ -1179,11 +1337,11 @@ export default function Settings() {
         setLogMeta({ path: 'in-memory (last 500)', exists: true });
       }
     } catch (e) {
-      toast.error('Failed to load logs: ' + e.message);
+      toast.error(t('settings.logs_load_failed', { message: e.message }));
     } finally {
       setLoadingLogs(false);
     }
-  }, [logSource]);
+  }, [logSource, t]);
 
   useEffect(() => {
     if (activeTab === 'logs') refreshLogs();
@@ -1191,44 +1349,49 @@ export default function Settings() {
 
   const onClearLogs = async () => {
     if (logSource === 'frontend') {
-      if (!(await askConfirm('Clear the in-memory frontend log buffer?', 'Clear logs'))) return;
+      if (!(await askConfirm(t('settings.clear_frontend_confirm'), t('settings.clear_frontend_title')))) return;
       clearFrontendLogs();
-      toast.success('Frontend logs cleared');
+      toast.success(t('settings.frontend_logs_cleared'));
       setLogs([]);
       return;
     }
     if (logSource === 'tauri') {
-      if (!(await askConfirm('Truncate the Tauri-side log files? The OS will continue to write new entries.', 'Clear Tauri logs'))) return;
+      if (!(await askConfirm(t('settings.clear_tauri_confirm'), t('settings.clear_tauri_title')))) return;
       try {
         const r = await clearTauriLogs();
         if (!r?.cleared?.length) {
-          toast('Nothing to clear — no Tauri log file on disk yet.', { icon: 'ℹ️' });
+          toast(t('settings.nothing_to_clear'), { icon: 'ℹ️' });
         } else {
-          toast.success(`Cleared ${r.cleared.length} Tauri log file(s)`);
+          toast.success(t('settings.cleared_tauri', { count: r.cleared.length }));
           setLogs([]);
         }
       } catch (e) {
-        toast.error('Failed to clear Tauri logs: ' + e.message);
+        toast.error(t('settings.clear_tauri_failed', { message: e.message }));
       }
       return;
     }
-    if (!(await askConfirm('Clear the backend runtime + crash logs? This cannot be undone.', 'Clear logs'))) return;
+    if (!(await askConfirm(t('settings.clear_backend_confirm'), t('settings.clear_backend_title')))) return;
     try {
       await clearSystemLogs();
-      toast.success('Backend logs cleared');
+      toast.success(t('settings.backend_logs_cleared'));
       setLogs([]);
     } catch (e) {
-      toast.error('Failed to clear logs');
+      toast.error(t('settings.clear_backend_failed'));
     }
   };
 
   const modelBadge =
-    status?.status === 'ready'   ? <Badge tone="success"><CheckCircle size={11} /> Ready</Badge>
-  : status?.status === 'loading' ? <Badge tone="warn"><RefreshCw size={11} className="spinner" /> Loading…</Badge>
-                                 : <Badge tone="warn">Idle</Badge>;
+    status?.status === 'ready'   ? <Badge tone="success"><CheckCircle size={11} /> {t('models.ready_badge')}</Badge>
+  : status?.status === 'loading' ? <Badge tone="warn"><RefreshCw size={11} className="spinner" /> {t('models.loading_badge')}</Badge>
+                                 : <Badge tone="warn">{t('models.idle_badge')}</Badge>;
+
+  // The active tab's accent (from TAB_DEFS) threads down to the content edge as
+  // --settings-accent, so the coloured active tab and the content panel read as
+  // one connected unit (see .settings-content in Settings.css).
+  const activeAccent = TAB_DEFS.find((d) => d.id === activeTab)?.accent || 'var(--chrome-accent)';
 
   return (
-    <div className="settings-page">
+    <div className="settings-page" style={{ '--settings-accent': activeAccent }}>
       <Tabs
         items={TAB_DEFS.map(def => ({ ...def, label: t(`settings.${def.id}`) }))}
         value={activeTab}
@@ -1236,11 +1399,18 @@ export default function Settings() {
         className="settings-tabs-ui"
       />
 
-      {activeTab === 'general' && <GeneralTab />}
+      <div className="settings-content">
+      {activeTab === 'general' && (
+        <>
+          <GeneralTab />
+          <PerformancePanel />
+        </>
+      )}
 
       {activeTab === 'models' && (
         <>
           <StoragePanel />
+          <HFMirrorPanel />
           <ModelStoreTab info={info} modelBadge={modelBadge} />
         </>
       )}
@@ -1251,10 +1421,20 @@ export default function Settings() {
         <>
           <DictationDemo />
           <HotkeyTab />
+          <RefinementPanel />
+          <AecPanel />
         </>
       )}
 
-      {activeTab === 'sharing' && <SharingPanel />}
+      {activeTab === 'sharing' && (
+        <>
+          <SharingPanel />
+          <RemoteBackendPanel />
+          <MCPBindingsPanel />
+        </>
+      )}
+
+      {activeTab === 'appearance' && <AppearancePanel />}
 
       {activeTab === 'credentials' && <CredentialsTab info={info} />}
 
@@ -1314,14 +1494,21 @@ export default function Settings() {
         </section>
       )}
 
+      {activeTab === 'updates' && (
+        <section className="settings-section">
+          <h2><ArrowDownToLine size={16} color="#b8bb26" /> {t('settings.updates')}</h2>
+          <UpdatesPanel />
+        </section>
+      )}
+
       {activeTab === 'about' && (
         <section className="settings-section">
           <h2><Info size={16} color="#8ec07c" /> {t('settings.about')}</h2>
           <Row label={t('about.app')}             value="OmniVoice Studio" />
-          <Row label={t('about.version')}         value={appVersion || '—'} mono />
+          <Row label={t('about.version')}         value={appVersion || info?.app_version || '—'} mono />
           <Row label={t('about.tauri_runtime')}   value={tauriVersion || (isTauri() ? '—' : t('about.web_preview'))} mono />
           <Row label={t('about.platform')}        value={info?.platform || '—'} />
-          <Row label={t('about.architecture')}    value={typeof navigator !== 'undefined' ? (navigator.userAgentData?.platform || navigator.platform || '—') : '—'} mono />
+          <Row label={t('about.architecture')}    value={info?.arch || '—'} mono />
           <Row label={t('about.python')}          value={info?.python || '—'} mono />
           <Row label={t('about.compute_device')}  value={info?.device || '—'} mono />
           <Row label={t('about.gpu_active')}      value={hw?.gpu_active
@@ -1337,17 +1524,66 @@ export default function Settings() {
           <Row label={t('about.data_dir')}        value={info?.data_dir || '—'} mono />
           <Row label={t('about.outputs')}         value={info?.outputs_dir || '—'} mono />
           <Row label={t('about.crash_log')}       value={info?.crash_log_path || '—'} mono />
-          <Row label={t('about.update_endpoint')} value="releases/latest/download/latest.json" mono />
+          {/* Auto-updater + channel toggle are desktop-only (Tauri). The Docker
+              web build updates by pulling a new image tag, so hide these rows
+              there to avoid a non-functional control (issue #249). */}
+          {isTauri() && (
+            <>
+              <Row
+                label={t('about.update_channel')}
+                value={
+                  <Segmented
+                    size="xs"
+                    value={updateChannel}
+                    onChange={changeChannel}
+                    items={[
+                      { value: 'stable',  label: t('about.channel_stable') },
+                      { value: 'preview', label: t('about.channel_preview') },
+                    ]}
+                  />
+                }
+              />
+              <Row
+                label={t('about.update_endpoint')}
+                value={updateChannel === 'preview'
+                  ? 'releases/download/preview/latest.json'
+                  : 'releases/latest/download/latest.json'}
+                mono
+              />
+              {updateChannel === 'preview' && (
+                <p className="settings-muted">{t('about.channel_preview_hint')}</p>
+              )}
+            </>
+          )}
           <div className="settings-link-row">
+            {isTauri() && (
+              <Button
+                variant="primary"
+                size="md"
+                leading={<Download size={12} />}
+                onClick={checkForUpdates}
+                loading={updateState === 'checking' || updateState === 'downloading'}
+              >
+                {updateState === 'downloading' ? t('about.downloading') : t('about.check_updates')}
+              </Button>
+            )}
             <Button
-              variant="primary"
+              variant="subtle"
               size="md"
-              leading={<Download size={12} />}
-              onClick={checkForUpdates}
-              loading={updateState === 'checking' || updateState === 'downloading'}
-              disabled={!isTauri()}
+              leading={!selfCheckRunning && <Activity size={12} />}
+              onClick={runSelfCheck}
+              loading={selfCheckRunning}
             >
-              {updateState === 'downloading' ? t('about.downloading') : t('about.check_updates')}
+              {t('about.self_check')}
+            </Button>
+            <Button
+              variant="subtle"
+              size="md"
+              leading={!bundleBuilding && <Download size={12} />}
+              onClick={saveDiagnosticBundle}
+              loading={bundleBuilding}
+            >
+              {t('about.save_bundle')}
             </Button>
             <Button
               variant="subtle"
@@ -1382,6 +1618,32 @@ export default function Settings() {
               {t('about.commercial_license')}
             </Button>
           </div>
+          {selfCheck && (
+            <div className="settings-selfcheck">
+              {selfCheck.checks.map((c) => (
+                <Row
+                  key={c.id}
+                  label={c.label}
+                  value={
+                    <span>
+                      <Badge tone={c.status === 'ok' ? 'success' : c.status === 'warn' ? 'warn' : 'danger'}>
+                        {c.status === 'ok'
+                          ? <CheckCircle size={11} />
+                          : <AlertCircle size={11} />} {t(`about.self_check_${c.status}`)}
+                      </Badge>
+                      {' '}{c.detail}
+                      {c.hint && <span className="settings-muted"> — {c.hint}</span>}
+                    </span>
+                  }
+                />
+              ))}
+              <p className="settings-muted">
+                {selfCheck.summary.ok
+                  ? t('about.self_check_healthy')
+                  : t('about.self_check_attention', { count: selfCheck.summary.failures })}
+              </p>
+            </div>
+          )}
         </section>
       )}
 
@@ -1408,6 +1670,7 @@ export default function Settings() {
           />
         </section>
       )}
+      </div>
     </div>
   );
 }
@@ -1481,7 +1744,7 @@ function HotkeyTab() {
         const v = await invoke('get_dictation_shortcut');
         setCurrent(v || '');
       } catch (e) {
-        toast.error(`Could not load shortcut: ${e?.message || e}`);
+        toast.error(t('settings.shortcut_load_failed', { message: e?.message || e }));
       }
     })();
   }, [tauri]);
@@ -1516,11 +1779,11 @@ function HotkeyTab() {
       const saved = await invoke('set_dictation_shortcut', { accelerator: pending });
       setCurrent(saved);
       setPending('');
-      toast.success(`Dictation shortcut set to ${saved}`);
+      toast.success(t('settings.shortcut_set', { shortcut: saved }));
     } catch (e) {
       // Common cause: the OS or another app already owns the combo. Surface
       // the raw error so the user can pick something else.
-      toast.error(`Couldn't register: ${e?.message || e}`);
+      toast.error(t('settings.shortcut_register_failed', { message: e?.message || e }));
     } finally {
       setSaving(false);
     }
@@ -1535,9 +1798,9 @@ function HotkeyTab() {
       });
       setCurrent(saved);
       setPending('');
-      toast.success('Reset to default');
+      toast.success(t('settings.shortcut_reset'));
     } catch (e) {
-      toast.error(`Reset failed: ${e?.message || e}`);
+      toast.error(t('settings.shortcut_reset_failed', { message: e?.message || e }));
     } finally {
       setSaving(false);
     }
@@ -1640,14 +1903,8 @@ function CredentialsTab({ info }) {
           encrypted-at-rest App-source storage, and live whoami status. */}
       <ApiKeysPanel />
 
-      {/* Wave 2 INST-12 panel — Windows torch.compile OOM workaround
-          (#65). Toggle is rendered disabled on macOS/Linux with an
-          explainer; backend ignores the flag on non-Windows. */}
-      <PerformancePanel />
-
-      {/* UI scale + color theme — moved out of the LogsFooter chrome so
-          the footer can focus on logs. Rarely-used prefs belong here. */}
-      <AppearancePanel />
+      {/* Wave 2.4 — OpenAI-compatible LLM endpoint (Ollama/LM Studio/vLLM). */}
+      <LLMEndpointPanel />
 
       <p className="settings-prose">
         <Trans i18nKey="credentials.desc" components={{ 1: <strong /> }} />

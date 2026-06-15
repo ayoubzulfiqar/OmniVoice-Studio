@@ -1,5 +1,7 @@
 import os
 import io
+import re
+import json
 import time
 import uuid
 import asyncio
@@ -8,11 +10,17 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
 
-from core.db import db_conn
-from core.config import DUB_DIR
+from core.config import DUB_DIR, dub_seg_path
 from core.tasks import task_manager
 from api.routers.dub_core import _get_job
 from services.ffmpeg_utils import find_ffmpeg, run_ffmpeg
+from services.video_retime import (
+    DRIFT_TOLERANCE_S,
+    RetimeError,
+    build_chunk_filter_graph,
+    expand_retime_chunks,
+    prepare_smart_fit_video,
+)
 
 router = APIRouter()
 logger = logging.getLogger("omnivoice.api")
@@ -21,6 +29,9 @@ logger = logging.getLogger("omnivoice.api")
 def _unique_stamp() -> str:
     """Return a short unique suffix like '20260415T142301-ab12cd34' for export files."""
     return f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+
+_SAFE_LANG = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 
 def _native_save(source: str, destination: str, display_name: str, media_type: str):
@@ -159,15 +170,23 @@ async def dub_list_tracks(job_id: str):
     return {"tracks": job.get("dubbed_tracks", {})}
 
 
-def _write_burn_srt(job: dict, exports_dir: str, stamp: str, dual: bool) -> str | None:
+def _write_burn_srt(job: dict, exports_dir: str, stamp: str, dual: bool,
+                    fitted_segments: "list[dict] | None" = None) -> str | None:
     """Build a temp SRT from job segments for use with ffmpeg's subtitles filter.
 
     Returned path is already ffmpeg-filter-safe (plain ASCII basename under exports_dir).
     Returns None if there are no segments to render.
+
+    ``fitted_segments`` (Smart Fit): {id, start, end} cue records on the
+    fitted timeline — when provided, cue times come from there instead of
+    the original ``job["segments"]`` timings, so burned subs track the
+    retimed video / fitted audio rather than the source timeline.
     """
     segments = job.get("segments", [])
     if not segments:
         return None
+    if fitted_segments:
+        segments = _apply_fitted_times(segments, fitted_segments)
     lines = []
     for i, seg in enumerate(segments):
         lines.append(str(i + 1))
@@ -215,41 +234,14 @@ def _build_video_stretch_filter_graph(
     if not plan:
         return "", in_label or f"[{video_input_idx}:v]"
 
-    chunks: list[tuple[float, float, float]] = []  # (a, b, ratio)
-    cursor = 0.0
-    for entry in plan:
-        a = float(entry["orig_start"])
-        b = float(entry["orig_end"])
-        if a > cursor + 1e-3:
-            chunks.append((cursor, a, 1.0))  # gap or pre-roll at native rate
-        ratio = float(entry["stretch_ratio"])
-        if b > a:
-            chunks.append((a, b, ratio))
-        cursor = max(cursor, b)
-    if orig_dur > cursor + 1e-3:
-        chunks.append((cursor, orig_dur, 1.0))  # tail at native rate
-    chunks = [(a, b, r) for (a, b, r) in chunks if b > a]
+    # Chunk expansion + graph emission live in services.video_retime now so
+    # the Smart Fit batched pipeline shares the exact same boundary math.
+    # With default options the emitted graph is byte-identical to the
+    # original inline implementation.
+    chunks = expand_retime_chunks(plan, orig_dur)
     if not chunks:
         return "", in_label or f"[{video_input_idx}:v]"
-
-    src = in_label or f"[{video_input_idx}:v]"
-    parts: list[str] = []
-    labels: list[str] = []
-    # `split` lets us tap the same source stream once per chunk without re-
-    # decoding. setpts={ratio}*PTS slows down (ratio > 1) or speeds up
-    # (ratio < 1) each chunk; PTS-STARTPTS first to normalise the timestamp
-    # base after the trim.
-    split_labels = [f"[vsplit{idx}]" for idx in range(len(chunks))]
-    parts.append(f"{src}split={len(chunks)}{''.join(split_labels)}")
-    for idx, ((a, b, ratio), split_lbl) in enumerate(zip(chunks, split_labels)):
-        out_label = f"[vstr{idx}]"
-        labels.append(out_label)
-        parts.append(
-            f"{split_lbl}trim=start={a:.4f}:end={b:.4f},"
-            f"setpts=PTS-STARTPTS,setpts={ratio:.6f}*PTS{out_label}"
-        )
-    parts.append("".join(labels) + f"concat=n={len(chunks)}:v=1:a=0[vstretched]")
-    return ";".join(parts), "[vstretched]"
+    return build_chunk_filter_graph(chunks, in_label or f"[{video_input_idx}:v]")
 
 
 def _video_stretch_plan_for(job: dict, lang_code: str) -> dict | None:
@@ -263,6 +255,76 @@ def _video_stretch_plan_for(job: dict, lang_code: str) -> dict | None:
     if not entry or not entry.get("plan"):
         return None
     return entry
+
+
+def _video_retime_plan_for(job: dict, lang_code: str) -> "tuple[str, dict] | None":
+    """Resolve the video retime plan for ``lang_code`` across both keyspaces.
+
+    Returns ``(kind, entry)`` where kind is ``"stretch_video"`` (legacy
+    Mode B plans — resolution byte-identical to ``_video_stretch_plan_for``)
+    or ``"smart_fit"`` (Phase A ``job["fit_plans"]`` entries, gated on the
+    track actually having been generated under smart_fit so a stale plan
+    from an earlier run can't retime a track re-generated under another
+    strategy). ``None`` when neither applies.
+    """
+    legacy = _video_stretch_plan_for(job, lang_code)
+    if legacy is not None:
+        return "stretch_video", legacy
+    entry = (job.get("fit_plans") or {}).get(lang_code)
+    track = (job.get("dubbed_tracks") or {}).get(lang_code) or {}
+    if entry and entry.get("plan") and track.get("timing_strategy") == "smart_fit":
+        return "smart_fit", entry
+    return None
+
+
+def _fitted_segments_for(job: dict, lang_code: "str | None") -> "list[dict] | None":
+    """Fitted-timeline subtitle cues ({id, start, end}) for a Smart Fit
+    track, or None. Same staleness gate as ``_video_retime_plan_for``."""
+    if not lang_code:
+        return None
+    entry = (job.get("fit_plans") or {}).get(lang_code)
+    track = (job.get("dubbed_tracks") or {}).get(lang_code) or {}
+    if not entry or track.get("timing_strategy") != "smart_fit":
+        return None
+    fitted = entry.get("fitted_segments")
+    return fitted or None
+
+
+def _apply_fitted_times(segments: list[dict], fitted: list[dict]) -> list[dict]:
+    """Overlay fitted cue times onto subtitle segments (copies; non-destructive).
+
+    Matches by segment ``id``; when the fitted record carries no ids at all
+    (defensive), falls back to positional pairing. Segments without a match
+    keep their original timings.
+    """
+    by_id = {str(f["id"]): f for f in fitted if f.get("id") is not None}
+    out: list[dict] = []
+    for i, seg in enumerate(segments):
+        cue = None
+        if seg.get("id") is not None:
+            cue = by_id.get(str(seg["id"]))
+        if cue is None and not by_id and i < len(fitted):
+            cue = fitted[i]
+        if cue is None:
+            out.append(seg)
+            continue
+        patched = dict(seg)
+        patched["start"] = float(cue["start"])
+        patched["end"] = float(cue["end"])
+        out.append(patched)
+    return out
+
+
+def _burn_subs_allowed(retime_kind: "str | None") -> bool:
+    """Subtitle burn-in combined with video retime.
+
+    Allowed for ``smart_fit`` (fitted cue records exist, and the burn pass
+    runs AFTER the retime graph so cues land on the retimed timeline) and
+    for plain exports. Still rejected for legacy ``stretch_video``, which
+    has no fitted-cue record — cues would burn at original timestamps onto
+    a re-timed video and drift.
+    """
+    return retime_kind != "stretch_video"
 
 
 #: Audio export formats → ffmpeg codec args. Unknown formats fall back to
@@ -313,6 +375,11 @@ async def dub_download(
     dual: bool = Query(False, description="When burn_subs=1, render translated on top of italicised original."),
     out_format: str = Query("m4a", description="Audio-only jobs (#119): output container — wav, m4a, mp3, or flac. Ignored for video jobs."),
 ):
+    # Strict allowlist on the path param BEFORE it reaches any filesystem
+    # path or ffmpeg argv (export dir, retime work path, slice paths). Real
+    # job ids are short uuid slices — alnum/hyphen/underscore only.
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
     job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -391,18 +458,24 @@ async def dub_download(
         )
 
     # Determine whether this export should drive video through a per-segment
-    # stretch graph (Mode B). Stretch is keyed off the default_track's plan
-    # because the video can only physically follow one timeline at a time.
-    # If multiple dub tracks are included and they were generated under
-    # stretch_video, only the default_track is visually in sync — other
-    # tracks share the same (stretched) video. Single-track export is the
-    # supported common case.
-    stretch_entry = _video_stretch_plan_for(job, default_track) if default_track and default_track != "original" else None
-    # Subtitle burn under stretch_video would render cues at the original
-    # timestamps onto a re-timed video — they'd drift. Skip the burn pass
-    # in that combo and log; the user can still export the SRT/VTT
-    # separately and the new-layout timing lives there.
-    if stretch_entry and burn_subs:
+    # retime (legacy stretch_video Mode B, or Smart Fit). Retime is keyed off
+    # the default_track's plan because the video can only physically follow
+    # one timeline at a time. If multiple dub tracks are included, only the
+    # default_track is visually in sync — other tracks share the same
+    # (retimed) video. Single-track export is the supported common case.
+    retime_kind: "str | None" = None
+    retime_entry: "dict | None" = None
+    if default_track and default_track != "original":
+        _retime = _video_retime_plan_for(job, default_track)
+        if _retime:
+            retime_kind, retime_entry = _retime
+    stretch_entry = retime_entry if retime_kind == "stretch_video" else None
+    # Subtitle burn under legacy stretch_video would render cues at the
+    # original timestamps onto a re-timed video — they'd drift (no fitted-cue
+    # record exists for that mode). Skip the burn pass in that combo and log;
+    # the user can still export the SRT/VTT separately. Smart Fit DOES carry
+    # fitted cues, so burn+retime is allowed there (burn runs post-retime).
+    if not _burn_subs_allowed(retime_kind) and burn_subs:
         logger.warning(
             "stretch_video + burn_subs is not supported in one pass; "
             "skipping subtitle burn for job %s. Export the SRT/VTT separately.",
@@ -410,10 +483,70 @@ async def dub_download(
         )
         burn_subs = False
 
-    sub_path = _write_burn_srt(job, exports_dir, stamp, dual) if burn_subs else None
+    # Smart Fit: cue times come from the fitted timeline — that's where the
+    # dubbed audio actually sits, whether or not the video retime succeeds.
+    fitted_segments = _fitted_segments_for(job, default_track) if default_track and default_track != "original" else None
+    sub_path = _write_burn_srt(job, exports_dir, stamp, dual, fitted_segments=fitted_segments) if burn_subs else None
+
+    # ── Smart Fit video retime (two-tier) ─────────────────────────────────
+    # Tier 1 (≤48 chunks): single filter_complex graph inlined into the mux
+    # command below. Tier 2: batched slice renders joined by the concat
+    # demuxer into an intermediate file, muxed as an extra input. Failures
+    # fall back to an un-retimed export with a structured warning rather
+    # than failing the whole download.
+    retime_decision = None
+    retime_warning: "dict | None" = None
+    smart_track_dur = 0.0
+    if retime_kind == "smart_fit" and retime_entry:
+        smart_orig_dur = float(retime_entry.get("orig_duration") or job.get("duration") or 0.0)
+        smart_track_dur = float(
+            retime_entry.get("total_duration")
+            or (filtered_tracks.get(default_track) or {}).get("duration")
+            or 0.0
+        )
+        # A fresh export is a fresh user intent — clear any sticky abort flag
+        # from a previous /dub/abort so it can't kill this run's first batch.
+        job.pop("aborted", None)
+        # realpath-normalised + containment-checked inline at the sink (the
+        # file's established pattern — CodeQL does not track the guard
+        # through a helper's return value).
+        _base = os.path.realpath(DUB_DIR)
+        retime_work_path = os.path.realpath(
+            os.path.join(exports_dir, f"retimed_{stamp}.mp4")
+        )
+        if retime_work_path != _base and not retime_work_path.startswith(_base + os.sep):
+            raise HTTPException(status_code=400, detail="Invalid export path")
+        try:
+            retime_decision = await prepare_smart_fit_video(
+                job_id=job_id,
+                ffmpeg=ffmpeg,
+                video_path=video_path,
+                plan=retime_entry["plan"],
+                orig_dur=smart_orig_dur,
+                track_dur=smart_track_dur,
+                work_path=retime_work_path,
+                abort_check=lambda: bool(job.get("aborted")),
+            )
+        except Exception as e:
+            if (isinstance(e, RetimeError) and e.stage == "aborted") or job.get("aborted"):
+                raise HTTPException(status_code=409, detail="Export aborted")
+            from core.failure import build_failure
+            retime_warning = build_failure(e, stage="video-retime", include_diagnostic=False)
+            job["last_export_warning"] = {"type": "video_retime_fallback", **retime_warning}
+            logger.error(
+                "Smart Fit video retime failed for job %s — exporting "
+                "without per-segment retime: %s",
+                job_id.replace("\n", " ").replace("\r", " "), e,
+            )
 
     cmd = [ffmpeg, "-i", video_path]
     input_idx = 1
+
+    retimed_idx = None
+    if retime_decision is not None and retime_decision.mode == "file":
+        cmd += ["-i", retime_decision.file_path]
+        retimed_idx = input_idx
+        input_idx += 1
 
     bg_audio = job.get("no_vocals_path") if preserve_bg else None
     bg_idx = None
@@ -430,9 +563,37 @@ async def dub_download(
 
     filter_parts: list[str] = []
     video_map = "0:v:0"
+    video_reencode = False
+    if retime_decision is not None:
+        if retime_decision.mode == "filter":
+            filter_parts.append(retime_decision.graph)
+            video_map = retime_decision.label
+            video_reencode = True
+        else:
+            video_map = f"{retimed_idx}:v:0"
+            # Residual drift after the batched render (fps rounding): video
+            # shorter than the fitted track → freeze the last frame out to
+            # the track length. Rare — the predicted tail pad inside the
+            # render usually lands within tolerance.
+            residual = smart_track_dur - retime_decision.video_dur
+            if smart_track_dur and residual > DRIFT_TOLERANCE_S:
+                filter_parts.append(
+                    f"[{retimed_idx}:v]tpad=stop_mode=clone:stop_duration={residual:.4f}[vtpad]"
+                )
+                video_map = "[vtpad]"
+                video_reencode = True
     if sub_path:
         esc = _ffmpeg_filter_escape(sub_path)
-        filter_parts.append(f"[0:v]subtitles='{esc}'[vsub]")
+        # Burn AFTER any retime so cues (already on the fitted timeline for
+        # Smart Fit) land on the retimed video. Without retime this reduces
+        # to the legacy `[0:v]subtitles=…[vsub]` graph.
+        if video_map.startswith("["):
+            sub_src = video_map
+        elif retimed_idx is not None:
+            sub_src = f"[{retimed_idx}:v]"
+        else:
+            sub_src = "[0:v]"
+        filter_parts.append(f"{sub_src}subtitles='{esc}'[vsub]")
         video_map = "[vsub]"
     if stretch_entry:
         orig_dur = float(stretch_entry.get("orig_duration") or job.get("duration") or 0.0)
@@ -448,10 +609,32 @@ async def dub_download(
     if include_original:
         cmd += ["-map", "0:a:0"]
 
+    # Smart Fit drift absorption, audio side: when the retimed video runs
+    # longer than the fitted track (its tail passes through at 1.0× beyond
+    # the last cue, or encoder rounding), pad the dub-track chain with
+    # silence out to the video length so players don't end audio early.
+    apad_dur = 0.0
+    if (
+        retime_decision is not None
+        and smart_track_dur
+        and retime_decision.video_dur - smart_track_dur > DRIFT_TOLERANCE_S
+    ):
+        apad_dur = retime_decision.video_dur
+
     if bg_idx is not None:
         for i, t in enumerate(tracks_to_process):
             out_label = f"[aout{i}]"
-            filter_parts.append(f"[{bg_idx}:a][{t['idx']}:a]amix=inputs=2:duration=longest:dropout_transition=2:weights=0.8 1.2{out_label}")
+            chain = f"[{bg_idx}:a][{t['idx']}:a]amix=inputs=2:duration=longest:dropout_transition=2:weights=0.8 1.2"
+            if apad_dur:
+                chain += f",apad=whole_dur={apad_dur:.4f}"
+            filter_parts.append(chain + out_label)
+            t["out_label"] = out_label
+        for t in tracks_to_process:
+            cmd += ["-map", t["out_label"]]
+    elif apad_dur:
+        for i, t in enumerate(tracks_to_process):
+            out_label = f"[aout{i}]"
+            filter_parts.append(f"[{t['idx']}:a]apad=whole_dur={apad_dur:.4f}{out_label}")
             t["out_label"] = out_label
         for t in tracks_to_process:
             cmd += ["-map", t["out_label"]]
@@ -462,10 +645,11 @@ async def dub_download(
     if filter_parts:
         cmd += ["-filter_complex", ";".join(filter_parts)]
 
-    # Burning subs or per-segment video stretch both force a real video
-    # re-encode; stream-copy is only viable when nothing touches the video
-    # filter chain.
-    if sub_path or stretch_entry:
+    # Burning subs or per-segment video retime both force a real video
+    # re-encode; stream-copy is viable when nothing touches the video
+    # filter chain — including the batched Smart Fit path, whose retimed
+    # intermediate is already encoded with these exact settings.
+    if sub_path or stretch_entry or video_reencode:
         cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
     else:
         cmd += ["-c:v", "copy"]
@@ -498,17 +682,17 @@ async def dub_download(
                 break
         cmd += [f"-disposition:a:{target_idx}", "default"]
 
-    # In stretch_video mode the video and audio durations should match
-    # within sub-frame precision, but `-shortest` can still cut off the
-    # trailing frame; let ffmpeg keep both streams. Otherwise keep the
-    # legacy `-shortest` so a slightly-overrunning track doesn't extend
-    # the mux past the video.
-    if not stretch_entry:
+    # When retiming (legacy stretch_video or Smart Fit) the video and audio
+    # durations should match within sub-frame precision, but `-shortest`
+    # can still cut off the trailing frame; let ffmpeg keep both streams.
+    # Otherwise keep the legacy `-shortest` so a slightly-overrunning track
+    # doesn't extend the mux past the video.
+    if not stretch_entry and retime_decision is None:
         cmd += ["-shortest"]
     cmd += [output_path, "-y"]
 
     try:
-        rc, _, stderr = await run_ffmpeg(cmd, timeout=1800.0)
+        rc, _, stderr = await run_ffmpeg(cmd, timeout=1800.0, job_id=job_id)
         if rc != 0:
             raise Exception(stderr.decode(errors="replace") if stderr else "ffmpeg mux non-zero")
     except asyncio.TimeoutError:
@@ -520,6 +704,14 @@ async def dub_download(
             status_code=500,
             detail=f"ffmpeg failed to combine video + dubbed audio: {e}. Verify ffmpeg is installed (`ffmpeg -version`), and check that every dubbed track file exists in the job folder.",
         )
+    finally:
+        # The batched retime intermediate is a full re-encoded video — never
+        # leave it behind (success or failure; it's stamp-unique, no reuse).
+        if retime_decision is not None and retime_decision.mode == "file":
+            try:
+                os.remove(retime_decision.file_path)
+            except OSError as e:
+                logger.debug("cleanup remove failed: %s", e)
 
     if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
         raise HTTPException(status_code=500, detail="ffmpeg mux produced no output file")
@@ -529,12 +721,22 @@ async def dub_download(
     safe_name = ''.join(c for c in base_name if c.isalnum() or c in '-_ ').strip() or 'output'
     dl_name = f"dubbed_{safe_name}_{stamp}.mp4"
 
+    # Structured warning surface for the Smart Fit fallback ladder: header is
+    # a fixed ASCII token (FileResponse headers must be latin-1 safe); the
+    # full build_failure payload is persisted on the job for the UI to read.
+    extra_headers = {}
+    if retime_warning is not None:
+        extra_headers["X-Dub-Export-Warning"] = "video-retime-fallback"
+
     if save_path:
-        return _native_save(output_path, save_path, dl_name, media_type="video/mp4")
+        result = _native_save(output_path, save_path, dl_name, media_type="video/mp4")
+        if retime_warning is not None:
+            result["warning"] = {"type": "video_retime_fallback", **retime_warning}
+        return result
 
     return FileResponse(
         output_path, media_type="video/mp4",
-        headers={"Content-Disposition": f'attachment; filename="{dl_name}"'},
+        headers={"Content-Disposition": f'attachment; filename="{dl_name}"', **extra_headers},
     )
 
 
@@ -569,6 +771,21 @@ async def dub_get_media(job_id: str):
     ext = os.path.splitext(video_path)[1].lower()
     return FileResponse(video_path, media_type=_MEDIA_TYPES.get(ext, "video/mp4"))
 
+# One mux at a time per preview file. Without this, two overlapping requests
+# (e.g. the <video> element remounting right after a re-dub) both ran ffmpeg
+# against the same output path, and the mtime check below saw the half-written
+# file as a valid cache — serving a truncated MP4 that left the player stuck
+# loading forever (#281).
+_preview_mux_locks: dict[str, asyncio.Lock] = {}
+
+
+def _preview_lock(path: str) -> asyncio.Lock:
+    lock = _preview_mux_locks.get(path)
+    if lock is None:
+        lock = _preview_mux_locks.setdefault(path, asyncio.Lock())
+    return lock
+
+
 @router.get("/dub/preview-video/{job_id}")
 async def dub_preview_video(
     job_id: str,
@@ -580,6 +797,11 @@ async def dub_preview_video(
     Caches per lang+preserve_bg combination under exports/preview_{lang}_{bg}.mp4.
     Cache is invalidated when the underlying dubbed track mtime is newer than the cache.
     """
+    # Strict allowlist on the path param BEFORE it reaches any filesystem
+    # path or ffmpeg argv (exports dir, preview/retime work paths) — same
+    # boundary check as dub_download.
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
     job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -600,23 +822,92 @@ async def dub_preview_video(
     bg_audio = job.get("no_vocals_path") if preserve_bg else None
     has_bg = bool(bg_audio and os.path.exists(bg_audio))
 
-    exports_dir = os.path.join(DUB_DIR, job_id, "exports")
+    if not _SAFE_LANG.match(lang):
+        raise HTTPException(status_code=400, detail="Invalid lang")
+    # realpath-normalised + containment-checked inline BEFORE any filesystem
+    # access so the guard dominates every sink (the file's established
+    # pattern — see dub_preview_segment; CodeQL does not track the guard
+    # through a helper's return value).
+    _base = os.path.realpath(DUB_DIR)
+    exports_dir = os.path.realpath(os.path.join(_base, job_id, "exports"))
+    if not exports_dir.startswith(_base + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid job id")
     os.makedirs(exports_dir, exist_ok=True)
     bg_suffix = "bg" if (preserve_bg and has_bg) else "nobg"
-    preview_path = os.path.join(exports_dir, f"preview_{lang}_{bg_suffix}.mp4")
+    preview_path = os.path.realpath(
+        os.path.join(exports_dir, f"preview_{lang}_{bg_suffix}.mp4")
+    )
+    if not preview_path.startswith(_base + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid path")
 
     track_mtime = os.path.getmtime(track_path)
-    cache_ok = (
-        os.path.exists(preview_path)
-        and os.path.getsize(preview_path) > 0
-        and os.path.getmtime(preview_path) >= track_mtime
-    )
 
-    if not cache_ok:
+    def _cache_ok() -> bool:
+        return (
+            os.path.exists(preview_path)
+            and os.path.getsize(preview_path) > 0
+            and os.path.getmtime(preview_path) >= track_mtime
+        )
+
+    async def _mux_preview():
+        # Mux into a temp file and os.replace() into place so a concurrent
+        # reader never sees a partially-written preview (#281: video stuck
+        # loading forever after a re-dub).
+        mux_path = preview_path + ".tmp.mp4"
         ffmpeg = find_ffmpeg()
-        stretch_entry = _video_stretch_plan_for(job, lang)
+        # Resolve the same retime plan the download path uses (legacy
+        # stretch_video or Smart Fit) so the in-app preview matches export.
+        retime = _video_retime_plan_for(job, lang)
+        retime_kind, retime_entry = retime if retime else (None, None)
+        stretch_entry = retime_entry if retime_kind == "stretch_video" else None
+
+        retime_decision = None
+        smart_track_dur = 0.0
+        if retime_kind == "smart_fit" and retime_entry:
+            smart_orig_dur = float(retime_entry.get("orig_duration") or job.get("duration") or 0.0)
+            smart_track_dur = float(
+                retime_entry.get("total_duration") or track_info.get("duration") or 0.0
+            )
+            job.pop("aborted", None)  # fresh user intent — clear sticky abort
+            # realpath-normalised + containment-checked inline at the sink
+            # (same pattern as preview_path above — _base is the realpath
+            # of DUB_DIR from the top of this endpoint).
+            retime_work_path = os.path.realpath(os.path.join(
+                exports_dir, f"preview_retimed_{lang}_{bg_suffix}.tmp.mp4",
+            ))
+            if retime_work_path != _base and not retime_work_path.startswith(_base + os.sep):
+                raise HTTPException(status_code=400, detail="Invalid export path")
+            try:
+                retime_decision = await prepare_smart_fit_video(
+                    job_id=job_id,
+                    ffmpeg=ffmpeg,
+                    video_path=video_path,
+                    plan=retime_entry["plan"],
+                    orig_dur=smart_orig_dur,
+                    track_dur=smart_track_dur,
+                    work_path=retime_work_path,
+                    abort_check=lambda: bool(job.get("aborted")),
+                )
+            except Exception as e:
+                if (isinstance(e, RetimeError) and e.stage == "aborted") or job.get("aborted"):
+                    raise HTTPException(status_code=409, detail="Preview aborted")
+                # Preview is best-effort: fall back to the un-retimed video
+                # rather than a black player. The export path surfaces the
+                # structured warning; here we just log.
+                retime_decision = None
+                logger.error(
+                    "Smart Fit preview retime failed for job %s — previewing "
+                    "without per-segment retime: %s",
+                    job_id.replace("\n", " ").replace("\r", " "), e,
+                )
+
         cmd = [ffmpeg, "-i", video_path]
         input_idx = 1
+        retimed_idx = None
+        if retime_decision is not None and retime_decision.mode == "file":
+            cmd += ["-i", retime_decision.file_path]
+            retimed_idx = input_idx
+            input_idx += 1
         if preserve_bg and has_bg:
             cmd += ["-i", bg_audio]
             bg_idx = input_idx
@@ -626,12 +917,13 @@ async def dub_preview_video(
         cmd += ["-i", track_path]
         track_idx = input_idx
 
-        # Build filter graph. In stretch_video mode we splice the source
-        # video into per-segment chunks, setpts each to match the dub audio
+        # Build filter graph. Under a retime plan we splice the source video
+        # into per-segment chunks, setpts each to match the dub audio
         # layout, and concat them — so audio plays at natural rate and the
         # visuals follow. Otherwise we stream-copy video for speed.
         filter_parts: list[str] = []
         video_map = "0:v:0"
+        video_reencode = False
         if stretch_entry:
             orig_dur = float(stretch_entry.get("orig_duration") or job.get("duration") or 0.0)
             graph, vlabel = _build_video_stretch_filter_graph(
@@ -640,49 +932,175 @@ async def dub_preview_video(
             if graph:
                 filter_parts.append(graph)
                 video_map = vlabel
+        elif retime_decision is not None:
+            if retime_decision.mode == "filter":
+                filter_parts.append(retime_decision.graph)
+                video_map = retime_decision.label
+                video_reencode = True
+            else:
+                video_map = f"{retimed_idx}:v:0"
+                residual = smart_track_dur - retime_decision.video_dur
+                if smart_track_dur and residual > DRIFT_TOLERANCE_S:
+                    filter_parts.append(
+                        f"[{retimed_idx}:v]tpad=stop_mode=clone:stop_duration={residual:.4f}[vtpad]"
+                    )
+                    video_map = "[vtpad]"
+                    video_reencode = True
+
+        # Smart Fit drift absorption (audio): silence-pad the dub chain out
+        # to the retimed video length so the preview doesn't end audio early.
+        apad_dur = 0.0
+        if (
+            retime_decision is not None
+            and smart_track_dur
+            and retime_decision.video_dur - smart_track_dur > DRIFT_TOLERANCE_S
+        ):
+            apad_dur = retime_decision.video_dur
+
+        audio_map = f"{track_idx}:a:0"
         if bg_idx is not None:
-            filter_parts.append(
-                f"[{bg_idx}:a][{track_idx}:a]amix=inputs=2:duration=longest:dropout_transition=2:weights=0.8 1.2[aout]"
-            )
+            chain = f"[{bg_idx}:a][{track_idx}:a]amix=inputs=2:duration=longest:dropout_transition=2:weights=0.8 1.2"
+            if apad_dur:
+                chain += f",apad=whole_dur={apad_dur:.4f}"
+            filter_parts.append(chain + "[aout]")
+            audio_map = "[aout]"
+        elif apad_dur:
+            filter_parts.append(f"[{track_idx}:a]apad=whole_dur={apad_dur:.4f}[aout]")
+            audio_map = "[aout]"
 
         cmd += ["-map", video_map]
-        if bg_idx is not None:
-            cmd += ["-map", "[aout]"]
-        else:
-            cmd += ["-map", f"{track_idx}:a:0"]
+        cmd += ["-map", audio_map]
         if filter_parts:
             cmd += ["-filter_complex", ";".join(filter_parts)]
 
-        # Stretch path needs a real encode; stream-copy otherwise.
-        if stretch_entry:
+        # Retime path needs a real encode; stream-copy otherwise (the batched
+        # Smart Fit intermediate is already encoded — copy unless tpad'ed).
+        if stretch_entry or video_reencode:
             cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
         else:
             cmd += ["-c:v", "copy"]
         cmd += ["-c:a", "aac", "-b:a", "192k"]
-        # `-shortest` would cut the stretched video at the (slightly different)
+        # `-shortest` would cut the retimed video at the (slightly different)
         # audio length and lose the trailing frame; only use it on the copy path.
-        if not stretch_entry:
+        if not stretch_entry and retime_decision is None:
             cmd += ["-shortest"]
-        cmd += [preview_path, "-y"]
+        cmd += [mux_path, "-y"]
+
+        def _discard_tmp():
+            try:
+                os.remove(mux_path)
+            except OSError as e:
+                logger.debug("cleanup remove failed: %s", e)
 
         try:
-            rc, _, stderr = await run_ffmpeg(cmd, timeout=900.0)
+            rc, _, stderr = await run_ffmpeg(cmd, timeout=900.0, job_id=job_id)
             if rc != 0:
                 raise Exception(stderr.decode(errors="replace") if stderr else "ffmpeg mux non-zero")
+            if not os.path.exists(mux_path) or os.path.getsize(mux_path) == 0:
+                raise Exception("preview mux produced empty file")
         except asyncio.TimeoutError:
+            _discard_tmp()
             raise HTTPException(status_code=504, detail="preview mux timed out")
         except HTTPException:
+            _discard_tmp()
             raise
         except Exception as e:
+            _discard_tmp()
             raise HTTPException(
                 status_code=500,
                 detail=f"ffmpeg failed to build the preview stream: {str(e)[:300]}. This usually means the source video can't be re-encoded on the fly — try downloading the MP4 instead.",
             )
+        finally:
+            if retime_decision is not None and retime_decision.mode == "file":
+                try:
+                    os.remove(retime_decision.file_path)
+                except OSError as e:
+                    # Best-effort scratch cleanup — never fail the export.
+                    logger.debug("retime intermediate cleanup failed: %s", e)
 
-        if not os.path.exists(preview_path) or os.path.getsize(preview_path) == 0:
-            raise HTTPException(status_code=500, detail="preview mux produced empty file")
+        os.replace(mux_path, preview_path)
 
-    return FileResponse(preview_path, media_type="video/mp4")
+    async with _preview_lock(preview_path):
+        if not _cache_ok():
+            await _mux_preview()
+
+    # no-store: the URL is stable across re-dubs, so any HTTP-level caching
+    # in the WebView would keep showing the previous dub after a re-generate
+    # (#281: "edits don't change the result").
+    return FileResponse(
+        preview_path,
+        media_type="video/mp4",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _compute_onsets_sync(src_path: str) -> list[float]:
+    """Blocking part of onset analysis — runs in a worker thread."""
+    import soundfile as sf
+    from services.onset_align import detect_speech_onsets
+    audio, sr = sf.read(src_path, dtype="float32")
+    return detect_speech_onsets(audio, sr)
+
+
+@router.get("/dub/onsets/{job_id}")
+async def dub_get_onsets(job_id: str):
+    """Speech-onset times for the timeline editor's snap-to-onset ticks (#280).
+
+    Prefers the Demucs-isolated vocals track (clean speech energy); falls
+    back to the mixed audio. Computed once per job and cached as
+    ``onsets.json`` in the job directory; recomputed if the source audio is
+    newer than the cache (e.g. re-ingest into the same job dir).
+    """
+    import json
+    job = _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    vocals = job.get("vocals_path")
+    mix = job.get("audio_path")
+    if vocals and os.path.exists(vocals):
+        src_path, source = vocals, "vocals"
+    elif mix and os.path.exists(mix):
+        src_path, source = mix, "mix"
+    else:
+        raise HTTPException(status_code=404, detail="No audio track available for onset analysis")
+
+    # Containment inlined (not via _safe_job_path): CodeQL can't track the
+    # sanitizer through a helper's return — the file's established idiom.
+    base = os.path.realpath(DUB_DIR)
+    cache_path = os.path.realpath(os.path.join(base, job_id, "onsets.json"))
+    if not cache_path.startswith(base + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    try:
+        if (
+            os.path.exists(cache_path)
+            and os.path.getmtime(cache_path) >= os.path.getmtime(src_path)
+        ):
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            if isinstance(cached, dict) and isinstance(cached.get("onsets"), list):
+                return cached
+    except (OSError, ValueError):
+        pass  # unreadable/corrupt cache → recompute below
+
+    try:
+        onsets = await asyncio.to_thread(_compute_onsets_sync, src_path)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Onset analysis failed: {str(e)[:200]}",
+        )
+
+    payload = {"onsets": onsets, "source": source}
+    try:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        tmp_path = cache_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp_path, cache_path)
+    except OSError as e:
+        logger.warning("onsets cache write failed for %s: %s", job_id, e)
+    return payload
 
 
 @router.get("/dub/thumb/{job_id}")
@@ -712,10 +1130,110 @@ async def dub_preview_segment(job_id: str, segment_index: int):
     job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    seg_path = os.path.join(DUB_DIR, job_id, f"seg_{segment_index}.wav")
-    if not os.path.exists(seg_path):
+    # Resolve the stable-id-named WAV via the render manifest; fall back to the
+    # legacy index name for jobs rendered before id-based naming (#185). Each
+    # candidate is realpath-normalised and containment-checked BEFORE any
+    # filesystem access, so the guard dominates every path sink.
+    order = job.get("seg_order") or []
+    seg_id = order[segment_index] if 0 <= segment_index < len(order) else segment_index
+    base = os.path.realpath(DUB_DIR)
+    seg_path = None
+    for _sid in (seg_id, segment_index):
+        cand = os.path.realpath(dub_seg_path(job_id, _sid))
+        if cand.startswith(base + os.sep) and os.path.exists(cand):
+            seg_path = cand
+            break
+    if not seg_path:
         raise HTTPException(status_code=404, detail="Segment not generated yet")
     return FileResponse(seg_path, media_type="audio/wav")
+
+
+# ── Second-pass ASR QC (Wave 3.3 / Spec 5) ───────────────────────────────────
+
+
+@router.post("/dub/qc/{job_id}")
+async def dub_qc_pass(job_id: str, lang: str = Query(None), drift_threshold: float = Query(0.5)):
+    """Re-recognize the dubbed audio and flag lines whose recognized text
+    drifts from the target text. Opt-in, never fatal: the dub is untouched —
+    this only annotates segments with a per-line drift score and a measured
+    start/end, surfaced as "verify this line" markers feeding incremental
+    re-dub. The generated text stays authoritative (design delta from
+    pyvideotrans, which overwrites subtitles)."""
+    from services import dub_qc
+    from services.dub_pipeline import put_job, save_job
+
+    job = _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    tracks = job.get("dubbed_tracks", {})
+    if lang and lang in tracks:
+        wav_path = tracks[lang]["path"]
+    elif tracks:
+        wav_path = list(tracks.values())[0]["path"]
+    else:
+        raise HTTPException(status_code=400, detail="No dubbed audio track generated yet")
+    if not os.path.exists(wav_path):
+        raise HTTPException(status_code=404, detail="Dubbed audio file not found")
+
+    segments = job.get("segments") or []
+    if not segments:
+        raise HTTPException(status_code=400, detail="Job has no segments")
+
+    def _recognize():
+        from services.asr_backend import get_active_asr_backend
+        backend = get_active_asr_backend()
+        result = backend.transcribe(wav_path, word_timestamps=False)
+        return result.get("segments", []), backend.id
+
+    try:
+        from services.model_manager import _get_gpu_pool
+        loop = asyncio.get_running_loop()
+        recognized, engine_id = await loop.run_in_executor(_get_gpu_pool(), _recognize)
+    except Exception as e:
+        logger.exception("dub QC ASR pass failed for %s", job_id)
+        raise HTTPException(status_code=500, detail=f"QC transcription failed: {e}")
+
+    seg_ids = job.get("seg_order") or [s.get("id", i) for i, s in enumerate(segments)]
+    scored = dub_qc.score_dub(segments, recognized, drift_threshold=drift_threshold, seg_ids=seg_ids)
+
+    # Annotate each segment (non-destructive — content text untouched).
+    by_id = {q.seg_id: q for q in scored}
+    for i, s in enumerate(segments):
+        sid = str(seg_ids[i]) if i < len(seg_ids) else str(s.get("id", i))
+        q = by_id.get(sid)
+        if q is None:
+            continue
+        s["qc_drift"] = q.drift
+        s["qc_flagged"] = q.flagged
+        s["qc_recognized"] = q.recognized_text
+        if q.new_start is not None:
+            s["qc_measured_start"] = q.new_start
+            s["qc_measured_end"] = q.new_end
+    put_job(job_id, job)
+    save_job(job_id, job)
+
+    flagged = [q for q in scored if q.flagged]
+    payload = json.dumps({"event": "qc_done", "engine": engine_id,
+                          "flagged": len(flagged), "total": len(scored)})
+    try:
+        from core import job_store
+        job_store.append_event(job_id, f"data: {payload}\n\n")
+    except Exception as e:
+        # QC event fan-out is best-effort; the scores are already in the response.
+        logger.debug("QC event append failed: %s", e)
+
+    return {
+        "engine": engine_id,
+        "total": len(scored),
+        "flagged_count": len(flagged),
+        "drift_threshold": drift_threshold,
+        "segments": [
+            {"seg_id": q.seg_id, "drift": q.drift, "flagged": q.flagged,
+             "recognized_text": q.recognized_text,
+             "measured_start": q.new_start, "measured_end": q.new_end}
+            for q in scored
+        ],
+    }
 
 
 @router.get("/dub/download-audio/{job_id}")
@@ -795,9 +1313,31 @@ def _pick_subtitle_text(seg: dict, dual: bool) -> str:
     return f"{translated}\n<i>{original}</i>"
 
 
+# Subtitles deliberately have no ?save_path= variant: they're small text
+# bodies, so the Tauri side fetches them raw and writes the file itself via
+# the save_text_file command — the OS save dialog is the write authorization
+# (#309). The frontend's JSON-envelope save flow stays for binary exports.
+
+
+def _fitted_cue_times(job: dict, lang: str | None) -> list | None:
+    """Per-segment (start, end) on the fitted timeline when this job used
+    stretch_video; None to use the original segment times. (Wave 3.1.)"""
+    tracks = job.get("dubbed_tracks", {})
+    lc = lang if (lang and lang in tracks) else (next(iter(tracks), None))
+    entry = _video_stretch_plan_for(job, lc) if lc else None
+    if not entry:
+        return None
+    from services.fitted_subtitles import fitted_cues
+    return fitted_cues(job.get("segments", []), entry["plan"])
+
+
 @router.get("/dub/srt/{job_id}")
 @router.get("/dub/srt/{job_id}/{filename}")
-async def dub_export_srt(job_id: str, dual: bool = False):
+async def dub_export_srt(
+    job_id: str,
+    dual: bool = False,
+    lang: str = Query(None, description="Track language code. When that track was generated under Smart Fit or stretch_video, cue times come from the fitted timeline."),
+):
     job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -806,22 +1346,31 @@ async def dub_export_srt(job_id: str, dual: bool = False):
     if not segments:
         raise HTTPException(status_code=400, detail="No transcript segments available")
 
+    # Subtitles must follow the audio the viewer hears, per timing strategy:
+    # Smart Fit (phase B) overlays the fitted segment times directly;
+    # stretch_video (Wave 3.1) regenerates cue times from the stretch plan.
+    # Neither applies → original times.
+    fitted = _fitted_segments_for(job, lang)
+    if fitted:
+        segments = _apply_fitted_times(segments, fitted)
+    cues = None if fitted else _fitted_cue_times(job, lang)
+
     srt_lines = []
     for i, seg in enumerate(segments):
-        start_ts = _format_srt_time(seg["start"])
-        end_ts = _format_srt_time(seg["end"])
+        s, e = cues[i] if cues else (seg["start"], seg["end"])
         srt_lines.append(f"{i + 1}")
-        srt_lines.append(f"{start_ts} --> {end_ts}")
+        srt_lines.append(f"{_format_srt_time(s)} --> {_format_srt_time(e)}")
         srt_lines.append(_pick_subtitle_text(seg, dual))
         srt_lines.append("")
 
     srt_content = "\n".join(srt_lines)
     base_name = os.path.splitext(job.get('filename', 'video'))[0]
     suffix = "_dual" if dual else ""
+    dl_name = f"subtitles_{base_name}{suffix}.srt"
     return Response(
         content=srt_content,
         media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="subtitles_{base_name}{suffix}.srt"'},
+        headers={"Content-Disposition": f'attachment; filename="{dl_name}"'},
     )
 
 def _format_vtt_time(seconds):
@@ -833,7 +1382,11 @@ def _format_vtt_time(seconds):
 
 @router.get("/dub/vtt/{job_id}")
 @router.get("/dub/vtt/{job_id}/{filename}")
-async def dub_export_vtt(job_id: str, dual: bool = False):
+async def dub_export_vtt(
+    job_id: str,
+    dual: bool = False,
+    lang: str = Query(None, description="Track language code. When that track was generated under Smart Fit or stretch_video, cue times come from the fitted timeline."),
+):
     job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -842,22 +1395,28 @@ async def dub_export_vtt(job_id: str, dual: bool = False):
     if not segments:
         raise HTTPException(status_code=400, detail="No transcript segments available")
 
+    # Same strategy-aware cue timing as /dub/srt (see comment there).
+    fitted = _fitted_segments_for(job, lang)
+    if fitted:
+        segments = _apply_fitted_times(segments, fitted)
+    cues = None if fitted else _fitted_cue_times(job, lang)
+
     vtt_lines = ["WEBVTT", ""]
     for i, seg in enumerate(segments):
-        start_ts = _format_vtt_time(seg["start"])
-        end_ts = _format_vtt_time(seg["end"])
+        s, e = cues[i] if cues else (seg["start"], seg["end"])
         vtt_lines.append(str(i + 1))
-        vtt_lines.append(f"{start_ts} --> {end_ts}")
+        vtt_lines.append(f"{_format_vtt_time(s)} --> {_format_vtt_time(e)}")
         vtt_lines.append(_pick_subtitle_text(seg, dual))
         vtt_lines.append("")
 
     vtt_content = "\n".join(vtt_lines)
     base_name = os.path.splitext(job.get('filename', 'video'))[0]
     suffix = "_dual" if dual else ""
+    dl_name = f"subtitles_{base_name}{suffix}.vtt"
     return Response(
         content=vtt_content,
         media_type="text/vtt",
-        headers={"Content-Disposition": f'attachment; filename="subtitles_{base_name}{suffix}.vtt"'},
+        headers={"Content-Disposition": f'attachment; filename="{dl_name}"'},
     )
 
 
@@ -873,10 +1432,19 @@ async def dub_export_segments_zip(job_id: str):
         raise HTTPException(status_code=400, detail="No segments available")
 
     zip_buffer = io.BytesIO()
+    order = job.get("seg_order") or []
+    base = os.path.realpath(DUB_DIR)
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for i, seg in enumerate(segments):
-            seg_path = os.path.join(DUB_DIR, job_id, f"seg_{i}.wav")
-            if os.path.exists(seg_path):
+            seg_id = order[i] if i < len(order) else i
+            # realpath + containment guard before any filesystem access.
+            seg_path = None
+            for _sid in (seg_id, i):
+                cand = os.path.realpath(dub_seg_path(job_id, _sid))
+                if cand.startswith(base + os.sep) and os.path.exists(cand):
+                    seg_path = cand
+                    break
+            if seg_path:
                 speaker = seg.get("speaker_id", "Speaker1").replace(" ", "")
                 start_str = f"{seg['start']:.2f}"
                 end_str = f"{seg['end']:.2f}"

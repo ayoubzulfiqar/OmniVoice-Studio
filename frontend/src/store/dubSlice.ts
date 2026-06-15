@@ -83,9 +83,25 @@ export interface DubSlice {
   dubDuration: number;
   dubTracks: string[];
 
+  // Bumped every time a generation completes. Cache-busts the dubbed
+  // preview-video URL, which is otherwise identical across re-dubs — the
+  // WebView could keep serving the previous dub after an edit + re-generate
+  // (#281).
+  dubGenNonce: number;
+
   // ── Language / translate ──────────────────────────────────────────────
   dubLang: string;
   dubLangCode: string;
+
+  // Optional speaker-count hint passed to pyannote diarization (#274). null =
+  // let pyannote auto-detect; a positive int forces that many speakers when
+  // auto-detect collapses a multi-speaker clip to one.
+  dubNumSpeakers: number | null;
+
+  // Optional regional dialect for translation (#280), BCP-47 like "es-AR".
+  // '' = default (no regional preference). Honored by LLM-backed translate
+  // paths (OpenAI/Ollama provider or Cinematic quality).
+  dubDialect: string;
 
   // ── Generation options ────────────────────────────────────────────────
   dubInstruct: string;
@@ -134,8 +150,11 @@ export interface DubSlice {
   setDubFilename: (v: Updater<string>) => void;
   setDubDuration: (v: Updater<number>) => void;
   setDubTracks: (v: Updater<string[]>) => void;
+  bumpDubGenNonce: () => void;
   setDubLang: (v: Updater<string>) => void;
   setDubLangCode: (v: Updater<string>) => void;
+  setDubNumSpeakers: (v: Updater<number | null>) => void;
+  setDubDialect: (v: Updater<string>) => void;
   setDubInstruct: (v: Updater<string>) => void;
   setPreserveBg: (v: Updater<boolean>) => void;
   setDefaultTrack: (v: Updater<string>) => void;
@@ -151,8 +170,8 @@ const INITIAL: Omit<DubSlice,
   | 'setDubJobId' | 'setDubStep' | 'setDubInputType' | 'setDubTaskId' | 'setDubPrepStage'
   | 'setDubPrepProgress' | 'setDubCurrentSegId'
   | 'setDubProgress' | 'setDubError' | 'setDubFailure' | 'setIsTranslating' | 'setDubSegments'
-  | 'setDubTranscript' | 'setDubFilename' | 'setDubDuration' | 'setDubTracks'
-  | 'setDubLang' | 'setDubLangCode' | 'setDubInstruct' | 'setPreserveBg'
+  | 'setDubTranscript' | 'setDubFilename' | 'setDubDuration' | 'setDubTracks' | 'bumpDubGenNonce'
+  | 'setDubLang' | 'setDubLangCode' | 'setDubNumSpeakers' | 'setDubDialect' | 'setDubInstruct' | 'setPreserveBg'
   | 'setDefaultTrack' | 'setExportTracks' | 'setPreviewSegIds' | 'setSpeakerClones'
   | 'setSegmentEffectPreset' | 'setAvailableEffectPresets' | 'resetDubState'
 > = {
@@ -172,8 +191,11 @@ const INITIAL: Omit<DubSlice,
   dubFilename: '',
   dubDuration: 0,
   dubTracks: [],
+  dubGenNonce: 0,
   dubLang: 'Auto',
   dubLangCode: 'en',
+  dubNumSpeakers: null,
+  dubDialect: '',
   dubInstruct: '',
   preserveBg: true,
   defaultTrack: 'original',
@@ -203,8 +225,11 @@ export const createDubSlice: StateCreator<DubSlice, [], [], DubSlice> = (set, ge
   setDubFilename:  (v) => set((s) => ({ dubFilename:  resolve(v, s.dubFilename) })),
   setDubDuration:  (v) => set((s) => ({ dubDuration:  resolve(v, s.dubDuration) })),
   setDubTracks:    (v) => set((s) => ({ dubTracks:    resolve(v, s.dubTracks) })),
+  bumpDubGenNonce: () => set(() => ({ dubGenNonce: Date.now() })),
   setDubLang:      (v) => set((s) => ({ dubLang:      resolve(v, s.dubLang) })),
   setDubLangCode:  (v) => set((s) => ({ dubLangCode:  resolve(v, s.dubLangCode) })),
+  setDubNumSpeakers: (v) => set((s) => ({ dubNumSpeakers: resolve(v, s.dubNumSpeakers) })),
+  setDubDialect:   (v) => set((s) => ({ dubDialect:   resolve(v, s.dubDialect) })),
   setDubInstruct:  (v) => set((s) => ({ dubInstruct:  resolve(v, s.dubInstruct) })),
   setPreserveBg:   (v) => set((s) => ({ preserveBg:   resolve(v, s.preserveBg) })),
   setDefaultTrack: (v) => set((s) => ({ defaultTrack: resolve(v, s.defaultTrack) })),

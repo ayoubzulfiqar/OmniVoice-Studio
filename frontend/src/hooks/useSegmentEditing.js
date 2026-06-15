@@ -8,6 +8,8 @@ import { useState, useRef, useCallback } from 'react';
 import { useAppStore } from '../store';
 import { askConfirm } from '../utils/dialog';
 import { apiPost } from '../api/client';
+import { segmentGenInputs } from '../utils/segments';
+import { commitMoveResize } from '../utils/timeline';
 
 export default function useSegmentEditing() {
   const dubSegments = useAppStore(s => s.dubSegments);
@@ -54,6 +56,23 @@ export default function useSegmentEditing() {
     pushUndo(dubSegments);
     setDubSegments(prev => prev.filter(s => s.id !== id));
   }, [dubSegments]);
+
+  // Timeline drag/resize commit (#280, item 3). Called ONCE per gesture by
+  // SegmentTrack (live drag positions stay in component state); keyboard
+  // nudges coalesce by passing undo:false after the first nudge of a focus
+  // session. String(id) match fixes the old parseInt('seg-3_a') bug that
+  // edited the wrong segment after a split. commitMoveResize() preserves
+  // fingerprint parity (move never touches generation inputs; resize only
+  // changes `speed`, dropping the key at 1.0).
+  const segmentMoveResize = useCallback((id, { start, end }, opts = {}) => {
+    const { undo = true } = opts;
+    if (undo) pushUndo(dubSegments);
+    setDubSegments(prev => prev.map(s =>
+      String(s.id) === String(id) ? commitMoveResize(s, { start, end }) : s));
+  }, [dubSegments]);
+
+  // Timeline selection — syncs the segment table (scroll + highlight).
+  const [timelineSelSegId, setTimelineSelSegId] = useState(null);
 
   const segmentRestoreOriginal = useCallback((id) => {
     pushUndo(dubSegments);
@@ -161,12 +180,10 @@ export default function useSegmentEditing() {
       return;
     }
     try {
+      // Same payload shape as the generate request (utils/segments.js) so
+      // stored fingerprints actually match unchanged segments (#281).
       const res = await apiPost('/tools/incremental', {
-        segments: dubSegments.map(s => ({
-          id: String(s.id), text: s.text, target_lang: s.target_lang,
-          profile_id: s.profile_id, instruct: s.instruct,
-          speed: s.speed, direction: s.direction,
-        })),
+        segments: dubSegments.map(s => ({ id: String(s.id), ...segmentGenInputs(s) })),
         stored_hashes: lastGenFingerprints,
       });
       setIncrementalPlan({ stale: res.stale, fresh: res.fresh });
@@ -180,7 +197,9 @@ export default function useSegmentEditing() {
     undo, redo, pushUndo, editSegments,
     // Per-segment operations
     segmentEditField, segmentDelete, segmentRestoreOriginal,
-    segmentSplit, segmentMerge,
+    segmentSplit, segmentMerge, segmentMoveResize,
+    // Timeline selection (waveform ↔ table sync)
+    timelineSelSegId, setTimelineSelSegId,
     // Multi-select
     selectedSegIds, setSelectedSegIds,
     toggleSegSelect, selectAllSegs, clearSegSelection,

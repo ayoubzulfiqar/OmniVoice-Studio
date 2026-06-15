@@ -1,5 +1,6 @@
 import React from 'react';
-import { CheckCircle, AlertTriangle, XCircle, Loader } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { CheckCircle, AlertTriangle, XCircle, Loader, Search, Lightbulb } from 'lucide-react';
 import { usePreflight, useModelStatus } from '../api/hooks';
 import './ReadinessChecklist.css';
 
@@ -26,6 +27,7 @@ const StatusIcon = ({ status, size = 14 }) => {
 };
 
 export default function ReadinessChecklist({ compact = false, showWhenAllPass = false }) {
+  const { t } = useTranslation();
   const { data: preflight, isLoading: preflightLoading } = usePreflight();
   const { data: modelData, isLoading: modelLoading } = useModelStatus();
 
@@ -40,16 +42,16 @@ export default function ReadinessChecklist({ compact = false, showWhenAllPass = 
   const modelErr    = modelData?.error || null;
   const modelCheck = {
     id: 'asr-model',
-    label: 'ASR Model',
+    label: t('readiness.asr_model'),
     status: modelStatus === 'ready' ? 'pass'
       : modelStatus === 'loading' ? 'loading'
       : modelStatus === 'error' || modelData?.sub_stage === 'error' ? 'fail'
       : 'warn',
-    detail: modelStatus === 'ready' ? 'Loaded and ready'
-      : modelStatus === 'loading' ? (modelDetail || 'Loading… (this may take 1-2 minutes on first run)')
-      : (modelData?.sub_stage === 'error' ? (modelErr || 'Failed to load') : 'Not loaded yet — will load on first transcription'),
+    detail: modelStatus === 'ready' ? t('readiness.loaded_ready')
+      : modelStatus === 'loading' ? (modelDetail || t('readiness.loading_first_run'))
+      : (modelData?.sub_stage === 'error' ? (modelErr || t('readiness.failed_to_load')) : t('readiness.not_loaded_yet')),
     fix: (modelStatus === 'error' || modelData?.sub_stage === 'error')
-      ? (modelErr ? `Error: ${modelErr}. Check logs and try restarting.` : 'Check logs for model loading errors. Try restarting.')
+      ? (modelErr ? t('readiness.error_check_logs', { error: modelErr }) : t('readiness.check_logs_restart'))
       : null,
   };
   checks.push(modelCheck);
@@ -68,16 +70,16 @@ export default function ReadinessChecklist({ compact = false, showWhenAllPass = 
   // LLM configuration (check for translate endpoint)
   const llmCheck = {
     id: 'llm',
-    label: 'LLM (Cinematic)',
+    label: t('readiness.llm_cinematic'),
     status: 'warn',
-    detail: 'Configure TRANSLATE_BASE_URL for Cinematic translation quality',
-    fix: 'Set TRANSLATE_BASE_URL and TRANSLATE_API_KEY environment variables. Works with Ollama, OpenAI, LM Studio, etc.',
+    detail: t('readiness.llm_configure'),
+    fix: t('readiness.llm_set_env'),
   };
   // If we have preflight and there's a network check passing, LLM is at least possible
   if (preflight?.checks) {
     const netCheck = preflight.checks.find(c => c.id === 'network');
     if (netCheck?.status === 'pass') {
-      llmCheck.detail = 'Optional — set TRANSLATE_BASE_URL for Cinematic quality';
+      llmCheck.detail = t('readiness.llm_optional');
     }
   }
   checks.push(llmCheck);
@@ -94,8 +96,8 @@ export default function ReadinessChecklist({ compact = false, showWhenAllPass = 
     return (
       <div className="readiness-checklist">
         <div className="readiness-checklist__title">
-          <span className="readiness-checklist__title-icon">🔍</span>
-          Checking system…
+          <span className="readiness-checklist__title-icon"><Search size={14} /></span>
+          {t('readiness.checking_system')}
         </div>
       </div>
     );
@@ -108,7 +110,7 @@ export default function ReadinessChecklist({ compact = false, showWhenAllPass = 
       return (
         <div className="readiness-checklist__all-pass">
           <CheckCircle size={14} />
-          All systems ready
+          {t('readiness.all_ready')}
         </div>
       );
     }
@@ -135,9 +137,9 @@ export default function ReadinessChecklist({ compact = false, showWhenAllPass = 
     <div className="readiness-checklist">
       <div className="readiness-checklist__title">
         <span className="readiness-checklist__title-icon">
-          {anyFail ? '⚠️' : '✅'}
+          {anyFail ? <AlertTriangle size={14} /> : <CheckCircle size={14} />}
         </span>
-        System Readiness
+        {t('readiness.system_readiness')}
       </div>
       <ul className="readiness-checklist__list">
         {checks.map(check => (
@@ -148,7 +150,7 @@ export default function ReadinessChecklist({ compact = false, showWhenAllPass = 
             <div>
               <div className="readiness-checklist__label">{check.label}</div>
               <div className="readiness-checklist__detail">{check.detail}</div>
-              {check.fix && <div className="readiness-checklist__fix">💡 {check.fix}</div>}
+              {check.fix && <div className="readiness-checklist__fix"><Lightbulb size={12} /> {check.fix}</div>}
             </div>
           </li>
         ))}
@@ -156,3 +158,4 @@ export default function ReadinessChecklist({ compact = false, showWhenAllPass = 
     </div>
   );
 }
+

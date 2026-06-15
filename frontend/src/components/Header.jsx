@@ -5,17 +5,21 @@ import { Globe, Fingerprint, Wand2, Film, FolderOpen, RefreshCw, Settings2, Chev
 import { Button, Badge } from '../ui';
 import NotificationPanel from './NotificationPanel';
 import { useAppStore } from '../store';
+import { useSysinfo } from '../api/hooks';
 
 const VIEW_META = {
-  launchpad:  { label: 'Launchpad',       Icon: Globe,       accent: '#f3a5b6', kicker: 'Studio' },
-  clone:      { label: 'Voice Clone',     Icon: Fingerprint, accent: '#d3869b', kicker: 'Studio' },
-  design:     { label: 'Voice Design',    Icon: Wand2,       accent: '#8ec07c', kicker: 'Studio' },
-  dub:        { label: 'Dubbing',         Icon: Film,        accent: '#fe8019', kicker: 'Studio' },
-  projects:   { label: 'OmniDrive',      Icon: FolderOpen,  accent: '#83a598', kicker: 'Library' },
-  gallery:    { label: 'Gallery',         Icon: Library,     accent: '#b8bb26', kicker: 'Library' },
-  transcriptions: { label: 'Transcriptions', Icon: FileText, accent: '#d3869b', kicker: 'Library' },
-  settings:   { label: 'Settings',        Icon: Settings2,   accent: '#fabd2f', kicker: 'Preferences' },
-  enterprise: { label: 'Commercial License', Icon: Building2, accent: '#fe8019', kicker: 'Licensing' },
+  launchpad:  { labelKey: 'header.label_launchpad',  Icon: Globe,       accent: '#f3a5b6', kickerKey: 'header.kicker_studio' },
+  studio:     { labelKey: 'nav.voice',                Icon: Fingerprint, accent: '#d3869b', kickerKey: 'header.kicker_studio' },
+  // Legacy ids — kept so a not-yet-shimmed persisted 'clone'/'design' mode
+  // still renders a sensible header (voice-studio-unification P4).
+  clone:      { labelKey: 'header.label_clone',       Icon: Fingerprint, accent: '#d3869b', kickerKey: 'header.kicker_studio' },
+  design:     { labelKey: 'header.label_design',      Icon: Wand2,       accent: '#8ec07c', kickerKey: 'header.kicker_studio' },
+  dub:        { labelKey: 'header.label_dub',         Icon: Film,        accent: '#fe8019', kickerKey: 'header.kicker_studio' },
+  projects:   { labelKey: 'header.label_projects',    Icon: FolderOpen,  accent: '#83a598', kickerKey: 'header.kicker_library' },
+  gallery:    { labelKey: 'header.label_gallery',     Icon: Library,     accent: '#b8bb26', kickerKey: 'header.kicker_library' },
+  transcriptions: { labelKey: 'header.label_transcriptions', Icon: FileText, accent: '#d3869b', kickerKey: 'header.kicker_library' },
+  settings:   { labelKey: 'header.label_settings',    Icon: Settings2,   accent: '#fabd2f', kickerKey: 'header.kicker_preferences' },
+  enterprise: { labelKey: 'header.label_enterprise',  Icon: Building2,   accent: '#fe8019', kickerKey: 'header.kicker_licensing' },
 };
 
 function WaveBars({ color = '#f3a5b6', active }) {
@@ -40,10 +44,14 @@ function WaveBars({ color = '#f3a5b6', active }) {
 }
 
 export default function Header({
-  mode, setMode, sysStats, modelStatus, doubleClickMaximize,
+  mode, setMode, modelStatus, doubleClickMaximize,
   activeProjectName, onFlushMemory,
 }) {
   const { t } = useTranslation();
+  // Sysinfo is subscribed here (not in App via useAppData) so the 5s poll
+  // only re-renders the header chrome, not the whole App tree.
+  const sysQuery = useSysinfo();
+  const sysStats = sysQuery.data ?? null;
   // Default OFF — chrome shouldn't double as a resource monitor. Power users
   // flip this on via Settings → Performance. Idle/Ready/Loading badge +
   // Flush button stay visible regardless (action-relevant).
@@ -148,11 +156,11 @@ export default function Header({
         <div className="hq-col-left__spacer" />
         <div className="hq-view-title">
           <span className="hq-view-dot" style={dotStyle} />
-          <span className="hq-view-kicker">{view.kicker}</span>
+          <span className="hq-view-kicker">{t(view.kickerKey)}</span>
           <ChevronRight size={10} color="#504945" className="hq-breadcrumb-sep" />
           <span className="hq-view-label" style={labelStyle}>
             <ViewIcon size={12} className="hq-view-icon" />
-            {view.label}
+            {t(view.labelKey)}
           </span>
           {activeProjectName ? (
             <>
@@ -212,7 +220,7 @@ export default function Header({
                 dot
                 className={`hq-stats__status-badge ${modelStatus === 'loading' ? 'ui-badge--pulse' : ''}`}
               >
-                {modelStatus === 'ready' ? 'Ready' : modelStatus === 'loading' ? 'Loading…' : 'Idle'}
+                {modelStatus === 'ready' ? t('header.status_ready') : modelStatus === 'loading' ? t('header.status_loading') : t('header.status_idle')}
               </Badge>
             </span>
             {onFlushMemory && (
@@ -221,14 +229,14 @@ export default function Header({
                   ref={flushBtnRef}
                   variant="subtle"
                   size="sm"
-                  title="Memory management"
+                  title={t('header.memory_management')}
                   loading={flushing}
                   leading={!flushing && <Zap size={8} />}
                   trailing={<ChevronDown size={8} />}
                   onClick={() => setFlushOpen(o => !o)}
                   className="hq-flush-btn"
                 >
-                  Flush
+                  {t('header.flush')}
                 </Button>
                 {flushOpen && createPortal(
                   <div
@@ -236,9 +244,9 @@ export default function Header({
                     style={{ top: dropdownPos.top, left: dropdownPos.left }}
                     ref={dropdownRef}
                   >
-                    <div className="hq-flush-dropdown__header">Loaded Models</div>
+                    <div className="hq-flush-dropdown__header">{t('header.loaded_models')}</div>
                     {loadedModels.length === 0 ? (
-                      <div className="hq-flush-dropdown__empty">No models loaded</div>
+                      <div className="hq-flush-dropdown__empty">{t('header.no_models')}</div>
                     ) : (
                       loadedModels.map(m => (
                         <div key={m.id} className="hq-flush-dropdown__item">
@@ -255,7 +263,7 @@ export default function Header({
                               disabled={unloading === m.id}
                               aria-label={`Unload ${m.name}`}
                             >
-                              {unloading === m.id ? '…' : 'Unload'}
+                              {unloading === m.id ? '…' : t('header.unload')}
                             </button>
                           )}
                         </div>
@@ -270,7 +278,7 @@ export default function Header({
                         try { await onFlushMemory(false); } finally { setFlushing(false); }
                       }}
                     >
-                      <Zap size={10} /> Flush caches
+                      <Zap size={10} /> {t('header.flush_caches')}
                     </button>
                     <button
                       className="hq-flush-dropdown__action hq-flush-dropdown__action--danger"
@@ -280,7 +288,7 @@ export default function Header({
                         try { await onFlushMemory(true); } finally { setFlushing(false); }
                       }}
                     >
-                      <Trash2 size={10} /> Unload all + flush
+                      <Trash2 size={10} /> {t('header.unload_all_flush')}
                     </button>
                   </div>,
                   document.body

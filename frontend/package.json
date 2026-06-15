@@ -1,7 +1,8 @@
 {
   "name": "omnivoice-studio",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.5",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,7 +15,8 @@
     "test:watch": "vitest",
     "test:legacy": "node --experimental-strip-types --no-warnings --test ../tests/frontend/*.test.mjs",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
@@ -38,6 +40,7 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@tauri-apps/plugin-window-state": "^2.4.1",
+    "country-flag-icons": "^1.6.17",
     "i18next": "^26.0.8",
     "i18next-browser-languagedetector": "^8.2.1",
     "lucide-react": "^1.14.0",
@@ -53,6 +56,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.60.0",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/cli": "^2.11.0",
     "@testing-library/jest-dom": "^6.9.1",
@@ -65,6 +69,7 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
     "jsdom": "^29.1.1",
+    "playwright-core": "1.60.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.10",
     "vitest": "^4.1.5"

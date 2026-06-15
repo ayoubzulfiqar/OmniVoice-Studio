@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, ChevronDown, Check, Star, Clock } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 const MAX_DISPLAY = 200;
 
@@ -31,7 +32,16 @@ export default function SearchableSelect({
   buttonStyle,
   buttonClassName = 'input-base',
   size = 'md',
+  // When true, emit a `.ss-group-label` header each time `option.group` changes
+  // (and `option.groupLabel` is non-empty) while walking the MAIN rows. Default
+  // false so the two pre-existing call sites are unaffected. (#22)
+  renderGroupHeaders = false,
+  // Gate which committed values get recorded as recents. Default records all
+  // (back-compat). VoiceSelector passes a guard so sentinel values
+  // ('' / preset: / auto:) never pollute the recents list. (#22)
+  isRecentable = () => true,
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
@@ -118,7 +128,7 @@ export default function SearchableSelect({
   const commit = (o) => {
     const v = getVal(o);
     onChange?.(v);
-    if (recentsKey) {
+    if (recentsKey && isRecentable(v)) {
       const next = [v, ...recents.filter(r => r !== v)].slice(0, 8);
       setRecents(next);
       writeRecents(recentsKey, next);
@@ -161,7 +171,7 @@ export default function SearchableSelect({
             <input
               ref={inputRef}
               className="ss-search-input"
-              placeholder="Search…"
+              placeholder={t('common.search')}
               value={query}
               onChange={e => { setQuery(e.target.value); setHighlight(0); }}
               onKeyDown={onKey}
@@ -170,41 +180,53 @@ export default function SearchableSelect({
 
           <div ref={listRef} className="ss-list">
             {flatItems.length === 0 && (
-              <div className="ss-empty">No matches</div>
+              <div className="ss-empty">{t('common.no_matches')}</div>
             )}
 
             {pinned.length > 0 && (
               <div className="ss-group-label">
-                {recents.length ? <><Clock size={9}/> Recent & Popular</> : <><Star size={9}/> Popular</>}
+                {recents.length ? <><Clock size={9}/> {t('common.recent_and_popular')}</> : <><Star size={9}/> {t('common.popular_label')}</>}
               </div>
             )}
 
-            {flatItems.map((it, idx) => {
+            {(() => { let lastGroup; return flatItems.map((it, idx) => {
               const v = getVal(it.o);
               const selected = v === value;
               const highlighted = idx === highlight;
+              // Group header: emitted lazily on the first MAIN row of a new
+              // group whose option carries a non-empty groupLabel (#22). Pinned
+              // recent/popular rows never trigger a header. `lastGroup` advances
+              // only on main rows so a pinned row can't swallow the first header.
+              const showHeader =
+                renderGroupHeaders &&
+                it.kind === 'main' &&
+                it.o && it.o.groupLabel &&
+                it.o.group !== lastGroup;
+              if (it.kind === 'main') lastGroup = it.o?.group;
               return (
-                <div
-                  key={`${it.kind}-${v}-${idx}`}
-                  data-idx={idx}
-                  className={`ss-option ${highlighted ? 'ss-hl' : ''} ${selected ? 'ss-sel' : ''}`}
-                  onMouseEnter={() => setHighlight(idx)}
-                  onMouseDown={(e) => { e.preventDefault(); commit(it.o); }}
-                  role="option"
-                  aria-selected={selected}
-                >
-                  {it.kind === 'recent' && <Clock size={9} className="ss-kind-icon"/>}
-                  {it.kind === 'popular' && <Star size={9} className="ss-kind-icon"/>}
-                  <span className="ss-option-label">
-                    {renderOption ? renderOption(it.o) : getLabel(it.o)}
-                  </span>
-                  {selected && <Check size={10} className="ss-check"/>}
-                </div>
+                <React.Fragment key={`${it.kind}-${v}-${idx}`}>
+                  {showHeader && <div className="ss-group-label">{it.o.groupLabel}</div>}
+                  <div
+                    data-idx={idx}
+                    className={`ss-option ${highlighted ? 'ss-hl' : ''} ${selected ? 'ss-sel' : ''}`}
+                    onMouseEnter={() => setHighlight(idx)}
+                    onMouseDown={(e) => { e.preventDefault(); commit(it.o); }}
+                    role="option"
+                    aria-selected={selected}
+                  >
+                    {it.kind === 'recent' && <Clock size={9} className="ss-kind-icon"/>}
+                    {it.kind === 'popular' && <Star size={9} className="ss-kind-icon"/>}
+                    <span className="ss-option-label">
+                      {renderOption ? renderOption(it.o) : getLabel(it.o)}
+                    </span>
+                    {selected && <Check size={10} className="ss-check"/>}
+                  </div>
+                </React.Fragment>
               );
-            })}
+            }); })()}
 
             {!query && filtered.length > MAX_DISPLAY && (
-              <div className="ss-more">Showing {MAX_DISPLAY} of {filtered.length}. Type to search…</div>
+              <div className="ss-more">{t('common.showing_of', { shown: MAX_DISPLAY, total: filtered.length })}</div>
             )}
           </div>
         </div>

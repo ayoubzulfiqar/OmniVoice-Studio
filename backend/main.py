@@ -19,6 +19,22 @@ if sys.platform == "win32":
     os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
     os.environ.setdefault("TORCHINDUCTOR_DISABLE", "1")
 
+# The backend's stdout/stderr are pipes owned by the desktop shell that
+# spawned it. If that shell exits while the backend survives (crash,
+# relaunch, orphan), the pipes close — and the next write raises
+# BrokenPipeError. transformers' tqdm weight-loading bar writes constantly,
+# so an orphaned backend couldn't load the model at all (caught in the wild
+# by the in-app diagnostic report). Wrap stdio so EPIPE is swallowed
+# process-wide: logs are best-effort for a server, model loading is not.
+# (utils.hf_progress.SafeFileWrapper — same wrapper the patched hub tqdm
+# already uses for its own fp.)
+from utils.hf_progress import SafeFileWrapper as _SafeStdio  # noqa: E402
+
+if not getattr(sys.stdout, "_is_safe_wrapper", False):
+    sys.stdout = _SafeStdio(sys.stdout)
+if not getattr(sys.stderr, "_is_safe_wrapper", False):
+    sys.stderr = _SafeStdio(sys.stderr)
+
 try:
     import dotenv
 
@@ -98,14 +114,25 @@ if sys.platform == "win32":
 # wrapper that our patch intercepts. Override-able by the user.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
+# ── HF network timeouts ─────────────────────────────────────────────────────
+# Bound HF network ops so a stalled metadata HEAD or a dead download socket
+# RAISES (and surfaces as an error) instead of hanging the model-load worker
+# forever — the root cause of the "demo voice spins forever, no error" report
+# (most often hit on Windows behind a proxy / firewall / antivirus that wedges
+# the multi-GB legacy-LFS transfer). HF_HUB_DOWNLOAD_TIMEOUT is a *per-read*
+# timeout: it resets on every received chunk, so a slow-but-progressing
+# download is never punished — only a genuinely dead socket trips it. Both are
+# user-overridable for unusually slow links. Set before huggingface_hub is
+# imported so its constants pick them up.
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "15")
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
+
 
 # Prevent torchaudio from lazy-importing torchcodec (broken on some installs).
 # Proper fix = exclude torchcodec in pyproject.toml; this is a belt-and-braces guard.
 os.environ.setdefault("TORCHAUDIO_USE_TORCHCODEC", "0")
 sys.modules.setdefault("torchcodec", None)
 
-import soundfile as sf
-import torch
 import torchaudio
 import warnings
 import logging
@@ -257,7 +284,12 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import MutableHeaders
-from scalar_fastapi import get_scalar_api_reference
+# Docs-only dependency: a venv created before scalar-fastapi entered the
+# dependency set must still boot the backend (#307) — /docs degrades instead.
+try:
+    from scalar_fastapi import get_scalar_api_reference
+except ImportError:
+    get_scalar_api_reference = None
 import traceback
 
 _crash_log_lock = threading.Lock()
@@ -282,8 +314,12 @@ from api.routers import (
     glossary,
     engines,
     tools,
+    stories,
     setup,
     gallery,
+    archetypes,
+    describe_voice,
+    community,
     batch,
     watermark,
     events,
@@ -292,7 +328,10 @@ from api.routers import (
     openai_compat,
     tts_stream,
     marketplace,
+    personas,
     sonitranslate,
+    audiobook,
+    longform_jobs,
     settings as settings_router,  # Phase 1 AUTH-03: HF token save/clear/state
 )
 from utils import hf_progress
@@ -301,6 +340,30 @@ from utils import hf_progress
 # that triggers `hf_hub_download` (transformers, mlx_whisper, etc.) must see
 # the patched class, not the original.
 hf_progress.install()
+
+# Wire the overall download aggregator's byte sink onto the patched tqdm so
+# parallel per-file updates feed one accurate overall bar (FDL-06).
+try:
+    from utils import download_aggregator
+    download_aggregator.install()
+except Exception:
+    pass
+
+# Log the download-acceleration state once at startup (FDL-03) so a slow
+# download report can be triaged from the logs without reproducing. Note: the
+# app sets HF_HUB_DISABLE_XET=1 above by default (legacy LFS for byte progress),
+# so xet_active is normally False even though hf_xet is installed.
+try:
+    from api.routers.system import _fast_download_status as _fd_status
+    _fd = _fd_status()
+    _xet_ver = f" {_fd['xet_version']}" if _fd.get("xet_version") else ""
+    logging.getLogger("omnivoice.model").info(
+        "downloads: Xet %s (hf_xet%s installed=%s), high_perf=%s",
+        "ACTIVE" if _fd["xet_active"] else "disabled → legacy LFS",
+        _xet_ver, _fd["xet_installed"], _fd["high_performance"],
+    )
+except Exception:
+    pass
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -392,7 +455,23 @@ async def lifespan(app: FastAPI):
         capture_preload_task = asyncio.create_task(_preload_capture_asr())
     else:
         logger.info("Capture ASR preload disabled; dictation ASR will load on first use.")
-    yield
+
+    # ── MCP session manager (Wave 2.2) ────────────────────────────────────
+    # FastMCP's Streamable-HTTP transport needs its session manager running
+    # for the lifetime of the app. It's created lazily by streamable_http_app()
+    # (called in mount_mcp below), so we stack its `run()` context into ours
+    # via AsyncExitStack rather than replacing this lifespan. Best-effort: a
+    # missing/broken MCP layer must never stop the rest of the backend.
+    from contextlib import AsyncExitStack
+    async with AsyncExitStack() as _mcp_stack:
+        _sm = getattr(app.state, "mcp_session_manager", None)
+        if _sm is not None:
+            try:
+                await _mcp_stack.enter_async_context(_sm.run())
+                logger.info("MCP server mounted at /mcp")
+            except Exception as e:
+                logger.warning("MCP session manager failed to start: %s", e)
+        yield
     # ── Graceful shutdown (SIGTERM from Tauri, Ctrl+C, etc.) ────────────
     logger.info("Shutdown: cleaning up…")
     idle_task.cancel()
@@ -441,6 +520,14 @@ app = FastAPI(
 @app.get("/docs", include_in_schema=False)
 async def scalar_docs():
     """Interactive API documentation powered by Scalar."""
+    if get_scalar_api_reference is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "API docs unavailable: scalar-fastapi is not installed "
+                          "in the backend environment (#307)."
+            },
+        )
     return get_scalar_api_reference(
         openapi_url=app.openapi_url,
         title=app.title,
@@ -468,6 +555,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     except Exception:
         logger.exception("Failed to write crash log")
     logger.exception("Unhandled exception for %s", request.url)
+    # Structured journal entry (dedup + error_class) — feeds /system/errors/
+    # recent, the diagnostic bundle, and the bug-report pipeline. record()
+    # never raises; a journal failure must not shadow the real error.
+    from core import error_journal
+    _entry = error_journal.record(
+        exc, route=str(request.url.path), trace=traceback.format_exc()
+    )
     # CORSMiddleware doesn't always get a shot at `exception_handler`-created
     # responses, which leaves the browser reporting every 500 as a bare CORS
     # error. Attach the headers manually so the real `detail` bubbles up.
@@ -477,7 +571,11 @@ async def global_exception_handler(request: Request, exc: Exception):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
         headers["Vary"] = "Origin"
-    return JSONResponse({"detail": str(exc)}, status_code=500, headers=headers)
+    return JSONResponse(
+        {"detail": str(exc), "error_class": _entry.get("error_class")},
+        status_code=500,
+        headers=headers,
+    )
 
 
 _LOOPBACK_CLIENTS = {"127.0.0.1", "::1"}
@@ -538,6 +636,68 @@ class NetworkAccessMiddleware:
         return await self.app(scope, receive, send)
 
 
+class BearerKeyMiddleware:
+    """When OMNIVOICE_API_KEY is set, non-loopback clients must present it on
+    every HTTP + WebSocket request: ``Authorization: Bearer <key>``,
+    ``?api_key=<key>`` (browser WebSockets cannot set headers), or the
+    ``ov_key`` cookie (set on the first successful HTTP auth). Loopback
+    always bypasses — the desktop default is unchanged — and the SPA shell
+    paths stay reachable so a remote UI can load and show what's wrong.
+
+    Inert when the env var is unset (the default). Pure ASGI for the same
+    no-buffering reason as NetworkAccessMiddleware above. Plain-HTTP caveat
+    is documented in docs/remote-gpu.md: the key is sniffable outside a
+    WireGuard (Tailscale) or TLS (tailscale serve) transport.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        key = os.environ.get("OMNIVOICE_API_KEY") or ""
+        if not key:
+            return await self.app(scope, receive, send)
+        client = scope["client"][0] if scope.get("client") else None
+        if client in _LOOPBACK_CLIENTS:
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        if scope["type"] == "http" and (
+            path in _SHELL_PATHS or path.startswith("/assets/") or path.startswith("/favicon")
+        ):
+            return await self.app(scope, receive, send)
+
+        from starlette.requests import HTTPConnection
+
+        conn = HTTPConnection(scope)
+        auth = conn.headers.get("authorization", "")
+        supplied = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        if not supplied:
+            supplied = conn.query_params.get("api_key") or conn.cookies.get("ov_key") or ""
+
+        if not secrets.compare_digest(supplied, key):
+            if scope["type"] == "websocket":
+                # Reject the handshake; 1008 = policy violation.
+                await receive()  # consume websocket.connect
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            resp = JSONResponse({"detail": "API key required"}, status_code=401)
+            return await resp(scope, receive, send)
+
+        if scope["type"] == "http" and conn.cookies.get("ov_key") != key:
+            async def send_with_cookie(message):
+                if message["type"] == "http.response.start":
+                    headers = MutableHeaders(scope=message)
+                    headers.append(
+                        "set-cookie", f"ov_key={key}; Path=/; SameSite=Lax"
+                    )
+                await send(message)
+
+            return await self.app(scope, receive, send_with_cookie)
+        return await self.app(scope, receive, send)
+
+
 # UI dev-server port — single-sourced from OMNIVOICE_UI_PORT so a user who
 # moves the Vite dev server off 3901 still gets a matching CORS allow-list.
 def _ui_port() -> int:
@@ -569,6 +729,15 @@ app.add_middleware(
 # applied even to the 401 PIN-required responses). Inert unless a PIN is set.
 app.add_middleware(NetworkAccessMiddleware)
 
+# Remote-backend bearer gate (parity program Wave 2.3 / §R2). Inert unless
+# OMNIVOICE_API_KEY is set. Distinct from the PIN gate above: the PIN guards
+# casual LAN-share guests for one session; the API key is the durable
+# credential for running this backend remotely (Tailscale / Docker GPU box).
+# Covers WebSockets too — the PIN gate never did, because every WS endpoint
+# carried its own loopback guard; remote mode is exactly the case where a
+# keyed non-loopback client must reach them.
+app.add_middleware(BearerKeyMiddleware)
+
 app.mount("/audio", StaticFiles(directory=OUTPUTS_DIR), name="audio")
 app.mount("/voice_audio", StaticFiles(directory=VOICES_DIR), name="voice_audio")
 
@@ -592,7 +761,7 @@ def health():
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
 
-    return {"status": "ok", "device": device}
+    return {"status": "ok", "device": device, "version": APP_VERSION}
 
 
 app.include_router(system.router)
@@ -607,8 +776,12 @@ app.include_router(projects.router)
 app.include_router(glossary.router)
 app.include_router(engines.router)
 app.include_router(tools.router)
+app.include_router(stories.router)
 app.include_router(setup.router)
 app.include_router(gallery.router)
+app.include_router(archetypes.router)
+app.include_router(describe_voice.router)  # issue #317: free-text voice design
+app.include_router(community.router)
 app.include_router(batch.router)
 app.include_router(watermark.router)
 app.include_router(events.router)
@@ -617,11 +790,66 @@ app.include_router(capture_ws.router)
 app.include_router(openai_compat.router)
 app.include_router(tts_stream.router)
 app.include_router(marketplace.router)
+app.include_router(personas.router)
 app.include_router(sonitranslate.router)
+app.include_router(audiobook.router)
+app.include_router(longform_jobs.router)
 app.include_router(settings_router.router)  # Phase 1 AUTH-03 endpoints
+from api.routers import mcp_bindings as _mcp_bindings_router  # noqa: E402
+app.include_router(_mcp_bindings_router.router)  # Wave 2.2 per-agent voice bindings
+
+# ── Mount the MCP server (Wave 2.2) ───────────────────────────────────────
+# FastMCP's Streamable-HTTP app is sub-mounted at /mcp; its session manager is
+# stashed on app.state for the lifespan above to run. Opt-out via
+# OMNIVOICE_MCP_DISABLE=1; best-effort so a missing mcp package or a build
+# without it never breaks startup.
+if os.environ.get("OMNIVOICE_MCP_DISABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
+    try:
+        from mcp_server import create_mcp_server
+
+        _mcp = create_mcp_server()
+        _mcp_app = _mcp.streamable_http_app()
+        app.state.mcp_session_manager = _mcp.session_manager
+        app.mount("/mcp", _mcp_app)
+        logging.getLogger("omnivoice.api").info("MCP app mounted at /mcp")
+    except Exception as _mcp_err:  # noqa: BLE001
+        logging.getLogger("omnivoice.api").info(
+            "MCP server not mounted (%s); /mcp disabled.", _mcp_err
+        )
 
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(frontend_path):
+    # ── Runtime API-base override (Docker / reverse-proxy deployments) ──────
+    # When OMNIVOICE_PUBLIC_API_BASE is set we inject it into index.html as
+    # `window.__OMNIVOICE_API_BASE__`, which the SPA's API resolver reads first.
+    # Unset (the default) → StaticFiles serves index.html untouched: same-origin,
+    # zero overhead, no behavior change. See core/spa_inject.py.
+    from core.spa_inject import is_valid_public_api_base, inject_api_base
+
+    _public_api_base = os.environ.get("OMNIVOICE_PUBLIC_API_BASE", "").strip().rstrip("/")
+    _index_path = os.path.join(frontend_path, "index.html")
+    if _public_api_base and not is_valid_public_api_base(_public_api_base):
+        logging.getLogger("omnivoice.api").warning(
+            "OMNIVOICE_PUBLIC_API_BASE=%r is not a valid http(s) URL; ignoring.",
+            _public_api_base,
+        )
+        _public_api_base = ""
+
+    if _public_api_base and os.path.isfile(_index_path):
+        from fastapi.responses import HTMLResponse
+
+        def _index_with_api_base() -> "HTMLResponse":
+            with open(_index_path, "r", encoding="utf-8") as _fh:
+                return HTMLResponse(inject_api_base(_fh.read(), _public_api_base))
+
+        @app.get("/", include_in_schema=False)
+        def _index_root():
+            return _index_with_api_base()
+
+        @app.get("/index.html", include_in_schema=False)
+        def _index_html():
+            return _index_with_api_base()
+
     app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
 else:
 
@@ -645,7 +873,28 @@ if __name__ == "__main__":
         help="Boot the server, poll /health, exit 0 on success / 1 on timeout. "
              "Used by the release-time installer smoke step in .github/workflows/release.yml.",
     )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Run the self-check suite (device, ffmpeg, HF token, disk, engines, "
+             "network) without starting the server. Exit 0 if healthy, 1 if any "
+             "check fails. Output is scrubbed — safe to paste into a GitHub issue.",
+    )
+    parser.add_argument(
+        "--deep",
+        action="store_true",
+        help="With --diagnose: also load the active TTS engine and synthesize a "
+             "short utterance. Catches 'installed but broken'. May cold-load the "
+             "model (minutes + a large download on a fresh install).",
+    )
     args, _unknown = parser.parse_known_args()
+
+    if args.diagnose:
+        from core.diagnose import run_diagnostics, format_text
+
+        _report = run_diagnostics(deep=args.deep)
+        print(format_text(_report), flush=True)
+        sys.exit(0 if _report["summary"]["ok"] else 1)
 
     # Single-sourced from OMNIVOICE_PORT so the bare `python main.py` path and
     # `--health-check` agree with the Rust sidecar / uvicorn-CLI `--port`.

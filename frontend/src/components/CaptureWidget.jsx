@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { copyText } from "../utils/copyText";
 import { X, Loader } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { useAppStore } from '../store';
+import { useTranslation } from 'react-i18next';
 import './CaptureWidget.css';
 
-import { API as API_BASE } from '../api/client';
+import { wsUrl as buildWsUrl, apiFetch } from '../api/client';
 import { addTranscription } from '../pages/Transcriptions';
+import { micErrorMessage } from '../utils/micError';
 
 // Flip the system tray icon between default and red-dot. No-op when not
 // running inside the Tauri shell (e.g. browser webui, Docker).
@@ -34,6 +37,7 @@ function formatElapsed(ms) {
  * Records → transcribes → auto-pastes → auto-dismisses.
  */
 export default function CaptureWidget({ onDismiss }) {
+  const { t } = useTranslation();
   const [state, setState] = useState('idle'); // idle | recording | transcribing | done | error
   const [transcript, setTranscript] = useState('');
   const [duration, setDuration] = useState(0);
@@ -53,6 +57,21 @@ export default function CaptureWidget({ onDismiss }) {
   const wsHadFinalRef = useRef(false);
   const fallbackTimerRef = useRef(null);
   const startTimeRef = useRef(0);
+  // Opt-in dictate-over-playback AEC (parity Action 8). When on, we capture
+  // raw PCM via an AudioWorklet and tag mic/far-end frames instead of using
+  // MediaRecorder. All AEC state lives in refs so the default path is inert.
+  const aecModeRef = useRef(false);
+  const aecStopRef = useRef(null);     // async teardown of the mic worklet graph
+  const farEndUnsubRef = useRef(null); // unsubscribe from the far-end bus
+
+  const teardownAec = useCallback(async () => {
+    try { farEndUnsubRef.current?.(); } catch { /* ignore */ }
+    farEndUnsubRef.current = null;
+    const stop = aecStopRef.current;
+    aecStopRef.current = null;
+    try { await stop?.(); } catch { /* ignore */ }
+    aecModeRef.current = false;
+  }, []);
 
   // ── Hold-to-talk: listen for tray-dictate (start) and tray-dictate-stop (release) ──
   useEffect(() => {
@@ -106,7 +125,11 @@ export default function CaptureWidget({ onDismiss }) {
 
   // Apply transcription result → auto-paste → auto-dismiss
   const applyResult = useCallback(async (data) => {
-    setTranscript(data.text || '');
+    // Wave 2.1: the backend may attach an LLM-refined version of the final
+    // text (filler words removed, self-corrections applied). Paste/show the
+    // refined text when present; the raw text is kept in history alongside.
+    const finalText = data.refined_text || data.text || '';
+    setTranscript(finalText);
     setLastEngine(data.engine || '');
     setLastTime(data.transcription_time_s || 0);
     setState('done');
@@ -115,12 +138,16 @@ export default function CaptureWidget({ onDismiss }) {
       addTranscription(data);
     }
 
-    if (data.text) {
+    if (finalText) {
       try {
-        await navigator.clipboard.writeText(data.text);
+        // Best-effort WebView copy (works in browser mode). In Tauri the
+        // widget window is unfocused on macOS, where WebView clipboard APIs
+        // fail silently — so pass the transcript to simulate_paste, which
+        // writes the clipboard natively (OS-side) before sending ⌘V (#287).
+        await copyText(finalText);
         try {
           const { invoke } = await import('@tauri-apps/api/core');
-          await invoke('simulate_paste');
+          await invoke('simulate_paste', { text: finalText });
         } catch { /* not in Tauri */ }
       } catch { /* clipboard API may fail */ }
 
@@ -168,13 +195,18 @@ export default function CaptureWidget({ onDismiss }) {
         ? 'audio/webm;codecs=opus'
         : 'audio/webm';
 
+      // Read the opt-in AEC pref at start time (avoids a stale closure).
+      const aecOn = useAppStore.getState().aecEnabled === true;
+      aecModeRef.current = aecOn;
+
       // Open WebSocket BEFORE starting recorder
       try {
-        const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsHost = API_BASE.replace(/^https?:\/\//, '').replace(/\/$/, '')
-          || `${window.location.hostname}:3900`;
-        const wsUrl = `${wsProto}://${wsHost}/ws/transcribe`;
-        const ws = new WebSocket(wsUrl);
+        // Scheme + host + remote api key all derive from the API base
+        // (Wave 2.3) — window.location lies inside the Tauri webview.
+        // AEC mode adds ?aec=1 so the server runs the NLMS canceller and
+        // expects tagged raw-PCM frames.
+        const wsPath = aecOn ? '/ws/transcribe?aec=1&sr=16000' : '/ws/transcribe';
+        const ws = new WebSocket(buildWsUrl(wsPath));
         ws.binaryType = 'arraybuffer';
         ws.onopen = () => {
           for (const buf of wsPendingRef.current) {
@@ -226,46 +258,73 @@ export default function CaptureWidget({ onDismiss }) {
         wsRef.current = null;
       }
 
-      const recorder = new MediaRecorder(stream, { mimeType });
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunksRef.current.push(e.data);
-          e.data.arrayBuffer().then(buf => {
-            const ws = wsRef.current;
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(buf);
-            } else {
-              wsPendingRef.current.push(buf);
-            }
-          });
-        }
-      };
-      recorder.onstop = () => {};
-      recorder.start(250);
-      mediaRecorderRef.current = recorder;
+      if (aecOn) {
+        // AEC path: stream raw PCM. The mic is tagged 0x00; whatever the app
+        // is playing (published to the far-end bus by the audio player) is
+        // tagged 0x01 so the server can cancel the echo. No MediaRecorder and
+        // no WebM POST fallback here — the WS is the only path in this mode.
+        const [{ startMicCapture }, { subscribeFarEnd }, { frameFromFloat, AEC_NEAR, AEC_FAR }] =
+          await Promise.all([
+            import('../utils/aec/micCapture'),
+            import('../utils/aec/farEndBus'),
+            import('../utils/aec/pcm'),
+          ]);
+        const sendTagged = (float32, kind) => {
+          const buf = frameFromFloat(float32, kind);
+          const ws = wsRef.current;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            try { ws.send(buf); } catch { /* ignore */ }
+          } else {
+            wsPendingRef.current.push(buf);
+          }
+        };
+        aecStopRef.current = await startMicCapture(
+          stream, (f) => sendTagged(f, AEC_NEAR), { sampleRate: 16000 },
+        );
+        farEndUnsubRef.current = subscribeFarEnd((f) => sendTagged(f, AEC_FAR));
+        mediaRecorderRef.current = null;
+      } else {
+        const recorder = new MediaRecorder(stream, { mimeType });
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            chunksRef.current.push(e.data);
+            e.data.arrayBuffer().then(buf => {
+              const ws = wsRef.current;
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(buf);
+              } else {
+                wsPendingRef.current.push(buf);
+              }
+            });
+          }
+        };
+        recorder.onstop = () => {};
+        recorder.start(250);
+        mediaRecorderRef.current = recorder;
+      }
       startTimeRef.current = Date.now();
       setTrayRecording(true);
       setState('recording');
       setTranscript('');
       setPartialText('');
       setDuration(0);
-    } catch {
-      const isMac = navigator.platform?.includes('Mac');
-      const isWindows = navigator.platform?.includes('Win');
-      const hint = isMac
-        ? 'macOS: open System Settings → Privacy & Security → Microphone and enable OmniVoice.'
-        : isWindows
-        ? 'Windows: open Settings → Privacy & security → Microphone and allow OmniVoice.'
-        : 'Linux: check that your user is in the audio group and the WebView has mic access.';
-      toast.error(`Microphone access denied. ${hint}`, { duration: 6000 });
+    } catch (err) {
+      // Distinguish "permission denied" (→ per-OS settings hint) from
+      // "no device" / "device busy" / anything else (#323).
+      toast.error(micErrorMessage(t, err), { duration: 6000 });
       setTrayRecording(false);
       setState('error');
     }
-  }, [applyResult]);
+  }, [applyResult, t]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
+    }
+    // AEC mode: stop the mic worklet + far-end subscription before EOF so no
+    // stray frames arrive after the end-of-stream signal.
+    if (aecModeRef.current) {
+      teardownAec();
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
@@ -295,10 +354,12 @@ export default function CaptureWidget({ onDismiss }) {
     }
     setTrayRecording(false);
     setState('transcribing');
-  }, []);
+  }, [teardownAec]);
 
   const sendForTranscription = useCallback(async () => {
     if (wsHadFinalRef.current) return;
+    // No WebM blob exists on the AEC path — the WS is the only result channel.
+    if (aecModeRef.current) return;
 
     const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
     const formData = new FormData();
@@ -306,26 +367,25 @@ export default function CaptureWidget({ onDismiss }) {
     formData.append('mode', captureMode);
 
     try {
-      const res = await fetch(`${API_BASE}/transcribe`, {
+      // apiFetch attaches the PIN / remote API key headers (Wave 2.3)
+      // and throws on non-2xx with the server's detail message.
+      const res = await apiFetch('/transcribe', {
         method: 'POST',
         body: formData,
       });
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}));
-        throw new Error(detail.detail || `HTTP ${res.status}`);
-      }
       const data = await res.json();
       if (wsHadFinalRef.current) return;
       await applyResult(data);
     } catch (err) {
       if (wsHadFinalRef.current) return;
-      toast.error(`Transcription failed: ${err.message}`);
+      toast.error(t('capture.transcription_failed', { message: err.message }));
       setState('error');
       setTranscript('');
     }
   }, [captureMode, applyResult]);
 
   const dismiss = async () => {
+    if (aecModeRef.current) teardownAec();
     setState('idle');
     setTranscript('');
     setDuration(0);
@@ -347,19 +407,19 @@ export default function CaptureWidget({ onDismiss }) {
   let emoji = '';
   if (state === 'recording') {
     emoji = '🎙️';
-    label = partialText || 'Listening…';
+    label = partialText || t('capture.listening_label');
   } else if (state === 'transcribing') {
     emoji = '📝';
-    label = partialText || 'Transcribing…';
+    label = partialText || t('capture.transcribing_label');
   } else if (state === 'done' && transcript) {
     emoji = '✅';
-    label = 'Pasted';
+    label = t('capture.pasted');
   } else if (state === 'done' && !transcript) {
     emoji = '⚠️';
-    label = 'No speech detected';
+    label = t('capture.no_speech');
   } else if (state === 'error') {
     emoji = '❌';
-    label = 'Mic access denied';
+    label = t('capture.mic_denied');
   }
 
   return (
@@ -388,7 +448,7 @@ export default function CaptureWidget({ onDismiss }) {
 
       {/* Dismiss — only on done/error */}
       {(state === 'done' || state === 'error') && (
-        <button className="capture-pill__dismiss" onClick={dismiss} aria-label="Dismiss">
+        <button className="capture-pill__dismiss" onClick={dismiss} aria-label={t('common.dismiss')}>
           <X size={12} />
         </button>
       )}

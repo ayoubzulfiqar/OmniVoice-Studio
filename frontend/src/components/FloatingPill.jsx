@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, CheckCircle, AlertCircle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import './FloatingPill.css';
 
@@ -35,6 +36,7 @@ const STAGE_LABELS = {
 };
 
 export default function FloatingPill() {
+  const { t } = useTranslation();
   const visible    = useAppStore(s => s.visible);
   const stage      = useAppStore(s => s.stage);
   const label      = useAppStore(s => s.label);
@@ -42,6 +44,8 @@ export default function FloatingPill() {
   const startedAt  = useAppStore(s => s.startedAt);
   const error      = useAppStore(s => s.error);
   const cancellable = useAppStore(s => s.cancellable);
+  const homeMode   = useAppStore(s => s.homeMode);
+  const mode       = useAppStore(s => s.mode);
   const dismissPill = useAppStore(s => s.dismissPill);
 
   const [elapsed, setElapsed] = useState(0);
@@ -70,6 +74,10 @@ export default function FloatingPill() {
   };
 
   if (!visible) return null;
+  // Suppress when the user is already on the operation's home workspace — an
+  // in-context view (e.g. the dub PrepOverlay) is showing the same progress.
+  // Done/error flashes always show so the user gets the outcome.
+  if (homeMode && homeMode === mode && stage !== 'done' && stage !== 'error') return null;
 
   const stageEmoji = STAGE_LABELS[stage] || '⏳';
   const isDone = stage === 'done';
@@ -127,8 +135,8 @@ export default function FloatingPill() {
       <button
         className="floating-pill__dismiss"
         onClick={handleDismiss}
-        title={cancellable ? 'Cancel' : 'Dismiss'}
-        aria-label={cancellable ? 'Cancel operation' : 'Dismiss status'}
+        title={cancellable ? t('common.cancel') : t('common.dismiss')}
+        aria-label={cancellable ? t('common.cancelOp') : t('common.dismissStatus')}
       >
         <X size={12} />
       </button>

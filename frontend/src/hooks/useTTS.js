@@ -6,6 +6,15 @@ import { probeAudioDuration } from '../utils/format';
 import { CLONE_MAX_SECONDS, PRESETS } from '../utils/constants';
 import { buildDesignInstruct } from '../utils/voiceInstruct';
 import { toast } from 'react-hot-toast';
+import { toastErrorWithReport } from '../utils/errorToast';
+import { addBreadcrumb } from '../utils/breadcrumbs';
+import i18next from 'i18next';
+const t = i18next.t.bind(i18next);
+
+// #21: in-memory de-dup for the synth-time routing toast — a 50-clip batch
+// shouldn't fire one toast per request. Tracks the last status surfaced this
+// session (module scope, no localStorage); resets on full reload.
+let _lastRoutingStatus = null;
 
 /**
  * Encapsulates TTS generation logic, streaming response handling,
@@ -28,7 +37,10 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
   const postprocess = useAppStore(s => s.postprocess);
   const duration = useAppStore(s => s.duration);
   const vdStates = useAppStore(s => s.vdStates);
-  const mode = useAppStore(s => s.mode);
+  // Which "Define voice" method is active in the Voice (studio) workspace —
+  // 'audio' (reference clip) vs 'design' (described attributes). Replaces the
+  // old clone/design navigation-mode checks (voice-studio-unification P4).
+  const defineMethod = useAppStore(s => s.defineMethod);
   const setSidebarTab = useAppStore(s => s.setSidebarTab);
 
   const [refAudio, setRefAudio] = useState(null);
@@ -44,7 +56,7 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
     if (dur && dur > CLONE_MAX_SECONDS) {
       setPendingTrimFile(file);
       setSelectedProfile(null);
-      toast(`Audio is ${dur.toFixed(1)}s — trim to ≤${CLONE_MAX_SECONDS}s for best cloning`);
+      toast(t('tts_errors.trim_hint', { duration: dur.toFixed(1), max: CLONE_MAX_SECONDS }));
       return;
     }
     setRefAudio(file);
@@ -65,8 +77,9 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
   }, [text, insertTag]);
 
   const handleGenerate = useCallback(async () => {
-    if (!text.trim()) return toast.error("Please enter text");
-    if (mode === 'clone' && !refAudio && !selectedProfile) return toast.error("Upload an audio or select a voice profile");
+    if (!text.trim()) return toast.error(t('tts_errors.enter_text'));
+    if (defineMethod === 'audio' && !refAudio && !selectedProfile) return toast.error(t('tts_errors.upload_or_select'));
+    addBreadcrumb(`generate:start (${defineMethod})`);
     setIsGenerating(true);
     setGenerationTime(0);
     const st = Date.now();
@@ -77,6 +90,7 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
         return suffix ? `${elapsed} ${suffix}` : elapsed;
       });
     }, 100);
+    let abortTimer = null;
     try {
       const formData = new FormData();
       formData.append("text", text);
@@ -92,7 +106,7 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
       formData.append("postprocess_output", postprocess);
       if (duration) formData.append("duration", parseFloat(duration));
 
-      if (mode === 'clone') {
+      if (defineMethod === 'audio') {
         if (selectedProfile) {
           formData.append("profile_id", selectedProfile);
         } else if (refAudio) {
@@ -111,10 +125,10 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
         // the same category" (#114).
         const { instruct: finalInstruct, unsupported, duplicates } = buildDesignInstruct(vdStates, instruct);
         if (unsupported.length) {
-          toast(`Ignored unsupported instruct: ${unsupported.join(', ')}`, { icon: '⚠️' });
+          toast(t('tts_errors.ignored_unsupported', { items: unsupported.join(', ') }), { icon: '⚠️' });
         }
         if (duplicates.length) {
-          toast(`Ignored (category already set): ${duplicates.join(', ')}`, { icon: '⚠️' });
+          toast(t('tts_errors.ignored_duplicate', { items: duplicates.join(', ') }), { icon: '⚠️' });
         }
         if (finalInstruct) formData.append("instruct", finalInstruct);
         if (selectedProfile) {
@@ -122,11 +136,34 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
         }
       }
 
-      const response = await generateSpeech(formData);
+      // The first /generate may cold-load/download the model. The backend now
+      // bounds that and returns an error rather than hanging; this client-side
+      // abort is a backstop so the UI never spins forever even if the backend
+      // is unreachable. The ceiling sits just above the backend's load timeout
+      // so the backend's descriptive error wins in the normal case.
+      const ac = new AbortController();
+      abortTimer = setTimeout(() => ac.abort(), 21 * 60 * 1000);
+      const response = await generateSpeech(formData, { signal: ac.signal });
       const reader = response.body.getReader();
       const chunks = [];
       let receivedLength = 0;
       const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
+
+      // #21: one-time, non-blocking routing notice. The backend sets these
+      // headers only on cpu_fallback / accelerated-with-caveat (never on the
+      // benign cpu_only / clean-accelerated paths), so their mere presence is
+      // the signal. De-duped by status so a batch doesn't spam.
+      const routingStatus = response.headers.get('X-OmniVoice-Routing');
+      if (routingStatus && routingStatus !== _lastRoutingStatus) {
+        _lastRoutingStatus = routingStatus;
+        const reason = response.headers.get('X-OmniVoice-Routing-Reason') || '';
+        if (routingStatus === 'cpu_fallback') {
+          toast(t('tts.routingFallback', { reason }), { icon: '🐢' });
+        } else if (routingStatus === 'accelerated' && reason) {
+          // accelerated is only surfaced WITH a driver/arch caveat reason.
+          toast(t('tts.routingCaveat', { reason }), { icon: '⚠️' });
+        }
+      }
 
       while (true) {
         const { done, value } = await reader.read();
@@ -146,12 +183,19 @@ export default function useTTS({ selectedProfile, setSelectedProfile, loadHistor
       setSidebarTab('history');
       playPing();
     } catch (err) {
-      toast.error("Error: " + err.message);
+      // Timeouts are user-recoverable (retry / shorter input) — plain toast.
+      // Real generation failures get the "Report this bug" action.
+      if (err?.name === 'AbortError') {
+        toast.error(t('tts_errors.timeout'));
+      } else {
+        toastErrorWithReport(t('tts_errors.error_prefix', { message: err.message }), err);
+      }
     } finally {
+      if (abortTimer) clearTimeout(abortTimer);
       clearInterval(timerRef.current);
       setIsGenerating(false);
     }
-  }, [text, mode, selectedProfile, refAudio, refText, language, instruct, steps, cfg, speed, denoise, tShift, posTemp, classTemp, layerPenalty, postprocess, duration, vdStates, loadHistory, setSidebarTab]);
+  }, [text, defineMethod, selectedProfile, refAudio, refText, language, instruct, steps, cfg, speed, denoise, tShift, posTemp, classTemp, layerPenalty, postprocess, duration, vdStates, loadHistory, setSidebarTab]);
 
   return {
     refAudio, setRefAudio,

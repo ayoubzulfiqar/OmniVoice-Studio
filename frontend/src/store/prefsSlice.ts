@@ -12,14 +12,56 @@ export type TranslateQuality = 'fast' | 'cinematic';
 export type ThemeId = 'gruvbox' | 'midnight' | 'nord' | 'solarized' | 'rose-pine' | 'catppuccin';
 
 /**
- * Dub timing strategy — replaces audio time-compression with two cleaner
+ * Global UI font. Applied app-wide by overriding the `--font-sans` CSS custom
+ * property on `document.documentElement` (the whole UI uses
+ * `font-family: var(--font-sans)`). `default` removes the override so the CSS
+ * `:root` Inter stack takes over. All stacks are SYSTEM-SAFE — no web-font
+ * downloads, so this works identically offline across macOS/Windows/Linux.
+ */
+export type FontId = 'default' | 'system' | 'serif' | 'mono' | 'rounded' | 'readable';
+
+export const FONT_OPTIONS: { id: FontId; label: string }[] = [
+  { id: 'default',  label: 'Inter (default)' },
+  { id: 'system',   label: 'System' },
+  { id: 'serif',    label: 'Serif' },
+  { id: 'mono',     label: 'Monospace' },
+  { id: 'rounded',  label: 'Rounded' },
+  { id: 'readable', label: 'Readable' },
+];
+
+export const FONT_STACKS: Record<FontId, string | null> = {
+  default:  null, // use the CSS :root --font-sans (Inter)
+  system:   '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+  serif:    'Georgia, "Times New Roman", serif',
+  mono:     'ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace',
+  rounded:  '"SF Pro Rounded", "Nunito", "Quicksand", system-ui, sans-serif',
+  readable: '"Atkinson Hyperlegible", Verdana, system-ui, sans-serif',
+};
+
+/**
+ * Dub timing strategy — replaces audio time-compression with cleaner
  * alternatives. `concise` trims the translation up-front so it fits at
- * natural rate (overflows surfaced for manual edit); `stretch_video`
+ * natural rate (overflows surfaced for manual edit); `smart_fit` splits
+ * the burden between a mild audio speed-up (≤1.2× alone, ≤1.5× hybrid)
+ * and a mild per-segment video slow-down (≤2.0×); `stretch_video`
  * stretches the source video per-segment so natural-rate audio fits
  * without lip-sync drift. `strict_slot` is the legacy compress-to-fit
  * path, retained for back-compat.
  */
-export type TimingStrategy = 'concise' | 'stretch_video' | 'strict_slot';
+export type TimingStrategy = 'concise' | 'smart_fit' | 'stretch_video' | 'strict_slot';
+
+/**
+ * Knob overrides for the `smart_fit` strategy. `null` (default) sends no
+ * `fit_options` and the backend uses its canonical FitParams defaults —
+ * identical behavior on every platform out of the box.
+ */
+export interface FitOptions {
+  max_audio_only_rate?: number;
+  audio_rate_cap?: number;
+  video_slow_cap?: number;
+  gap_guard_s?: number;
+  allow_video_retime?: boolean;
+}
 
 export interface PrefsSlice {
   translateQuality: TranslateQuality;
@@ -50,6 +92,12 @@ export interface PrefsSlice {
    */
   timingStrategy: TimingStrategy;
 
+  /**
+   * Optional Smart Fit knob overrides. Stays `null` unless a power user
+   * sets custom caps — the backend then applies its own defaults.
+   */
+  fitOptions: FitOptions | null;
+
   setTranslateQuality: (q: TranslateQuality) => void;
   setDualSubs: (on: boolean) => void;
   setBurnSubs: (on: boolean) => void;
@@ -57,12 +105,26 @@ export interface PrefsSlice {
   setReviewMode: (mode: 'on' | 'off') => void;
   setShowHeaderLiveStats: (on: boolean) => void;
   setTimingStrategy: (s: TimingStrategy) => void;
+  setFitOptions: (o: FitOptions | null) => void;
+
+  /**
+   * Opt-in dictate-over-playback echo cancellation (parity Action 8). When
+   * on, dictation streams raw PCM through the server-side NLMS AEC and the
+   * audio player taps its output as the echo reference, so dictating while
+   * OmniVoice plays audio doesn't transcribe the playback. Default OFF — the
+   * standard MediaRecorder dictation path is unchanged when off.
+   */
+  aecEnabled: boolean;
+  setAecEnabled: (on: boolean) => void;
 
   locale: string;
   setLocale: (l: string) => void;
 
   theme: ThemeId;
   setTheme: (id: ThemeId) => void;
+
+  font: FontId;
+  setFont: (id: FontId) => void;
 }
 
 export const createPrefsSlice: StateCreator<PrefsSlice, [], [], PrefsSlice> = (set) => ({
@@ -73,6 +135,8 @@ export const createPrefsSlice: StateCreator<PrefsSlice, [], [], PrefsSlice> = (s
   reviewMode: 'on',
   showHeaderLiveStats: false,
   timingStrategy: 'concise',
+  fitOptions: null,
+  aecEnabled: false,
 
   setTranslateQuality:    (q) => set({ translateQuality: q }),
   setDualSubs:            (on) => set({ dualSubs: on }),
@@ -81,8 +145,15 @@ export const createPrefsSlice: StateCreator<PrefsSlice, [], [], PrefsSlice> = (s
   setReviewMode:          (mode) => set({ reviewMode: mode }),
   setShowHeaderLiveStats: (on) => set({ showHeaderLiveStats: on }),
   setTimingStrategy:      (s) => set({ timingStrategy: s }),
+  setFitOptions:          (o) => set({ fitOptions: o }),
+  setAecEnabled:          (on) => set({ aecEnabled: on }),
 
-  locale: 'en',
+  locale: typeof navigator !== 'undefined' ? (() => {
+    const nav = navigator.language || '';
+    if (nav.toLowerCase().includes('tw') || nav.toLowerCase().includes('hk')) return 'zh-TW';
+    const match = ['zh-CN', 'es', 'fr', 'de', 'ja', 'pt', 'it', 'ru', 'ko', 'hi', 'tr', 'pl', 'nl', 'sv', 'th', 'vi', 'id', 'uk', 'ar'].find(code => nav.startsWith(code.split('-')[0]));
+    return match || 'en';
+  })() : 'en',
   setLocale: (l) => set({ locale: l }),
 
   theme: 'gruvbox',
@@ -94,5 +165,13 @@ export const createPrefsSlice: StateCreator<PrefsSlice, [], [], PrefsSlice> = (s
     } else {
       document.documentElement.setAttribute('data-theme', id);
     }
+  },
+
+  font: 'default',
+  setFont: (id) => {
+    set({ font: id });
+    const stack = FONT_STACKS[id];
+    if (stack) document.documentElement.style.setProperty('--font-sans', stack);
+    else document.documentElement.style.removeProperty('--font-sans');
   },
 });
