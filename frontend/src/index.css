@@ -190,23 +190,25 @@ samp,
 
 /* ═══ LAYOUT ═══ */
 .app-container {
-  /* UI scale (#21 black-band fix — PERMANENT): scale via `zoom`, and the shell
-     ALWAYS occupies the full viewport (`100vw`/`100vh`, NOT `calc(…/scale)`).
-     Why this never black-bands on any engine:
-       • Chromium (macOS/Windows): `zoom` magnifies AND fills — standard browser
-         zoom (the same `style={{zoom:uiScale}}` the bootstrap/wizard wrappers
-         already use here).
-       • WebKitGTK (Linux): `zoom` is a no-op → the UI renders at 1.0× but the
-         shell is still a plain `100vw × 100vh` element → it FILLS the window.
-     The previous approach paired `width: calc(100vw/scale)` with `transform:
-     scale(var(--ui-scale))`; on WebKitGTK the transform wasn't magnifying the
-     shrunk shell, so `calc(100vw/1.3)` (the default scale) left ~⅓ of the
-     window black. Dropping the `/scale` shrink makes a missed magnification
-     degrade to "unscaled but full", never to "shrunk + black band".
-     ⚠️ Do NOT reintroduce `width: calc(100vw / var(--ui-scale))` or
-     `transform: scale(var(--ui-scale))` here — a regression test
-     (src/test/appShellScale.test.js) fails CI if either pattern returns. */
-  width: 100vw;
+  /* UI scale (#504 clipping fix + #21 black-band fix): the layout box is
+     shrunk by the scale factor, then `zoom` magnifies it back to the viewport.
+     This guarantees the scaled UI never overflows the window and never leaves
+     black bands:
+       • Chromium (macOS/Windows): `zoom` magnifies the shrunk layout box back
+         to exactly `100vw × 100vh`, so content fits with no clipping.
+       • Older WebKitGTK (Linux): `zoom` is a layout no-op, so the shrunk
+         `100vw/scale` box would leave a black band on the right/bottom AND push
+         the bottom Generate/Settings CTAs off-screen (#523/#524). The App.jsx
+         zoom-layout probe sets `data-zoom-layout=off` on those engines, and the
+         override below renders the shell at 1.0 filling the window (no band, no
+         clip). Newer WebKitGTK that honors zoom keeps the scaled path.
+     The old `transform: scale(var(--ui-scale))` approach is what caused black
+     bands on WebKitGTK because the transform didn't magnify the shrunk shell.
+     ⚠️ Do NOT replace `zoom` with `transform: scale(var(--ui-scale))` — a
+     regression test (src/test/appShellScale.test.js) fails CI if that pattern
+     returns. */
+  width: calc(100vw / var(--ui-scale, 1));
+  height: calc(100vh / var(--ui-scale, 1));
   zoom: var(--ui-scale, 1);
   max-width: none;
   display: grid;
@@ -222,9 +224,18 @@ samp,
      footer's state. Content columns (not the grid) yield to the fixed footer
      via padding-bottom below, so expanding the logs panel never compresses
      the side menubar. */
-  height: 100vh;
   overflow: hidden;
   transition: grid-template-columns var(--transition-smooth);
+}
+/* Older WebKitGTK (Linux), where the App.jsx probe found `zoom` is a layout
+   no-op → html[data-zoom-layout=off]: the calc(100vw/scale) box can't be
+   magnified back, so it leaves a black band and clips the bottom Generate/
+   Settings CTAs (#523/#524). Fill the viewport at 1.0 instead — no band, no
+   clip. The probe leaves the zoom path in place on engines that honor zoom. */
+html[data-zoom-layout='off'] .app-container {
+  width: 100vw;
+  height: 100vh;
+  zoom: 1;
 }
 /* Keep scrollable content clear of the fixed footer. The footer writes its
    current height (pre-zoom px — same coordinate space as these children) to
@@ -2294,6 +2305,35 @@ div[role="dialog"].audio-trimmer {
   color: var(--chrome-accent);
   background: transparent;
   transform: rotate(180deg);
+}
+
+/* ── Quiet "Support" pill (#007) — neutral at rest, warms to accent ── */
+.rail-btn.donate-pill { color: var(--chrome-fg-dim); }
+.rail-btn.donate-pill .donate-pill__heart {
+  font-size: 16px;
+  line-height: 1;
+  filter: grayscale(0.55);
+  opacity: 0.75;
+  transition: filter 0.16s, opacity 0.16s, transform 0.16s;
+}
+.rail-btn.donate-pill:hover {
+  color: var(--chrome-accent);
+  background: color-mix(in srgb, var(--chrome-accent) 10%, transparent);
+}
+.rail-btn.donate-pill:hover .donate-pill__heart {
+  filter: grayscale(0);
+  opacity: 1;
+  transform: scale(1.1);
+}
+.rail-btn.donate-pill.active {
+  color: var(--chrome-accent);
+  background: var(--chrome-accent-bg);
+  border-color: var(--chrome-accent-border);
+}
+.rail-btn.donate-pill.active .donate-pill__heart { filter: grayscale(0); opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .rail-btn.donate-pill .donate-pill__heart { transition: none; }
+  .rail-btn.donate-pill:hover .donate-pill__heart { transform: none; }
 }
 
 

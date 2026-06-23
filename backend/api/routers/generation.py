@@ -2,6 +2,7 @@ import os
 import io
 import uuid
 import time
+import random
 import asyncio
 import tempfile
 import contextlib
@@ -16,9 +17,25 @@ from core.config import OUTPUTS_DIR, VOICES_DIR
 from services.model_manager import get_model, _gpu_pool
 from services.audio_io import _safe_torchaudio_save
 from core import event_bus
+from omnivoice.utils.voice_design import heal_design_instruct
 
 router = APIRouter()
 logger = logging.getLogger("omnivoice.generate")
+
+
+def _profile_instruct(row):
+    """Validator-safe instruct for a stored profile row.
+
+    Sanitizes the persisted instruct (dropping the ``"[object Object]"``
+    sentinel / freeform prose that older builds saved) and, for a design row,
+    rebuilds the tags from ``vd_states`` when the stored value is unusable — so
+    a poisoned/legacy profile never 400-s generation (#550 #571 #594 #596).
+    """
+    try:
+        vd = row["vd_states"]
+    except (KeyError, IndexError):
+        vd = None
+    return heal_design_instruct(row["instruct"], vd)
 
 
 def _render_with_pauses(gen_span, segments, sample_rate):
@@ -60,6 +77,23 @@ def _render_with_pauses(gen_span, segments, sample_rate):
     return torch.cat(parts, dim=-1)
 
 
+def _sanitize_audio(audio_out):
+    """Replace non-finite samples (NaN / ±inf) with silence so a model glitch
+    can't produce an unreadable WAV (#629). Returns the input unchanged when it's
+    already finite or isn't a tensor. Never raises."""
+    try:
+        import torch
+        if torch.is_tensor(audio_out) and not bool(torch.isfinite(audio_out).all()):
+            logger.warning(
+                "Generated audio contained non-finite samples (NaN/inf) — "
+                "sanitizing to silence to keep the WAV decodable (#629)."
+            )
+            return torch.nan_to_num(audio_out, nan=0.0, posinf=0.0, neginf=0.0)
+    except Exception:
+        pass
+    return audio_out
+
+
 def _apply_effect_chain(audio_out, sample_rate, effect_preset, *, skip_mastering=False):
     """Shared post-DSP for /generate: preset validation → mastering →
     effect chain → loudness normalization.
@@ -74,6 +108,14 @@ def _apply_effect_chain(audio_out, sample_rate, effect_preset, *, skip_mastering
         EFFECT_PRESETS, apply_mastering, normalize_audio,
         apply_effects_chain, get_effect_chain,
     )
+
+    # #629: a numerical glitch in the model (observed on MPS) can leave NaN/±inf
+    # samples, which write an unreadable WAV that then fails decoding with an
+    # opaque "ffmpeg returned error code: 183 / Invalid data" — surfaced to the
+    # user as a misleading "ran out of memory". Replace non-finite samples with
+    # silence here, before any DSP/encode touches the audio, so the output is
+    # always a valid WAV. Covers the raw path too (it returns just below).
+    audio_out = _sanitize_audio(audio_out)
 
     preset = effect_preset or "broadcast"
     if preset not in EFFECT_PRESETS:
@@ -126,6 +168,15 @@ def _oom_friendly_reraise(e):
             f"This usually means a bundled binary lost its execute bit — reinstall, "
             f"or run `chmod +x` on the engine binary named in the error. "
             f"Underlying error: {e}"
+        ) from e
+    # #629: a decode/ffmpeg failure on the rendered audio is NOT out of memory —
+    # it's unreadable audio (usually a transient numerical glitch). Say so rather
+    # than sending the user down the OOM path.
+    if "ffmpeg returned error" in es or "Decoding failed" in es or "Invalid data found" in es:
+        raise RuntimeError(
+            f"The engine produced unreadable audio (a decode step failed) — this is "
+            f"usually a transient glitch. Use the Flush button to reload the model, "
+            f"then regenerate. Underlying error: {e}"
         ) from e
     raise RuntimeError(
         f"TTS engine stopped mid-generation. This usually means it ran out of memory. "
@@ -319,6 +370,15 @@ async def generate_speech(
     max_chunk_chars: int = Form(800, ge=0),
     crossfade_ms: int = Form(50, ge=0, le=1000),
 ):
+    # #502: NFC-normalize the input text so decomposed (NFD) diacritics — common
+    # in pasted Vietnamese and other Latin-with-marks text — are composed to the
+    # single codepoints the tokenizer/model expect, instead of base-letter +
+    # combining-mark sequences that render as distorted/garbled speech. NFC is a
+    # no-op for already-composed text; mirrors the duration estimator
+    # (utils/duration.py) so the estimate and the synthesis see the same text.
+    import unicodedata
+    text = unicodedata.normalize("NFC", text)
+
     # ── Engine resolution (issue #312) ──────────────────────────────────────
     # The request runs on the engine selected in Settings (POST /engines/select,
     # env var OMNIVOICE_TTS_BACKEND wins), or an explicit per-request `engine`
@@ -400,7 +460,7 @@ async def generate_speech(
                 if not ref_text:
                     ref_text = row["ref_text"]
                 if not instruct:
-                    instruct = row["instruct"]
+                    instruct = _profile_instruct(row)
                 if used_seed is None and row["seed"] is not None:
                     used_seed = row["seed"]
             elif profile_kind == "design":
@@ -410,14 +470,14 @@ async def generate_speech(
                 if ref_audio_path and not ref_text and row["ref_text"]:
                     ref_text = row["ref_text"]
                 if not instruct:
-                    instruct = row["instruct"]
+                    instruct = _profile_instruct(row)
                 if used_seed is None and row["seed"] is not None:
                     used_seed = row["seed"]
             elif row["instruct"] and not row["is_locked"] and not row["ref_audio_path"]:
                 # Legacy design-shaped row (pre-0004 archetype materialization
                 # failure path): instruct-only conditioning.
                 if not instruct:
-                    instruct = row["instruct"]
+                    instruct = _profile_instruct(row)
                 if used_seed is None and row["seed"] is not None:
                     used_seed = row["seed"]
             else:
@@ -430,6 +490,20 @@ async def generate_speech(
                     used_seed = row["seed"]
             if language == "Auto":
                 language = None
+            # #533: a profile's stored language must drive generation when the
+            # request didn't pin one. Without this the German (etc.) archetype
+            # generates with language=None and the model drifts to English —
+            # even though the archetype PREVIEW renders correctly (archetypes.py
+            # passes the language). An EXPLICIT non-Auto request language still
+            # wins; we only fill the gap. `row` is a sqlite3.Row, so guard the
+            # column lookup for pre-language DBs mid-upgrade.
+            if language is None:
+                try:
+                    prof_lang = row["language"]
+                except (KeyError, IndexError):
+                    prof_lang = None
+                if prof_lang and prof_lang != "Auto":
+                    language = prof_lang
     elif ref_audio is not None:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
@@ -449,6 +523,14 @@ async def generate_speech(
         ref_text = await asyncio.get_running_loop().run_in_executor(
             _gpu_pool, transcribe_reference, ref_audio_path
         )
+
+    # #526: materialize a concrete seed when none was supplied (and no profile
+    # pinned one) so the take is reproducible and we can hand it back via the
+    # X-Seed header for the "keep this seed" control. An explicit request seed
+    # or a profile's stored seed still wins — used_seed is only filled when it
+    # is still None here, never overwritten.
+    if used_seed is None:
+        used_seed = random.randint(0, 2**31 - 1)
 
     start_time = time.time()
     try:

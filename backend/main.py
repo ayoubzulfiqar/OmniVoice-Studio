@@ -9,6 +9,16 @@ _backend_dir = os.path.dirname(os.path.abspath(__file__))
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
+# #564: also make the project's OWN `omnivoice` package importable from source
+# when the venv's editable install is missing/broken (interrupted/offline
+# `uv sync`, antivirus-quarantined `_editable_impl_omnivoice.pth`, …). Without
+# this the backend boots fine and only fails at the first model call with
+# `No module named 'omnivoice'`. The bootstrap now gates on omnivoice being
+# importable too (re-syncing to re-lay the editable install); this is the
+# runtime safety net. See core/omnivoice_path.py for the full rationale.
+from core.omnivoice_path import ensure_omnivoice_importable
+ensure_omnivoice_importable(_backend_dir)
+
 # Triton is unavailable on Windows — disable torch.compile / dynamo / inductor
 # to prevent TritonMissing errors at inference time. Must be set before torch
 # is imported (it is lazily imported in services/model_manager.py). Uses
@@ -43,11 +53,13 @@ try:
     _project_env = os.path.join(os.path.dirname(_backend_dir), ".env")
     if os.path.isfile(_project_env):
         dotenv.load_dotenv(_project_env, override=False)
-    # Also load the durable per-user config so env vars set once survive
-    # Tauri/Finder launches that don't inherit a shell environment.
-    _user_env = os.path.expanduser("~/.config/omnivoice/env")
-    if os.path.isfile(_user_env):
-        dotenv.load_dotenv(_user_env, override=False)
+    # Load the durable per-user config (the in-app Settings source of truth) so
+    # env vars set once survive Tauri/Finder launches that don't inherit a shell
+    # environment. This OVERRIDES launcher-injected defaults: the desktop app
+    # injects a stale OMNIVOICE_CACHE_DIR from its own config before startup, so
+    # without override a models dir changed in Settings was ignored forever (#480).
+    from core.user_env import load_into_environ as _load_user_env
+    _load_user_env()
 except ImportError:
     pass
 
@@ -375,6 +387,25 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup watchdog (#632): a silent hang during startup (e.g. a model-load /
+    # MCP deadlock on some platforms) means "Application startup complete" never
+    # logs and the app sits forever with no error. If startup hasn't finished
+    # within the window, dump every thread's stack to stderr (→ backend_err.log)
+    # so the hang point is captured instead of invisible. Cancelled the instant
+    # startup completes, so a normal (even slow-download) boot never trips it.
+    # Tune with OMNIVOICE_STARTUP_WATCHDOG_S (seconds; 0 disables). Best-effort —
+    # never let the diagnostic itself break startup.
+    _watchdog_armed = False
+    try:
+        import faulthandler
+        _wd = float(os.environ.get("OMNIVOICE_STARTUP_WATCHDOG_S", "300"))
+        if _wd > 0 and hasattr(faulthandler, "dump_traceback_later"):
+            faulthandler.dump_traceback_later(_wd, repeat=False, exit=False)
+            _watchdog_armed = True
+            logger.info("Startup watchdog armed: thread dump if startup exceeds %.0fs (#632).", _wd)
+    except Exception:
+        pass
+
     init_db()
     # Network sharing is loopback-only by default; the PIN middleware stays
     # inert until enable() sets a PIN. Seed the (disabled) state so the
@@ -471,6 +502,13 @@ async def lifespan(app: FastAPI):
                 logger.info("MCP server mounted at /mcp")
             except Exception as e:
                 logger.warning("MCP session manager failed to start: %s", e)
+        # Startup finished — disarm the hang watchdog before serving (#632).
+        if _watchdog_armed:
+            try:
+                import faulthandler
+                faulthandler.cancel_dump_traceback_later()
+            except Exception:
+                pass
         yield
     # ── Graceful shutdown (SIGTERM from Tauri, Ctrl+C, etc.) ────────────
     logger.info("Shutdown: cleaning up…")
@@ -737,6 +775,20 @@ app.add_middleware(NetworkAccessMiddleware)
 # carried its own loopback guard; remote mode is exactly the case where a
 # keyed non-loopback client must reach them.
 app.add_middleware(BearerKeyMiddleware)
+
+# Register canonical audio MIME types before any StaticFiles mount.
+# Python's `mimetypes.guess_type()` returns `audio/x-wav` for `.wav` and
+# `audio/x-flac` for `.flac` on most platforms — these are vendor-experimental
+# (x- prefix, never IANA-registered). macOS Chrome/Safari MIME-sniff leniently
+# via CoreAudio so playback works there, but Linux Chrome/Firefox (FFmpeg) and
+# Android Chrome (ExoPlayer) strictly honor the declared type and treat the
+# x- variants as download-only — manifesting as the play button silently
+# doing nothing in the browser app while working in the Tauri desktop shell.
+# `audio/wav` / `audio/flac` are the IANA-canonical types.
+# Ref: https://www.iana.org/assignments/media-types/media-types.xhtml#audio
+import mimetypes as _mimetypes
+_mimetypes.add_type("audio/wav",  ".wav")
+_mimetypes.add_type("audio/flac", ".flac")
 
 app.mount("/audio", StaticFiles(directory=OUTPUTS_DIR), name="audio")
 app.mount("/voice_audio", StaticFiles(directory=VOICES_DIR), name="voice_audio")
