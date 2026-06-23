@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, Suspense, lazy } from 'react';
 import './index.css';
 import { useAppStore, FONT_STACKS } from './store';
 import SearchableSelect from './components/SearchableSelect';
@@ -22,6 +22,7 @@ const LogsFooter = lazy(() => import('./components/LogsFooter'));
 const ProjectsPage = lazy(() => import('./pages/Projects'));
 const VoiceGallery = lazy(() => import('./pages/VoiceGallery'));
 const SupportPage = lazy(() => import('./pages/SupportPage'));
+const ContactPage = lazy(() => import('./pages/ContactPage'));
 const TranscriptionsPage = lazy(() => import('./pages/Transcriptions'));
 const StoriesEditor = lazy(() => import('./components/StoriesEditor'));
 const AudiobookTab = lazy(() => import('./pages/AudiobookTab'));
@@ -86,12 +87,12 @@ function App() {
 
   // Responsive shell breakpoints driven off the app-container's OWN width, not
   // the viewport. The shell is sized `width: calc(100vw / --ui-scale)` then
-  // `transform: scale(--ui-scale)` (the WebKitGTK fix, #407), so the grid lays
-  // out against `100vw/scale` — which `el.clientWidth` reports (transforms don't
-  // change the layout box). Viewport `@media` queries fire on raw `100vw` and so
-  // collapse at the wrong threshold whenever the UI scale ≠ 1, cramming the
-  // content into a sliver. ResizeObserver fires on both window resize and scale
-  // change (the calc width changes), so this stays correct on every engine.
+  // `zoom: --ui-scale` (#504; the WebKitGTK no-op case is handled by the
+  // data-zoom-layout probe below), so the grid lays out against `100vw/scale` —
+  // which `el.clientWidth` reports. Viewport `@media` queries fire on raw
+  // `100vw` and so collapse at the wrong threshold whenever the UI scale ≠ 1,
+  // cramming the content into a sliver. ResizeObserver fires on both window
+  // resize and scale change (the calc width changes), so this stays correct.
   const shellRef = useRef(null);
   const [shellWidth, setShellWidth] = useState(Infinity);
   useEffect(() => {
@@ -101,6 +102,25 @@ function App() {
     ro.observe(el);
     setShellWidth(el.clientWidth);
     return () => ro.disconnect();
+  }, []);
+
+  // Engine capability probe (#523/#524): does this WebView honor `zoom` as a
+  // LAYOUT transform? Chromium (WebView2 / macOS WebKit) and modern WebKitGTK
+  // do; older WebKitGTK (Linux) treats it as a no-op. The .app-container sizing
+  // branches on the result (index.css) so the shell fills the window on BOTH —
+  // no black band on WebKitGTK, no clipped Generate/Settings CTAs on Chromium.
+  // Measuring a real zoomed element is robust where @supports(zoom)/UA-sniffing
+  // aren't (both report "supported" on WebKitGTK even when zoom doesn't lay out).
+  useLayoutEffect(() => {
+    let honored = true;
+    try {
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;left:-9999px;top:0;width:100px;height:100px;zoom:2';
+      document.body.appendChild(probe);
+      honored = Math.round(probe.getBoundingClientRect().width) >= 150;
+      probe.remove();
+    } catch { honored = true; }  // safe default: the existing zoom path
+    document.documentElement.dataset.zoomLayout = honored ? 'on' : 'off';
   }, []);
   const shellSizeClass = shellWidth <= 600 ? 'shell-mini' : shellWidth <= 1100 ? 'shell-narrow' : '';
   const theme = useAppStore(s => s.theme);
@@ -186,7 +206,7 @@ function App() {
   const openVoiceProfile = useAppStore(s => s.openVoiceProfile);
   const closeVoiceProfile = useAppStore(s => s.closeVoiceProfile);
   const hideSidebar = mode === 'launchpad' || mode === 'settings' || mode === 'voice' || mode === 'donate'
-    || mode === 'queue' || mode === 'tools' || mode === 'projects' || mode === 'gallery' || mode === 'enterprise' || mode === 'transcriptions'
+    || mode === 'queue' || mode === 'tools' || mode === 'projects' || mode === 'gallery' || mode === 'enterprise' || mode === 'contact' || mode === 'transcriptions'
     || mode === 'stories' || mode === 'audiobook'
     // Voice (studio) and Dub workspaces moved their saved voices /
     // projects + history into right-side panels; left sidebar dissolved.
@@ -1122,6 +1142,12 @@ function App() {
           <ErrorBoundary name="enterprise">
             <Suspense fallback={<LazyFallback />}>
               <SupportPage initialView="license" onBack={() => setMode('launchpad')} />
+            </Suspense>
+          </ErrorBoundary>
+        ) : mode === 'contact' ? (
+          <ErrorBoundary name="contact">
+            <Suspense fallback={<LazyFallback />}>
+              <ContactPage onBack={() => setMode('launchpad')} />
             </Suspense>
           </ErrorBoundary>
         ) : mode === 'launchpad' ? (
