@@ -39,14 +39,27 @@ Before digging through the entries below, let the app diagnose itself:
 "Setting up models" step.
 
 **Cause:** WhisperX (and a couple of its transitive deps) still imports
-`pkg_resources`, which was removed from `setuptools >= 70`. Older `uv sync`
-runs would resolve `setuptools` to a version that no longer ships it.
+`pkg_resources`, which `setuptools >= 80` dropped. `pyproject.toml` pins
+`setuptools>=75,<80` so it stays present — but the venv can still lose it two
+other ways: **(a)** antivirus (commonly Windows Defender) quarantines
+`pkg_resources`' files, or **(b)** a partial/interrupted extract. In both cases
+setuptools' *metadata* remains, so `uv`/`pip` report it "already satisfied" and
+a plain install **no-ops** — the files are never restored.
 
-**Fix:** pull the latest `main`. `pyproject.toml` now pins
-`setuptools>=70,<81` and the WhisperX dep is patched to import from
-`importlib.metadata` first.
+**Fix:** in the backend venv, **force a reinstall** (a plain install won't work
+for the reasons above):
 
-**Linked issue:** [#58](https://github.com/debpalash/OmniVoice-Studio/issues/58)
+```
+uv pip install --reinstall 'setuptools>=75,<80'
+```
+
+then restart. If it recurs, your antivirus is removing the files again — add the
+backend **`.venv`** folder to its exclusions (Windows Security → Virus & threat
+protection → Exclusions). The app's auto-repair now uses `--reinstall` too, so a
+fresh install heals itself.
+
+**Linked issues:** [#58](https://github.com/debpalash/OmniVoice-Studio/issues/58),
+[#248](https://github.com/debpalash/OmniVoice-Studio/issues/248)
 
 ## 2. HF 401 / pyannote license not accepted
 
@@ -178,6 +191,100 @@ engines per OmniVoice copy. See [docs/engines/cosyvoice.md](../engines/cosyvoice
 for the dedicated CosyVoice path.
 
 **Linked issue:** [#55](https://github.com/debpalash/OmniVoice-Studio/issues/55)
+
+## 12. CUDA PyTorch wheel download fails on first run
+
+**Symptom:** first-run setup stops at **Installing dependencies** with a failure
+that mentions `torch` and a `download.pytorch.org` (or `download-r2.pytorch.org`)
+URL — e.g. `Failed to download torch==2.8.0+cu128 …win_amd64.whl`. The app then
+won't launch.
+
+**Cause:** on Windows/Linux NVIDIA machines, OmniVoice installs the CUDA PyTorch
+build (`torch` + `torchaudio`) from PyTorch's own index. That CUDA wheel is
+large (~2.5 GB), so a flaky or restricted network drops it partway. This is a
+download/network problem, **not** a bug in OmniVoice — but the CUDA wheels come
+from a *named, explicit* index that a PyPI mirror (`UV_DEFAULT_INDEX`) cannot
+redirect, so the generic mirror trick doesn't help here.
+
+**Fix, in order:**
+
+1. **Clean & Retry.** Large downloads frequently succeed on a second attempt —
+   OmniVoice already retries each request 5× with long timeouts, and a fresh
+   attempt restarts cleanly.
+2. **Use a VPN** if your network throttles or blocks the PyTorch CDN.
+3. **Provide the wheels manually (offline path).** Download the two wheels that
+   match your machine from a source you *can* reach (the official
+   [pytorch.org](https://pytorch.org/get-started/locally/) wheel index or a
+   regional mirror), then drop them in the wheel folder and **Clean & Retry** —
+   OmniVoice will install from your local copies instead of the network:
+   - Folder: **`<env dir>/wheels`** (the exact path is printed in the error
+     message and in the setup log; `<env dir>` is your chosen install/storage
+     location).
+   - Files: the `torch` **and** `torchaudio` wheels for your exact Python/OS/CUDA
+     — e.g. `torch-2.8.0+cu128-cp311-cp311-win_amd64.whl` and the matching
+     `torchaudio-2.8.0+cu128-cp311-cp311-win_amd64.whl`. They must match the
+     pinned versions (shown in the failing URL).
+   - On retry, OmniVoice re-resolves the install using those local wheels; the
+     rest of the (small) dependencies still come from PyPI/your mirror.
+
+If you don't have an NVIDIA GPU, you don't need the CUDA build at all — a CPU /
+Apple-Silicon install skips this index entirely.
+
+**Linked issue:** [#569](https://github.com/debpalash/OmniVoice-Studio/issues/569)
+
+## 13. Stuck on the download page / incomplete model cache ("only `refs/`")
+
+**Symptom:** the setup screen never finishes the model download and you can't
+reach the main app. Looking in the HF cache, a model folder
+(`models--k2-fsa--OmniVoice`, `models--Systran--faster-whisper-large-v3`) has
+`refs/` and maybe `config.json` but **no weight files** (`blobs/` empty or tiny).
+
+**Cause:** the download started but the large weight shards never finished —
+almost always the connection **dropping, throttling, or being blocked** mid-pull
+(corporate/school proxy, VPN, antivirus quarantining the multi-GB file, or a
+region where `huggingface.co` is slow/blocked). The app retries and verifies
+weights, but a connection that *trickles* rather than dies can stall for a long
+time.
+
+**Fix — force a clean re-download:**
+
+1. **Fully quit OmniVoice.** Check Task Manager (Windows) / Activity Monitor
+   (macOS) and end any leftover `omnivoice` / `python` process — a half-running
+   one keeps the cache locked.
+2. **Delete the incomplete model folder(s) entirely** from the HF cache (the
+   whole `models--…` folder, not just `refs/`). Leave other models alone:
+   - `models--k2-fsa--OmniVoice`
+   - `models--Systran--faster-whisper-large-v3`
+3. **Relaunch** — the download page re-pulls from scratch.
+
+**If it stalls again at the same spot**, the download is being blocked — try, in
+order:
+
+- **Antivirus/firewall** — temporarily disable it for the download (large model
+  files are a common false-positive quarantine), then re-enable.
+- **Connection** — use a stable, direct connection; pause any VPN; avoid
+  corporate/school networks.
+- **Region mirror** — if `huggingface.co` is slow/blocked where you are, set a
+  mirror **before** launching and relaunch:
+  - macOS/Linux: `export HF_ENDPOINT=https://hf-mirror.com`
+  - Windows (PowerShell): `[Environment]::SetEnvironmentVariable("HF_ENDPOINT","https://hf-mirror.com","User")`
+
+**Manual fallback** (if downloads keep failing), pull the weights yourself into
+the same cache, then relaunch:
+
+```bash
+pip install -U "huggingface_hub[cli]"
+huggingface-cli download k2-fsa/OmniVoice
+huggingface-cli download Systran/faster-whisper-large-v3
+```
+
+(If OmniVoice uses a custom models directory, set `HF_HOME` to it first so the
+files land where the app looks.)
+
+> Newer builds detect an incomplete cache and re-offer the download instead of
+> stranding you on this page — update once the fix is in your channel.
+
+**Linked issue:** [#622](https://github.com/debpalash/OmniVoice-Studio/issues/622)
 
 ## First-run setup fails on a restricted network (GitHub/PyPI blocked)
 

@@ -9,6 +9,361 @@ The bundled TTS model package (`pyproject.toml`) is versioned independently.
 ## [Unreleased]
 
 ### Added
+
+- **Tagged scripts auto-cast into a multi-voice podcast/audiobook.** Paste a
+  `[Alice] … [Bob] …` script into Stories and hit Auto-cast: it now recognizes
+  the `[Name]` tag format (alongside the existing `NAME:` screenplay and quoted
+  prose), builds the cast, and assigns a voice per character automatically.
+  Editing one line only re-synthesizes that line on export (the chapter cache
+  is content-addressed), and inline markers like `[pause]` / `[voice:…]` are
+  never mistaken for speakers. (#487)
+- **A dedicated Contact page.** Discord, email, GitHub issues, and the project
+  website (palash.dev) as clean one-tap rows, reachable from the footer — so
+  reaching the maker is never more than a click away.
+
+### Changed
+
+- **Donations now go through Ko-fi or PayPal (GitHub Sponsors removed).** GitHub
+  Sponsors isn't available, so the Support page no longer routes there: pick an
+  amount (now $10 / $20 / $50) and then choose Ko-fi or PayPal — PayPal carries
+  the amount straight into checkout. `.github/FUNDING.yml` and the README badges
+  were updated to match.
+- **Simplified the Commercial License page.** Trimmed the six-tile benefit grid
+  and FAQ down to the three things that actually drive the decision (you own the
+  output, no per-minute cost, direct support) plus one clear "request a quote"
+  contact — less wall-of-text, faster to act on.
+### Fixed
+
+- **Dubbing a URL no longer fails with `[Errno 22] Invalid argument` on Windows.**
+  yt-dlp stamps the downloaded file's modified-time with the video's upload
+  date; an out-of-range/invalid timestamp makes the `os.utime` call raise
+  `[Errno 22]` and aborts the whole URL ingest. OmniVoice downloads to a throwaway
+  file and never uses its mtime, so it now skips the stamp entirely
+  (`updatetime=False`). (#642)
+
+- **Dubbing a YouTube link that 403s now retries with a different player
+  client.** Some videos serve their formats signature-protected to the default
+  player client, so the media download fails with `HTTP Error 403: Forbidden`
+  even though extraction worked — and a plain retry keeps 403ing. The URL
+  download now escalates the YouTube player client (tv → android → web_safari)
+  on a 403, which commonly bypasses it, before surfacing the actionable error.
+  (#625)
+- **A synth glitch that produced unreadable audio is now caught instead of a
+  misleading "out of memory".** A numerical glitch in the model (seen on Apple
+  Silicon/MPS) could leave NaN/∞ samples, which wrote a WAV that then failed
+  decoding with an opaque `ffmpeg returned error code: 183 / Invalid data` — and
+  the generic error handler labelled it "ran out of memory". Non-finite samples
+  are now sanitized to silence before any encode (so the WAV is always
+  decodable), and a genuine decode failure is reported as "unreadable audio —
+  Flush and regenerate", not OOM. (#629)
+- **A silent startup hang now leaves a diagnostic instead of nothing.** On some
+  setups the backend could load all model weights and then hang forever before
+  "Application startup complete" — no error, no crash, an unusable app (reported
+  as a Mac M1 hang after `Loading weights: 527/527`, #632). A startup watchdog
+  now dumps every thread's stack to the error log if startup stalls past a
+  window (default 5 min, `OMNIVOICE_STARTUP_WATCHDOG_S` to tune, `0` to disable),
+  so the deadlock is captured rather than invisible. It's disarmed the instant
+  startup finishes, so a normal (even slow-first-download) boot never trips it.
+  (#632)
+- **First-run demo voice is back.** The bundled demo clip
+  (`backend/assets/samples/demo_voice.wav`) was a build artifact that never got
+  committed, so it shipped absent — onboarding logged "Demo audio not found" and
+  seeded nothing, leaving a brand-new install with an empty Launchpad and no
+  `/demo_audio` route. The clip is now committed (it's already un-ignored and
+  bundled via the Tauri `backend` resource), so first-run seeds the demo voice
+  on every platform; onboarding still degrades gracefully (with a regenerate
+  hint) if it's ever absent. (#621)
+- **Multi-speaker dubbing: two speakers' turns merged onto one line are now
+  split apart.** Segmentation groups words into sentences *before* diarization
+  runs, so a back-and-forth exchange could land in a single segment; the speaker
+  pass then only *relabelled* that segment with its majority speaker, losing the
+  turn boundary (the second half of #486; the per-speaker voice auto-assign was
+  fixed earlier in #490). A new post-diarization pass re-splits any segment whose
+  words span more than one speaker at the word-level boundary, assigning each
+  piece its own speaker. Single-speaker segments pass through **byte-for-byte
+  unchanged**, so single-speaker dubs and their timing never move, and a lone
+  mis-attributed word (diarization noise) is smoothed rather than causing a
+  spurious split. (#486)
+- **Designed voices saved with a bad style no longer render wrong or crash
+  generation.** A designed voice could persist an `instruct` the engine
+  validator rejects — either the literal `"[object Object]"` from an old build,
+  or freeform prose typed into the style field — which made every generation or
+  dub that used the voice fail with `Unsupported instruct items found in …`
+  (surfacing to users as a 400/500 and, when it tore down mid-render, "Can't
+  reach the local backend"). The previous fix only *blanked* `"[object Object]"`,
+  which silently dropped the design — so an Indonesian **female** voice came out
+  **male**. Now the stored instruct is sanitized down to valid tags at every
+  seam (save, edit, and when a profile drives Generate or Dub), and when the
+  stored value is unusable the tags are **rebuilt from the design's saved
+  category picks (`vd_states`)** so the intended gender/age/pitch/accent survive.
+  A migration (0007) heals existing poisoned profiles in place — no reinstall,
+  no manual fix. (#550 #571 #594 #596)
+- **"Transcribe stream dropped … Likely ASR backend failed to load" now shows
+  the *real* reason.** When transcription failed to load its ASR model (the
+  reported case was WhisperX on Windows — typically a faster-whisper /
+  CTranslate2-cuDNN mismatch, a missing model download, or the torch-2.6
+  weights-only VAD regression), the UI dead-ended on a generic "stream dropped"
+  message with no actionable cause. Two root causes: (1) WhisperX loads lazily
+  *inside* transcription, so the load failure was buried in per-chunk errors and
+  retried on every chunk; the transcribe pre-flight now eagerly loads the ASR
+  model (new `ASRBackend.ensure_loaded()`), surfacing the genuine cause once, up
+  front, as a structured error. (2) Pre-flight and audio-load errors closed the
+  SSE stream with a bare `error` and no terminal `done`, so the browser's native
+  EventSource connection-drop could race and win against the structured error —
+  discarding the real cause and falling back to the generic message; every
+  terminal error now emits `done`, and the frontend latches the structured cause
+  so a connection drop can't overwrite it. Net: WhisperX load failures are
+  diagnosable instead of a silent dead-end. Fail-before/pass-after regression
+  test included. (#578)
+- **Dubbing: the PLAY button on the dubbed-video preview did nothing.** Same
+  autoplay-policy trap that #510 fixed for the standalone audio player, but the
+  dub editor's timeline player was missed. WaveSurfer builds its `AudioContext`
+  at mount — before any user gesture — so on Windows WebView2 (and Linux
+  Firefox/Chrome, Android Chrome) it stays `"suspended"`; `playPause()` then
+  resolves with no sound and the preview just sits there. Every playback entry
+  point in the dub timeline (the toolbar Play button and the per-segment "play
+  this slot") now resumes the context via the shared `unlockAudio()` on the
+  click before starting playback, and swallowed play() rejections are logged
+  instead of hidden. A source-contract regression test pins the invariant so a
+  future refactor can't quietly reintroduce a silent play path. macOS is
+  unaffected (its context was never blocked). (#595)
+- **Voice design: the script text field couldn't be expanded.** The Script
+  textarea was a `flex: 1` item inside a flex column, so flex-grow recomputed
+  its height on every reflow and snapped the user's drag back — `resize:
+  vertical` is silently ignored on a flex-grown item in Chromium/WebView2. The
+  field now owns its own height (starts taller, and the corner grip grows it
+  reliably on every platform). (#595)
+- **An interrupted model download now self-repairs instead of dead-ending.**
+  When the OmniVoice TTS cache was missing weight shards (the usual aftermath of
+  an interrupted first download), the next synthesize failed with a 500 and a
+  "delete the model and install it again" instruction — a manual dead-end. The
+  backend now detects the truncated-cache error on load, re-fetches just the
+  missing files via `snapshot_download` (already-present blobs are skipped, so a
+  near-complete cache repairs in seconds and a healthy cache is never touched),
+  and retries the load automatically. Offline mode (`HF_HUB_OFFLINE`) is
+  respected — repair never makes a network call the user opted out of — and if
+  the re-fetch still can't fix it, the actionable delete-and-reinstall message
+  is preserved as the fallback. (#581)
+- **Dubbing a YouTube URL no longer dies on a transient "Broken pipe."**
+  Pasting a video link could fail outright with `download: Unable to download
+  video: [Errno 32] Broken pipe` — a broken pipe raised while the write side of
+  a pipe closes mid-stream (a killed ffmpeg merge child, a CDN reset during
+  muxing). yt-dlp's own per-fragment retries don't cover that case, so a single
+  transient blip aborted the whole ingest. The URL download now retries up to
+  twice on broken-pipe / network-drop failures, wiping the partial download
+  between attempts, and only surfaces the (already-actionable) "connection
+  dropped — just retry" hint after the retries are exhausted. Unsupported links
+  still fail fast with their own hint — no wasted retries. (#579, #598)
+- **`No module named 'omnivoice'` on installs whose venv lost its editable
+  record.** An interrupted or offline `uv sync` (common during an in-place
+  upgrade) could install all dependencies yet never lay the editable install of
+  the project's own `omnivoice` package — or an antivirus quarantine could
+  remove it. The venv still started uvicorn, so the bootstrap's health gate
+  passed it through, and the app only failed at the first generate/dub with
+  `No module named 'omnivoice'`. The bootstrap now also verifies `omnivoice` is
+  importable (via a cheap `find_spec`, no torch load) and forces a repair
+  `uv sync` that re-lays the editable install when it isn't; the backend also
+  resolves `omnivoice` from its bundled source tree at runtime as a safety net.
+  No reinstall needed — relaunch and it self-repairs. (#564)
+- **"cannot schedule new futures after shutdown" no longer breaks generate/dub
+  after a slow first load.** When a model load timed out, the backend reset its
+  GPU worker pool to recover — but several request handlers had captured the old
+  pool object at import time and kept submitting to it, so every subsequent
+  generate, dub, transcribe, or translate failed with `cannot schedule new
+  futures after shutdown` (a 500, or "Can't reach the local backend" when it
+  took the worker down). The GPU pool is now a single self-healing handle whose
+  worker pool is rebuilt on demand, so a reset can never strand an in-flight or
+  later request. No settings change; the recovery is automatic. (#589 #599)
+
+### CI
+
+- **Feature-coverage test system.** A backend route-inventory test diffs all 213
+  HTTP/WebSocket endpoints against a committed snapshot (plus a critical-endpoint
+  guard and a route-count floor), and a frontend feature-coverage test asserts
+  every app mode is wired to a page and every feature has its i18n namespace — so
+  an endpoint or page silently disappearing now fails CI on every PR.
+
+## [0.3.7] — 2026-06-20
+
+A stabilization release that clears the wave of issues reported on the 0.3.6
+line — across voice design, dubbing, transcription, install, and the Linux/web
+UI — and lands two more opt-in cloning engines. The throughline is **non-English
+correctness and cross-platform playback**: cloned and designed voices now hold
+their language end-to-end, and audio plays inline in Linux/Android browsers,
+not just macOS. It also carries the v0.3.6 startup-crash fixes, so anyone still
+hitting "Can't reach the local backend" on v0.3.5/v0.3.6 only needs to update.
+
+### Added
+
+- **Two opt-in heavyweight TTS engines: MOSS-TTS-v1.5 (8B) and dots.tts (2B).**
+  Both are zero-shot voice-cloning engines, each running in its own isolated
+  subprocess venv (they pin a `transformers` version that conflicts with the
+  parent's `>=5.3` — MOSS `==5.0`, dots.tts `==4.57`) via the same dedicated-venv
+  pattern as IndexTTS-2, so they can't disturb the default install or its
+  lockfile. Point `OMNIVOICE_MOSS_TTS_V15_DIR` / `OMNIVOICE_DOTS_TTS_DIR` at a
+  local clone to enable. CUDA/CPU only — neither claims Apple-Silicon MPS, and
+  dots.tts is gated off on Windows (upstream is Linux/macOS only). See
+  [docs/engines/moss-tts-v15.md](docs/engines/moss-tts-v15.md) and
+  [docs/engines/dots-tts.md](docs/engines/dots-tts.md). (#498)
+
+### Fixed
+
+- **Non-English voices drifted to English / the wrong language.** Three
+  independent root causes, all in the language path: (1) a voice profile's
+  stored language was never read back into generation, so a German archetype
+  that *previewed* in German *generated* in English (the preview passed the
+  language; the user's Generate call didn't); (2) the audiobook/longform synth
+  hardcoded `language=None`, letting the engine re-autodetect per chunk so a
+  non-English clone could flip language mid-render on short/ambiguous lines; and
+  (3) the duration estimator weighted Unicode combining marks at zero, so
+  decomposed (NFD) diacritic text — common for Vietnamese — under-allocated
+  frames and came out rushed. The profile/request language is now threaded
+  through both the single-shot and longform paths (request wins, profile fills
+  the gap), and text is NFC-normalized before duration estimation. Each fix has
+  a fail-before/pass-after regression test. (#533, #505, #502)
+- **Audio playback on Linux Firefox/Chrome and Android Chrome.** Two separate
+  root causes both masquerade as "the play button doesn't work" on non-macOS
+  browsers — and both are invisible when developing on macOS, which is why they
+  shipped. (1) The backend served `.wav` / `.flac` with Python's default
+  `audio/x-wav` / `audio/x-flac` (vendor-experimental, never IANA-registered);
+  macOS CoreAudio MIME-sniffs leniently and plays anyway, but Linux FFmpeg and
+  Android ExoPlayer strictly honor the declared type and prompt to download.
+  Fixed by registering the canonical `audio/wav` / `audio/flac` types before
+  any `StaticFiles` mount. (2) WaveSurfer's `AudioContext` is constructed at
+  component-mount time — i.e. before any user gesture — so on Linux FF/Chrome
+  and Android Chrome it stays `suspended`, `decodeAudioData` hangs, the
+  `ready` event never fires, and the play button never enables. macOS
+  Safari/Chrome auto-resume on first interaction. Fixed by patching
+  `window.AudioContext` to track every instance and resuming them on the first
+  `pointerdown` / `keydown` / `touchstart`, plus resuming inline on the play
+  click itself. The MIME fix has a backend regression test; the unlock path
+  has a Vitest unit test covering idempotency, post-unlock contexts, and
+  error isolation. (#510)
+- **Voice Studio "Save design as profile" poisoned the profile with
+  "[object Object]" and then 400'd every generation** ("Unsupported instruct
+  items found in [object Object]"). The save passed the instruct *builder
+  object* to the form instead of its string. Fixed at the source + defended with
+  a coercion helper; the engine now tolerates the sentinel, and a migration
+  heals already-saved profiles. (#550, #545, #542, #537, #530, #525)
+- **Profile / persona / consent endpoints 500'd with `no such column:
+  consent_audio_path`** (and the same class for `kind`/`vd_states`/…) after an
+  in-place upgrade. The alembic migration existed but couldn't always apply
+  (stamped at a removed revision, or alembic not importable) and the failure was
+  swallowed. The runtime schema now self-heals — it ADDs any missing additive
+  column from the canonical schema on startup. (#552, #547)
+- **Stories: the global reading-speed slider was ignored by preview and stem
+  export.** The #415 global speed only flowed through the full longform export;
+  per-segment preview and stem export still resolved a hardcoded `track.speed ||
+  1.0`, so audio played at 1.0× even with the global set to e.g. 0.70×. A shared
+  `effectiveSpeed(track, global)` helper (per-line override → global → engine
+  default) now drives all three generation paths. (#508)
+- **Generate / Settings / Clone buttons were missing / unpressable on Linux.**
+  The UI-scale fix round-trips correctly on Chromium, but older WebKitGTK treats
+  `zoom` as a layout no-op, leaving a ~23% black band that pushed the bottom CTAs
+  off-screen. The shell now probes the engine and fills the window when `zoom`
+  doesn't lay out. (#523, #524)
+- **Settings tabs with little content rendered as a stunted box in a black
+  void** (reported on Appearance). The page is now a flex column with a
+  min-height floor — short tabs fill the panel, tall tabs grow and scroll
+  exactly as before. The Appearance panel's previously hardcoded English
+  strings ("UI scale", "Color theme", "Font") were also routed through i18n,
+  per the localization rule. (#507)
+- **The engine "Install" button 500'd with "No virtual environment found."**
+  `uv pip install` now targets the running interpreter (`--python
+  sys.executable`) instead of relying on a venv it couldn't auto-discover.
+  (#529, #527)
+- **Transcription failed with "no segments" on GPUs without efficient float16.**
+  Both CTranslate2 ASR backends now fall back float16 → int8 instead of crashing
+  at model load; a transcribe stream can no longer close without a terminal
+  error event; and an incomplete `transformers` install reports an actionable
+  message instead of "Could not import module 'AutoFeatureExtractor'".
+  (#551, #549, #516)
+- **Audiobook import 500'd** with `'AudiobookPlan' object has no attribute
+  'chapter_count'` for every format (.txt/.md/.epub/.pdf). (#543)
+- **Windows: generated audio auto-played in a separate, un-closeable black
+  window.** Renders now play in-app through the shared playback manager. (#532)
+- **Cryptic video-download errors** now carry actionable hints: an unsupported
+  link shape ("paste a direct video page, not a share/feed link") vs a transient
+  network drop ("just retry — the partial download was cleaned up"). (#554, #536)
+- **A relocated, copied, or restored backend venv ("No module named
+  'encodings'") now self-heals** (rebuilds once) instead of failing on every
+  launch.
+- **The donate goal bar showed fabricated progress** ($137.50 / $200, 23
+  sponsors). It now reflects the real figures ($10 / $200, 1 sponsor) in both the
+  runtime JSON and the TypeScript fallback. (#513)
+- The **"Can't reach the local backend" startup-crash wave** (pkg_resources
+  #248, `scalar_fastapi` #307, exit-106 broken venv) was fixed in v0.3.6 — this
+  release carries those fixes, so updating from v0.3.5/older resolves them.
+
+### Changed
+
+- **Version is now single-sourced from `frontend/package.json`.** Five
+  hand-maintained literals drifting is exactly what shipped a 0.3.6 build that
+  called itself 0.3.5. `package.json` is canonical (vite already injects it as
+  `__APP_VERSION__`), `tauri.conf.json` reads its bundle version from it
+  (`"version": "../package.json"`), and the remaining toolchain-required mirrors
+  (Cargo.toml, pyproject.toml, the frozen-backend fallback) are CI-guarded to
+  stay in lockstep. (#503)
+- **Updater: the Preview channel actually tracks `main` again.** It was stuck at
+  `0.3.5-41` because its only build trigger was a manual dispatch; a nightly
+  rebuild now enforces "preview = main" (no-opping on days `main` didn't move).
+  Two latent hazards are closed: the `preview` release is re-asserted as a
+  prerelease every run (a non-prerelease preview could hijack the Stable
+  channel's "Latest"), and its manifest can no longer silently drop the
+  Intel-Mac (darwin-x86_64) target. (#500)
+
+### Internal
+
+- **The frozen desktop backend reported `0.3.5` regardless of its real version.**
+  In a synced env, `core.version.APP_VERSION` resolves from package metadata
+  (correct, so CI stayed green), but the PyInstaller-frozen build has no
+  `.dist-info`, hit `PackageNotFoundError`, and fell back to a hardcoded literal.
+  The spec now bundles `omnivoice` metadata so the primary path works frozen too,
+  and the resolution chain is metadata → pyproject → named fallback. This also
+  fixes **About → Version rendering blank** in the web/Pinokio build (no Tauri,
+  backend idle), which now falls back to the build-time version. (#501)
+
+## [0.3.6] — 2026-06-16
+
+A large release (168 commits since v0.3.5). The headline is the **Longform
+suite** — produce full audiobooks and multi-voice stories from text, EPUB, or
+PDF — alongside a real **engine-routing** layer that tells you up front when an
+engine will fall back to CPU instead of finding out mid-synth. Dubbing,
+first-run, and install reliability all get a pass too.
+
+### Added
+
+- **Longform: Stories + Audiobook editors.** Two new tabs turn long text into
+  finished audio. **Audiobook** takes a script (or imports plain text / EPUB /
+  PDF), auto-splits it into chapters, and renders a chaptered `.m4b` with
+  metadata, cover art, and per-chapter preview/resume. **Stories** is a
+  multi-voice editor — assign a different voice per line, preview, and export
+  the whole thing through the same server-side renderer. Both share one render
+  core (loudness, metadata, cover art) and one live SSE progress stream, and
+  you can convert a project between Story and Audiobook in place.
+  (#402, #403, #404, #408, #409, #411, #412, #413, #426, #435, #436, #447)
+- **Longform: PDF & EPUB ingest.** "Import" on the Audiobook tab accepts EPUB
+  and PDF (not just plain text) and auto-chapters the result, so an existing
+  ebook becomes an audiobook without manual copy-paste. (#412, #459)
+- **Longform: two-pass loudnorm mastering.** Audiobook/Story exports now run a
+  measure-then-normalize loudnorm pass for accurate ACX/podcast loudness
+  targets. A slow or broken measure pass degrades gracefully to single-pass
+  rather than aborting the render. (#449, #455)
+- **Longform: crash-resume.** An interrupted render is resumable without
+  re-submitting the original input — the compiled plan is persisted to the job
+  dir and finished chapters are reused, so a crash mid-book doesn't cost you the
+  whole render. (#470)
+- **Longform: pronunciation control + SSML-lite prosody.** A per-render
+  pronunciation lexicon (word respelling) plus an in-app pronunciation editor
+  and markup reference, and inline prosody markers — `[slow]` / `[fast]` /
+  `[emphasis]` / `[spell]` — for fine-grained delivery. (#419, #421, #422)
+- **Stories: global reading-speed control.** A toolbar slider (0.5–2.0×) sets
+  one speed for every line that doesn't have its own per-line override; the
+  per-line slider still wins. Persisted as a UI preference. (#415, #416)
+- **Unified LongformProject store.** Audiobook metadata, scripts, and prefs
+  persist in a single project store (with a `v4→v5` migration), and finished
+  books/stories now show up alongside other work in **Projects**. (#417, #443,
+  #444)
 - **Portable personas (`.ovsvoice`).** Export any voice as a self-contained,
   fully-local persona bundle — identity, optional reference clip, consent
   attestation, SPDX license, and a watermarked preview — and import it back into
@@ -17,6 +372,183 @@ The bundled TTS model package (`pyproject.toml`) is versioned independently.
   be forged by hand-editing a bundle (real recording + consent text + attestation
   required). Legacy `.omnivoice` files still import. See
   [docs/persona-format.md](docs/persona-format.md). (#29)
+- **Engine routing — no more silent CPU fallback.** A host device probe and
+  routing resolver now decide where each engine actually runs, and the verdict
+  is surfaced before you hit Synthesize: the **Settings → Engines** picker shows
+  a per-engine compatibility matrix, and **preflight** / **diagnose** report the
+  active engine's GPU verdict (accelerated / caveat / CPU-fallback /
+  unavailable). At synth time every TTS entry point (`/generate`,
+  `/v1/audio/speech`) enforces the same routing — an engine that can't use this
+  host's GPU returns an explicit error or an `X-OmniVoice-Routing` header instead
+  of silently dropping to CPU or dying mid-synth. (#21)
+- **Diagnostics suite.** New self-check tooling for when something's wrong: a
+  `/system/diagnose` report (and matching backend `--diagnose`), a persistent
+  **error journal** surfaced in Settings, and a scrubbed **diagnostic bundle**
+  (home dirs stripped to `~/`, no tokens/keys) you can attach to a bug report.
+  Paired with structured GitHub **Issue Forms** (bug / install / feature) for
+  cleaner reports. (#433, #456)
+- **Dubbing: multi-speaker per-speaker voice assignment.** When diarization
+  detects multiple speakers, each segment is now bound to its speaker's cloned
+  voice automatically instead of landing on "Default" and needing manual fixes;
+  per-segment reference clips are still preferred for quality where present. Also
+  adds an optional speaker-count hint for diarization. (#275, #486, #490)
+- **Dubbing: Smart Fit timing + second-pass QC.** A Smart Fit timing strategy
+  (planner, fingerprints, per-segment video retime + drift absorption + fitted
+  subtitles) plus a second-pass ASR QC that flags lines whose dub drifts from the
+  target timing — wired into the dub editor UI. Includes a timeline segment
+  editor (drag, snap-to-onset, keyboard a11y), speech-onset alignment, regional
+  dialect targeting, and per-segment clone references. (#280, #347, #350, #369,
+  #370, #458)
+- **Dubbing: dedicated Dub home.** A projects/history landing for dubbing with
+  project rename. (#435)
+- **Voice Console workspace.** Clone and Design are consolidated into one Voice
+  workspace with right-side panels, a shared waveform player, an identity recipe
+  line / Active-voice card, and a free-text "describe your voice" field that maps
+  natural language to design parameters. (#317, #374, #376, #378, #395, #396,
+  #397)
+- **Unified first-run setup.** Nothing installs until you confirm a plan: pick an
+  install mode (installed / portable), a storage location, and (on restricted
+  networks) custom PyPI/HF/python-build-standalone mirrors — with a
+  minimum-free-space gate before anything downloads. Followed by a guided
+  studio-console wizard with platform-aware hints, resume reassurance, and
+  download ETAs. (#286, #295, #297, #298)
+- **Dictation: local-LLM refinement.** Opt-in local-LLM cleanup of final
+  transcripts (collapsing Whisper hallucination loops), available on both live
+  dictation and the REST `/transcribe` path; plus opt-in NLMS acoustic echo
+  cancellation for dictating over playback. Configure a remote LLM endpoint
+  (Ollama / vLLM / LM Studio) in Settings. (#356, #357, #363, #399, #400, #457)
+- **Unlimited-length TTS + streaming.** Sentence-boundary chunking with
+  crossfade removes the per-generation length cap, and a new sentence-by-sentence
+  `/ws/tts` streams audio as it's produced. An inline `[pause Nms]` marker
+  inserts measured silence in generated speech. (#276, #357, #358)
+- **MCP server v1.** OmniVoice mounts an MCP server on `/mcp` (with a stdio shim
+  and per-agent voice binding) so it can act as a local TTS/STT provider for
+  agentic pipelines. (#368)
+- **Remote-backend access.** Point the desktop UI at a remote backend URL with a
+  bearer key (Tailscale-documented), and an opt-in Hugging Face token field in
+  the setup flow. (#303, #364)
+- **"Fund Claude Max" support experience.** The donate page gets a real goal bar
+  with a "Join N supporters" social-proof line and suggested amounts, plus Pip
+  the mascot and a non-blocking "postcard" toast that appears only *after* a
+  success (a finished dub, a saved clone, a longform export) — never on errors,
+  setup, or first run — with escalating cooldowns and a one-click "don't ask
+  again". (#494)
+
+### Fixed
+
+- **Transcription/dubbing failed when ffmpeg wasn't on `PATH`** (notably on
+  Windows). WhisperX now decodes audio through OmniVoice's own validated ffmpeg
+  binary instead of a bare `PATH` lookup, so ASR works without a system ffmpeg
+  install. (#479)
+- **Translation defaulted the source language to English.** Dubbing/translation
+  now guesses the source language from the text instead of assuming `en`,
+  fixing wrong-direction translations. (#478)
+- **Cinematic / LLM dubbing features failed out of the box** because `openai`
+  wasn't bundled. The client is now a runtime dependency, so those paths work on
+  a fresh install. (#484)
+- **`pkg_resources missing` install dead-end (#248).** The auto-repair ran
+  `uv pip install setuptools`, which `uv` treated as a no-op when setuptools
+  *metadata* was present but its files had been removed (commonly by Windows
+  Defender quarantine or a partial extract). Both repair sites now use
+  `--reinstall` to force re-extraction, and the error/hint text suggests the
+  working command plus an antivirus-exclusion note. (#248)
+- **A stuck backend trapped users on a buttonless splash (#474).** The bootstrap
+  splash now has a per-stage stall watchdog: if a non-terminal stage sits past
+  its budget (20 min for dep install, 120 s otherwise), it flips to the failed
+  state with actionable hints, the live log, and Retry / Clean-&-Retry — instead
+  of polling forever with no way out. (#474)
+- **Changing the model-download location in Settings had no effect (#480).** The
+  desktop launcher injected a stale models dir that overrode the per-user value,
+  so new downloads kept going to the old folder and "Effective location" stayed
+  wrong. The per-user env file now wins, so the in-app Settings path is
+  authoritative. (#480)
+- **Backend crashed on app upgrade with a stale venv (#307).** Dependencies are
+  now synced on upgrade, and a structurally broken venv self-heals instead of
+  exiting `106`. `scalar_fastapi` is now optional so its absence can't break
+  startup. (#307, #314)
+- **`/generate` ignored the selected TTS engine (#312)** and GGUF speech-control
+  parameters weren't forwarded — both now honored. (#306, #312)
+- **TTS generation failed on some GPUs.** `torch.compile` failures now fall back
+  to eager execution so generation never hard-fails on unsupported GPUs, and
+  cudagraph-compiled inference is pinned to one dedicated thread to avoid
+  crashes. (#278, #315)
+- **Re-dub ignored transcript edits (#281).** Fingerprints are canonicalized, the
+  preview cache is busted, and the mux is atomic, so editing the transcript and
+  re-dubbing actually reflects your changes. Translated subtitles now burn in
+  correctly and subtitle save no longer throws a JSON error. (#281, #309)
+- **macOS: app wouldn't open without using Terminal.** Builds are now ad-hoc
+  signed (with signing/notarization verification), so the app launches normally.
+  (#290)
+- **macOS dictation auto-paste stole focus**; it now writes the clipboard
+  natively without grabbing focus, and microphone-permission handling adds OS
+  usage descriptions, a WebView grant handler, and an actionable denied-state UI.
+  (#287, #323)
+- **Clone-reference transcription was broken** (it used a removed transformers
+  pipeline); it now routes through the ASR registry. A crash-isolated
+  faster-whisper subprocess backend keeps an ASR crash from taking down the app.
+  (#308, #393)
+- **Realtime status probe hit a gated route.** It now probes the auth-exempt
+  `/health` instead of the gated `/model/status`, and the UI polls the backend
+  over HTTP before opening the WebSocket to avoid startup `ECONNREFUSED`. (#439,
+  #450)
+- **Non-executable or unreachable engine binaries showed cryptic errors** — these
+  now produce actionable messages. (#437, #438, #454, #466)
+- **Design-profile save was coupled to a TTS render (#476)**, so saving a profile
+  needlessly triggered synthesis; the two are now decoupled. (#476)
+- **UI scale / black bands.** The app shell now scales via `transform: scale` and
+  always fills the viewport, fixing the WebKitGTK black-band issue on Linux and
+  cramped/black layouts at narrow widths — a permanent fix across platforms.
+  (#445, #452)
+- **Clone popover/CTA clipping and a non-resizable textarea** are fixed, the
+  WaveformPlayer no longer pauses itself on play or ignores clicks, and several
+  layout/history-display issues (phantom sidebar gap, title clamping, flicker)
+  are cleaned up. (#379, #384, #398, #481)
+- **Windows: `desktop-prod` now runs from cmd/PowerShell** via a cross-platform
+  launcher, `tqdm` is disabled on non-TTY to avoid an `OSError`, and ffmpeg
+  validation guards against `WinError 193`. (#282, #305, #377)
+- **MLX import hardened** against PyInstaller dylib failures, with a proper
+  platform gate so it's only loaded where it works. (#390)
+
+### Changed
+
+- **Restricted-network support.** A Hugging Face mirror (`HF_ENDPOINT`) setting,
+  custom PyPI / HF / python-build-standalone mirrors in first-run setup, and
+  region presets help installs complete behind restrictive networks. (#286, #391)
+- **Engine memory management.** Subprocess-engine sidecars now unload on demand
+  and idle-reap to free VRAM. (#401, #406)
+- **Faster, more accurate model downloads** via a Xet fast path with accurate
+  progress reporting, plus a model-management cleanup pass. (#424, #428)
+- **Voice profiles unified** under one model with a `kind` discriminator and
+  stored design params, and consent-locked profiles (`verified_own_voice` +
+  spoken-consent flow). (#354, #376)
+- **Updater** preview channel now offers the newest build across channels, and
+  preview versions carry an MSI-legal numeric pre-release stamp. (#293, #326)
+- **Performance.** Voice-clone prompt embeddings are cached, and dub retime
+  batches seek to their window instead of decoding from frame 0. (#387, #427)
+
+### License
+
+- **Relicensed from FSL-1.1-ALv2 to AGPL-3.0 (open-core).** The project is now
+  under the GNU Affero General Public License v3, with a paid commercial license
+  retained for proprietary/closed-source use without AGPL obligations. The
+  bundled `omnivoice/` TTS model package stays Apache-2.0 upstream
+  (AGPL-compatible). Manifests declare `AGPL-3.0-only`; the in-app Commercial
+  License copy and README are updated, and the old "converts to Apache 2.0 after
+  two years" FAQ is removed. In-app commercial-license strings are translated
+  across all 20 locales. (#292)
+
+### CI
+
+- **macOS Intel (x86_64) build target reinstated** on `macos-15-intel`, so Intel
+  Mac users get installers again. (#342)
+- **Docker Hub publishing.** Images now also publish to Docker Hub
+  (`palashdeb/omnivoice-studio`), with the Docker Hub overview maintained in-repo
+  and auto-synced from `main` (sync is non-fatal so it can't redden a build).
+  (#375, #410, #414)
+- **Docs-drift guard.** A daily job compares the canonical feature inventory
+  against README / docs / registries to catch stale docs. (#353)
+- **Security scans never cancel on `main`,** so merge trains no longer leave red
+  ✗ on intermediate commits. (#340)
 
 ## [0.3.5] — 2026-06-03
 

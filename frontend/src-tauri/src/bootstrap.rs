@@ -4,15 +4,16 @@ use std::fs;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use crate::config::get_effective_region;
 use crate::tools::resolve_uv;
-use crate::{BackendState, backend_port};
+use crate::{AppFlags, BackendState, backend_port};
 
 // ── Bootstrap stages ──────────────────────────────────────────────────────
 
@@ -179,6 +180,18 @@ pub fn spawn_backend_and_wait(app: &tauri::AppHandle, stage_handle: &Arc<Mutex<B
         while start.elapsed() < Duration::from_secs(300) {
             if crate::backend::backend_healthy(backend_port()) {
                 set_stage(stage_handle, BootstrapStage::Ready);
+                // #567/#570/#571: once Ready, keep watching the backend child
+                // and respawn it if it dies mid-session, so a crash self-heals
+                // instead of leaving every later request to dead-end on
+                // "Can't reach the local backend". Only one supervisor runs at
+                // a time — Retry can re-enter this function concurrently.
+                if SUPERVISOR_ACTIVE
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    supervise_backend(app, stage_handle);
+                    SUPERVISOR_ACTIVE.store(false, Ordering::SeqCst);
+                }
                 return;
             }
             let process_dead = if let Ok(mut guard) = app.state::<BackendState>().process.lock() {
@@ -241,6 +254,131 @@ pub fn spawn_backend_and_wait(app: &tauri::AppHandle, stage_handle: &Arc<Mutex<B
         };
         set_stage(stage_handle, BootstrapStage::Failed { message: msg });
         return;
+    }
+}
+
+// ── Backend supervisor (auto-restart) ─────────────────────────────────────
+//
+// #567/#570/#571: the backend used to be spawned once and never watched again
+// (`spawn_backend_and_wait` returned the instant it was healthy). When the
+// uvicorn process then died mid-session — a CUDA OOM/context fault under a
+// burst of generations, an antivirus kill, any crash — nothing restarted it,
+// so every later request threw connection-refused and the user was stuck on
+// the "Can't reach the local backend" toast until they restarted the whole
+// app. The supervisor closes that gap: after Ready, it watches the child and
+// respawns it (bounded) so a crash self-heals.
+
+/// Only one supervisor loop may run at a time. The launch-time bootstrap and
+/// the Retry button both call `spawn_backend_and_wait` (and can race), so the
+/// first to reach Ready claims this and the rest fall through.
+static SUPERVISOR_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Give up (surface Failed) if the backend dies this many times within
+/// `RESTART_WINDOW` — a deterministic startup crash must not become a
+/// fork-bomb. The #314 broken-venv self-heal stays the venv-failure path; the
+/// supervisor only handles post-Ready deaths.
+const MAX_RESTARTS: usize = 5;
+const RESTART_WINDOW: Duration = Duration::from_secs(60);
+
+fn app_is_quitting(app: &tauri::AppHandle) -> bool {
+    app.try_state::<AppFlags>()
+        .map(|f| f.quitting.load(Ordering::SeqCst))
+        .unwrap_or(false)
+}
+
+/// Returns `Some(exit description)` if the tracked backend child has exited,
+/// `None` if it is still running (or none is tracked — which we never treat as
+/// a death to respawn, to avoid fighting a deliberate teardown).
+fn backend_child_exit(app: &tauri::AppHandle) -> Option<String> {
+    let state = app.try_state::<BackendState>()?;
+    let mut guard = state.process.lock().ok()?;
+    match guard.as_mut() {
+        Some(child) => match child.try_wait() {
+            Ok(Some(status)) => Some(status.to_string()),
+            Ok(None) => None,
+            Err(e) => Some(format!("try_wait error: {e}")),
+        },
+        None => None,
+    }
+}
+
+/// Drop restart timestamps older than `RESTART_WINDOW` and report whether the
+/// remaining count has hit the cap. Pure so the backoff policy is unit-tested
+/// without spawning real processes.
+fn restart_budget_exhausted(times: &mut Vec<Instant>, now: Instant) -> bool {
+    times.retain(|t| now.duration_since(*t) < RESTART_WINDOW);
+    times.len() >= MAX_RESTARTS
+}
+
+/// After the backend is Ready, watch its process and respawn it on an
+/// unexpected exit. Runs on the (otherwise-returning) bootstrap thread and
+/// stops the instant the app is quitting so it never resurrects the backend
+/// during shutdown. Death is detected only via a *confirmed process exit*
+/// (`try_wait`), never a slow health probe, so a busy-but-alive backend is
+/// never killed.
+fn supervise_backend(app: &tauri::AppHandle, stage_handle: &Arc<Mutex<BootstrapStage>>) {
+    let mut restart_times: Vec<Instant> = Vec::new();
+    loop {
+        std::thread::sleep(Duration::from_secs(2));
+        if app_is_quitting(app) {
+            return;
+        }
+        let exit_info = match backend_child_exit(app) {
+            Some(info) => info,
+            None => continue, // still running
+        };
+        // The exit may have raced with a shutdown that killed the child.
+        if app_is_quitting(app) {
+            return;
+        }
+        if restart_budget_exhausted(&mut restart_times, Instant::now()) {
+            let tail = crate::backend::read_error_log_tail(30);
+            let msg = format!(
+                "The backend kept crashing ({} times in {}s) and couldn't be kept running. \
+                 Use Clean & Retry, or check Settings → Logs → Backend.{}",
+                MAX_RESTARTS,
+                RESTART_WINDOW.as_secs(),
+                if tail.is_empty() { String::new() } else { format!("\n\nLast output:\n{tail}") },
+            );
+            log::error!("Backend supervisor giving up: {msg}");
+            let _ = app.emit("backend-restart-failed", msg.clone());
+            set_stage(stage_handle, BootstrapStage::Failed { message: msg });
+            return;
+        }
+        restart_times.push(Instant::now());
+        log::warn!("Backend process exited unexpectedly ({exit_info}) — restarting it (#567)");
+        emit_log(app, "starting_backend", "Backend stopped unexpectedly — restarting it automatically");
+        // Frontend listens for this to show a "reconnecting" banner (the splash
+        // poll has already stopped post-Ready, so the stage alone won't show).
+        let _ = app.emit("backend-restarting", exit_info.clone());
+        set_stage(stage_handle, BootstrapStage::StartingBackend);
+        // Clear any orphan still holding the port before the respawn.
+        if crate::backend::port_in_use(backend_port()) {
+            crate::backend::kill_orphan_on_port(backend_port());
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        let child = crate::backend::spawn_backend(app, Some(stage_handle));
+        if let Ok(mut guard) = app.state::<BackendState>().process.lock() {
+            *guard = child;
+        }
+        // Wait (bounded) for the respawn to become healthy. If it dies again
+        // immediately, bail early so the next loop counts it toward the cap.
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(120) {
+            if app_is_quitting(app) {
+                return;
+            }
+            if crate::backend::backend_healthy(backend_port()) {
+                set_stage(stage_handle, BootstrapStage::Ready);
+                let _ = app.emit("backend-restored", ());
+                log::info!("Backend restarted and healthy again");
+                break;
+            }
+            if backend_child_exit(app).is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
     }
 }
 
@@ -393,6 +531,31 @@ fn apply_uv_http_env(cmd: &mut Command) {
         .env("UV_HTTP_RETRIES", "5");
 }
 
+/// `<env_root>/wheels` — a local wheel-drop dir uv installs from via
+/// `--find-links`. When a huge wheel can't be pulled on a restricted network
+/// (the ~2.5 GB cu128 torch wheel from download.pytorch.org — #569), the user
+/// downloads the matching wheel, drops it here, and a retry picks it up.
+/// Created so the path always exists to name in the error/docs. It lives under
+/// `env_root` (not `project/`), so it survives Clean & Retry.
+fn wheels_drop_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> PathBuf {
+    let dir = crate::setup::env_root(app).join("wheels");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// True when a `uv sync` failure tail looks like the CUDA torch wheel download
+/// failing (#569). Lets us give torch-specific guidance instead of the generic
+/// "set a PyPI mirror" advice — which can't redirect the explicit, *named*
+/// pytorch-cuda index anyway (uv 0.11 rejects index-name override values, and
+/// `--frozen` pins the exact download.pytorch.org wheel URLs).
+fn sync_failure_is_torch_download(tail: &str) -> bool {
+    let low = tail.to_lowercase();
+    low.contains("download.pytorch.org")
+        || low.contains("download-r2.pytorch.org")
+        || low.contains("pytorch.org/whl")
+        || (low.contains("torch") && (low.contains("failed to download") || low.contains("failed to fetch")))
+}
+
 /// Default PyTorch ROCm wheel index for the opt-in AMD path (#124). ROCm 6.2 is
 /// the current stable wheel set; overridable via OMNIVOICE_TORCH_INDEX.
 const ROCM_TORCH_INDEX: &str = "https://download.pytorch.org/whl/rocm6.2";
@@ -501,14 +664,20 @@ fn quarantine_broken_venv(venv_dir: &Path) -> bool {
 }
 
 /// Whether a dead backend process looks like it failed because the venv
-/// itself is structurally broken — the CPython venv launcher prints
-/// "No pyvenv.cfg file" and exits with code 106 (`RC_NO_PYVENV_CFG`). Matches
-/// either the message in the captured stderr tail or the exit code in the
-/// `ExitStatus` display ("exit code: 106" on Windows, "exit status: 106" on
-/// Unix). Kept deliberately narrow so ordinary backend crashes never trigger
-/// a venv rebuild.
+/// itself is structurally broken — either the CPython venv launcher's
+/// "No pyvenv.cfg file" + exit 106 (`RC_NO_PYVENV_CFG`), OR a relocated/copied/
+/// restored venv whose interpreter can't bootstrap its own stdlib and aborts
+/// very early with "No module named 'encodings'" (exit 1). Both are
+/// unrunnable-interpreter cases that `uv sync` cannot fix — only a venv rebuild
+/// can — so both route into the rebuild-once self-heal. Matches the message in
+/// the captured stderr tail or the exit code in the `ExitStatus` display
+/// ("exit code: 106" on Windows, "exit status: 106" on Unix). Kept deliberately
+/// narrow (full quoted phrases) so an ordinary backend crash — or an app-level
+/// import error of some 'encodings'-named package — never triggers a rebuild.
 pub fn backend_exit_indicates_broken_venv(exit_info: &str, err_tail: &str) -> bool {
-    err_tail.contains("No pyvenv.cfg file") || exit_info.trim_end().ends_with(": 106")
+    err_tail.contains("No pyvenv.cfg file")
+        || err_tail.contains("No module named 'encodings'")
+        || exit_info.trim_end().ends_with(": 106")
 }
 
 /// Prepare (and on first run, create) the Python venv that will host the
@@ -602,7 +771,33 @@ manually, then relaunch.",
         } else {
             false
         };
-        if matches!(uvicorn_check, Ok(ref s) if s.success()) && pkg_resources_ok {
+        // #564: a venv can pass the uvicorn + pkg_resources gates yet still be
+        // unable to import its OWN `omnivoice` package — an interrupted/offline
+        // `uv sync` installed deps but never laid the editable record, or an
+        // antivirus quarantine removed `_editable_impl_omnivoice.pth`. The
+        // backend then boots fine and only fails at the first model call with
+        // "No module named 'omnivoice'". Verify it here so we force a repair
+        // sync (which re-lays the editable install) instead of handing back a
+        // broken venv. `find_spec` resolves the package WITHOUT importing it, so
+        // this stays cheap — a real `import omnivoice` would pull in torch.
+        let omnivoice_ok = if matches!(uvicorn_check, Ok(ref s) if s.success()) {
+            let mut ov_check = Command::new(&venv_py);
+            scrub_python_env(&mut ov_check);
+            matches!(
+                ov_check
+                    .args([
+                        "-c",
+                        "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('omnivoice') else 1)",
+                    ])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status(),
+                Ok(ref s) if s.success()
+            )
+        } else {
+            false
+        };
+        if matches!(uvicorn_check, Ok(ref s) if s.success()) && pkg_resources_ok && omnivoice_ok {
             // Always sync source dirs from bundle so code fixes land on
             // existing installs without requiring a full clean+reinstall.
             let resource_dir = app.path().resource_dir().ok();
@@ -678,13 +873,17 @@ the existing venv; newly added dependencies may be missing (#307)",
             return Some((venv_py, backend_dir));
         }
         if matches!(uvicorn_check, Ok(ref s) if s.success()) {
-            // uvicorn is fine but pkg_resources is missing (#248): setuptools>=80 was
-            // installed before the <80 pin landed (issue #224). Force a repair sync
-            // to downgrade setuptools to a version that ships pkg_resources.
+            // uvicorn is fine but pkg_resources (#248) and/or the omnivoice
+            // editable install (#564) is missing. pkg_resources: setuptools>=80
+            // (installed before the <80 pin in #224) dropped the bundled module.
+            // omnivoice: an interrupted/offline sync never laid the editable
+            // record. Either way a repair `uv sync` re-pins setuptools AND
+            // re-lays the editable install, so force it rather than hand back a
+            // venv that crashes at the first model call.
             log::warn!(
-                "Venv at {} is missing pkg_resources (setuptools>=80 pre-dates the <80 pin) \
-— re-running uv sync to repair (#248)",
-                venv_dir.display()
+                "Venv at {} starts uvicorn but failed a runtime-import gate \
+(pkg_resources_ok={}, omnivoice_ok={}) — re-running uv sync to repair (#248 #564)",
+                venv_dir.display(), pkg_resources_ok, omnivoice_ok
             );
         } else {
             log::warn!(
@@ -733,12 +932,16 @@ the existing venv; newly added dependencies may be missing (#307)",
             if !pr_ok {
                 log::warn!("pkg_resources still missing after repair sync — installing setuptools<80 directly (#248)");
                 emit_log(app, "installing_deps",
-                    "Repairing pkg_resources: installing setuptools<80 (#248)");
+                    "Repairing pkg_resources: force-reinstalling setuptools<80 (#248)");
                 let mut st_cmd = Command::new(&uv_path);
                 scrub_python_env(&mut st_cmd);
                 apply_uv_http_env(&mut st_cmd);
                 st_cmd
-                    .args(["pip", "install", "setuptools>=75,<80"])
+                    // --reinstall: when the venv has setuptools's *metadata* but its
+                // pkg_resources files were removed (antivirus quarantine, partial
+                // extract), a plain `pip install` sees it "already satisfied" and
+                // no-ops — only a forced reinstall re-extracts pkg_resources (#248).
+                .args(["pip", "install", "--reinstall", "setuptools>=75,<80"])
                     .current_dir(&project_dir);
                 match run_streaming(app, "installing_deps", &mut st_cmd) {
                     Ok(ref s) if s.success() => {
@@ -767,9 +970,12 @@ the existing venv; newly added dependencies may be missing (#307)",
                     fail(
                         progress,
                         "pkg_resources is missing from the backend venv and the automatic \
-                         setuptools repair did not restore it. Open a terminal and run \
-                         `uv pip install 'setuptools>=75,<80'` in the backend venv, then \
-                         restart. (#248)",
+                         setuptools repair did not restore it — its files were likely removed \
+                         by antivirus or left by a partial install (the metadata is still there, \
+                         so a plain reinstall is skipped). Open a terminal in the backend venv \
+                         and run `uv pip install --reinstall 'setuptools>=75,<80'`, then restart. \
+                         If it recurs, add the backend `.venv` folder to your antivirus \
+                         exclusions. (#248)",
                     );
                     return None;
                 }
@@ -904,9 +1110,13 @@ the existing venv; newly added dependencies may be missing (#307)",
     if let Some(p) = progress {
         set_stage(p, BootstrapStage::InstallingDeps);
     }
+    let wheels_dir = wheels_drop_dir(app);
     let mut sync_cmd = Command::new(&uv_path);
     scrub_python_env(&mut sync_cmd); // #144: don't inherit AppImage's bundled Python
     apply_uv_http_env(&mut sync_cmd);
+    // #569: let uv install from locally-dropped wheels. (--frozen ignores
+    // find-links, but the non-frozen torch-recovery retry below honors it.)
+    sync_cmd.env("UV_FIND_LINKS", &wheels_dir);
     let has_lockfile = project_dir.join("uv.lock").is_file();
     if has_lockfile {
         sync_cmd
@@ -924,15 +1134,59 @@ the existing venv; newly added dependencies may be missing (#307)",
     } else if get_effective_region(app) == "china" {
         sync_cmd.env("UV_INDEX_URL", "https://mirrors.aliyun.com/pypi/simple/");
     }
-    let sync_status = run_streaming(app, "installing_deps", &mut sync_cmd);
-    if !matches!(sync_status, Ok(ref s) if s.success()) {
-        fail(
-            progress,
-            "Dependency install (uv sync) failed — often a network drop or a \
-partial cache. \"Clean & Retry\" rebuilds the environment from scratch. If your \
-network blocks PyPI, set UV_DEFAULT_INDEX to a mirror (see \
-docs/install/troubleshooting.md).",
-        );
+    let mut sync_ok = matches!(run_streaming(app, "installing_deps", &mut sync_cmd), Ok(ref s) if s.success());
+
+    // #569: the big cu128 torch wheel (~2.5 GB) is the most common first-run
+    // download failure on restricted networks. If the frozen sync failed on it
+    // AND the user has dropped wheels in the local drop dir, retry NON-frozen
+    // with --find-links so uv re-resolves using the local wheels (verified: a
+    // non-frozen find-links sync installs from a local wheel offline; --frozen
+    // does not). Best-effort: if it can't satisfy from the wheels, it fails
+    // identically to before and the actionable error below still fires.
+    if !sync_ok && has_lockfile {
+        let tail = crate::backend::read_error_log_tail(40);
+        let have_local_wheels = fs::read_dir(&wheels_dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+        if have_local_wheels && sync_failure_is_torch_download(&tail) {
+            log::warn!(
+                "Frozen sync failed on a torch download; retrying non-frozen with local wheels in {} (#569)",
+                wheels_dir.display()
+            );
+            emit_log(app, "installing_deps", "Retrying the install with the wheels you provided locally…");
+            let mut retry = Command::new(&uv_path);
+            scrub_python_env(&mut retry);
+            apply_uv_http_env(&mut retry);
+            retry.env("UV_FIND_LINKS", &wheels_dir);
+            if let Some(pypi) = custom_mirrors.pypi_index.as_deref() {
+                retry.env("UV_INDEX_URL", pypi);
+            } else if get_effective_region(app) == "china" {
+                retry.env("UV_INDEX_URL", "https://mirrors.aliyun.com/pypi/simple/");
+            }
+            retry.args(["sync", "--no-dev", "--verbose"]).current_dir(&project_dir);
+            sync_ok = matches!(run_streaming(app, "installing_deps", &mut retry), Ok(ref s) if s.success());
+        }
+    }
+
+    if !sync_ok {
+        let tail = crate::backend::read_error_log_tail(40);
+        let msg = if sync_failure_is_torch_download(&tail) {
+            format!(
+                "Couldn't download the CUDA PyTorch package (a ~2.5 GB wheel from download.pytorch.org). \
+This is almost always a dropped or restricted network, not a bug. What to try, in order: \
+(1) \"Clean & Retry\" — large downloads often succeed on a second attempt. \
+(2) Connect through a VPN if your network blocks the PyTorch CDN. \
+(3) Manually download the matching torch and torchaudio wheels (see the link in your error log / \
+pytorch.org), drop them in {}, then \"Clean & Retry\" — the install will use them locally. \
+Details: docs/install/troubleshooting.md (#569).",
+                wheels_dir.display()
+            )
+        } else {
+            "Dependency install (uv sync) failed — often a network drop or a partial cache. \
+\"Clean & Retry\" rebuilds the environment from scratch. If your network blocks PyPI, set a PyPI \
+mirror in Settings → region/mirrors (see docs/install/troubleshooting.md).".to_string()
+        };
+        fail(progress, &msg);
         return None;
     }
 
@@ -955,12 +1209,16 @@ docs/install/troubleshooting.md).",
         if !pr_ok {
             log::warn!("pkg_resources not importable after uv sync — installing setuptools<80 (#248)");
             emit_log(app, "installing_deps",
-                "pkg_resources missing (setuptools>=80) — installing setuptools<80 to fix (#248)");
+                "pkg_resources missing — force-reinstalling setuptools<80 to fix (#248)");
             let mut st_cmd = Command::new(&uv_path);
             scrub_python_env(&mut st_cmd);
             apply_uv_http_env(&mut st_cmd);
             st_cmd
-                .args(["pip", "install", "setuptools>=75,<80"])
+                // --reinstall: when the venv has setuptools's *metadata* but its
+                // pkg_resources files were removed (antivirus quarantine, partial
+                // extract), a plain `pip install` sees it "already satisfied" and
+                // no-ops — only a forced reinstall re-extracts pkg_resources (#248).
+                .args(["pip", "install", "--reinstall", "setuptools>=75,<80"])
                 .current_dir(&project_dir);
             match run_streaming(app, "installing_deps", &mut st_cmd) {
                 Ok(ref s) if s.success() => {
@@ -1033,6 +1291,54 @@ mod tests {
         assert_eq!(envs.get("UV_HTTP_TIMEOUT").map(String::as_str), Some("120"));
         assert_eq!(envs.get("UV_HTTP_CONNECT_TIMEOUT").map(String::as_str), Some("30"));
         assert_eq!(envs.get("UV_HTTP_RETRIES").map(String::as_str), Some("5"));
+    }
+
+    #[test]
+    fn restart_budget_caps_respawns_and_prunes_old_ones() {
+        // Supervisor backoff policy (#567): fewer than MAX_RESTARTS deaths
+        // inside the window keeps restarting; hitting the cap gives up.
+        let t0 = Instant::now();
+        let mut times: Vec<Instant> = (0..MAX_RESTARTS - 1).map(|_| t0).collect();
+        assert!(
+            !restart_budget_exhausted(&mut times, t0),
+            "{} deaths in-window is under the cap",
+            MAX_RESTARTS - 1
+        );
+        times.push(t0);
+        assert!(
+            restart_budget_exhausted(&mut times, t0),
+            "{} deaths in-window must trip the cap",
+            MAX_RESTARTS
+        );
+
+        // Restarts older than the window are pruned and never count toward the
+        // cap, so an app left running for hours never crash-loops on stale
+        // history. (Forward Instant arithmetic — always representable.)
+        let later = t0 + RESTART_WINDOW + Duration::from_secs(1);
+        let mut aged: Vec<Instant> = (0..MAX_RESTARTS).map(|_| t0).collect();
+        assert!(
+            !restart_budget_exhausted(&mut aged, later),
+            "deaths older than the window must be pruned, not counted"
+        );
+        assert!(aged.is_empty(), "stale timestamps should have been dropped");
+    }
+
+    #[test]
+    fn torch_download_failure_is_detected_for_targeted_help() {
+        // #569: the cu128 torch wheel host (and a torch-named download/fetch
+        // failure) get torch-specific guidance + the local-wheel retry.
+        assert!(sync_failure_is_torch_download(
+            "× Failed to download `torch==2.8.0+cu128`\n  https://download.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl"
+        ));
+        assert!(sync_failure_is_torch_download(
+            "error sending request for url (https://download-r2.pytorch.org/whl/cu128/torch-2.8.0.whl)"
+        ));
+        assert!(sync_failure_is_torch_download("Failed to fetch torch wheel"));
+        // An unrelated PyPI failure must NOT be mistaken for the torch case.
+        assert!(!sync_failure_is_torch_download(
+            "Failed to download `numpy==2.0.0` from https://pypi.org/simple"
+        ));
+        assert!(!sync_failure_is_torch_download("some unrelated venv error"));
     }
 
     #[test]
@@ -1193,6 +1499,18 @@ mod tests {
         assert!(!backend_exit_indicates_broken_venv("exit status: 1060", ""));
         assert!(!backend_exit_indicates_broken_venv("signal: 6 (SIGABRT)", ""));
         assert!(!backend_exit_indicates_broken_venv("never started", ""));
+        // A relocated/copied venv whose interpreter can't bootstrap its stdlib
+        // aborts with this exact phrase (exit 1, not 106) — must rebuild.
+        assert!(backend_exit_indicates_broken_venv(
+            "exit status: 1",
+            "ModuleNotFoundError: No module named 'encodings'"
+        ));
+        // ...but an app-level import of an 'encodings'-prefixed package must NOT
+        // (the full quoted phrase guards against this).
+        assert!(!backend_exit_indicates_broken_venv(
+            "exit status: 1",
+            "ModuleNotFoundError: No module named 'encodings_helper'"
+        ));
     }
 
     /// #248: verify that the setuptools repair install uses the correct specifier.

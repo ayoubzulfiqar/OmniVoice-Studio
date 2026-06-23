@@ -31,6 +31,76 @@ from abc import ABC, abstractmethod
 logger = logging.getLogger("omnivoice.asr")
 
 
+def _compute_type_candidates(device: str) -> list[str]:
+    """Per-device compute_type fallback chain. int8 is supported by every
+    CTranslate2 CUDA+CPU build; float16/int8_float16 only on GPUs with efficient
+    fp16 — so degrade rather than crash (#551). Honors an ASR_COMPUTE_TYPE env
+    override (power users on exotic hardware can pin int8/float32)."""
+    import os
+    override = os.environ.get("ASR_COMPUTE_TYPE")
+    if override:
+        return [override]
+    return ["float16", "int8_float16", "int8"] if device == "cuda" else ["int8", "float32"]
+
+
+def _is_compute_type_error(msg: str) -> bool:
+    low = msg.lower()
+    return "compute type" in low or "efficient float16" in low
+
+
+def _decode_audio_16k_mono(audio_path: str):
+    """Decode `audio_path` to a 16 kHz mono float32 waveform using OmniVoice's
+    *validated* ffmpeg, instead of whisperx.load_audio's bare ``"ffmpeg"`` PATH
+    lookup.
+
+    whisperx (and openai-whisper) shell out to a literal ``"ffmpeg"`` resolved
+    against the OS PATH. On Windows that resolves to whatever the system finds
+    first — a WindowsApps alias stub or a corrupt/wrong-arch download — which
+    passes `which` but explodes at spawn with ``[WinError 193] %1 is not a valid
+    Win32 application``. whisperx only catches `CalledProcessError`, so the
+    spawn-time `OSError` escapes and the dub/batch path reports the opaque
+    "Transcription produced no segments" (#479). ``find_ffmpeg()`` probes each
+    candidate with ``-version`` and returns a runnable binary (the bundled
+    imageio-ffmpeg / Tauri sidecar) — or None, so we can raise an actionable
+    error. This also fixes the imageio case a PATH-prepend can't: its binary is
+    named ``ffmpeg-<plat>-vN.exe``, not ``ffmpeg``, so bare lookup never finds
+    it. Mirrors whisperx.audio.load_audio's command exactly (16 kHz, mono, s16le).
+    """
+    import subprocess
+
+    import numpy as np
+
+    from services.ffmpeg_utils import find_ffmpeg
+
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError(
+            "Cannot transcribe: ffmpeg is missing or not runnable. Install "
+            "ffmpeg (or let OmniVoice's bundled binary download), then retry. "
+            "On Windows a '[WinError 193]' here means the ffmpeg binary is "
+            "corrupt or the wrong architecture — reinstall it or clear the "
+            "imageio-ffmpeg cache."
+        )
+    cmd = [
+        ffmpeg, "-nostdin", "-threads", "0", "-i", audio_path,
+        "-f", "s16le", "-ac", "1", "-acodec", "pcm_s16le", "-ar", "16000", "-",
+    ]
+    try:
+        out = subprocess.run(cmd, capture_output=True, check=True).stdout
+    except OSError as e:
+        # Belt-and-suspenders: find_ffmpeg() already -version-validated this
+        # binary, so a WinError 193 here is unexpected — surface it clearly
+        # rather than letting it become "no segments".
+        raise RuntimeError(
+            f"ffmpeg at {ffmpeg!r} could not be executed ({e}). Reinstall "
+            "ffmpeg or clear the imageio-ffmpeg cache."
+        ) from e
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or b"").decode(errors="replace")[:500]
+        raise RuntimeError(f"Failed to decode audio for transcription: {stderr}") from e
+    return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
+
+
 # ── Protocol ────────────────────────────────────────────────────────────────
 
 
@@ -58,6 +128,22 @@ class ASRBackend(ABC):
         know how to read it — this stays deliberately untyped so new engines
         that already speak the shape plug in with zero adapter work.
         """
+
+    def ensure_loaded(self) -> None:
+        """Eagerly load the model weights, raising the real cause on failure.
+
+        Backends load lazily inside ``transcribe()`` by default, so a load
+        failure (missing weights, CUDA/cuDNN mismatch, torch-2.6 weights-only
+        VAD regression, import error) first surfaces buried in per-chunk
+        errors — and is retried on *every* chunk. The transcribe preflight
+        calls this so the genuine cause is surfaced once, up front, as a clean
+        terminal error event instead of N cryptic per-chunk failures (#578).
+
+        Default is a no-op; backends that hold a heavy model override it to
+        trigger their lazy loader. It MUST raise the underlying exception (not
+        swallow it) so the caller can classify and surface it.
+        """
+        pass
 
     def unload(self) -> None:
         """Release the model from memory."""
@@ -101,6 +187,13 @@ class WhisperXBackend(ASRBackend):
         except ImportError as e:
             return False, f"whisperx not installed: {e}"
 
+    def ensure_loaded(self) -> None:
+        # Surface a whisperx/CTranslate2/torch load failure at preflight (once,
+        # with the real cause) instead of buried per-chunk and retried N times
+        # (#578). Re-raises whatever `_ensure_asr` raises after its fp16→int8
+        # and OOM→CPU fallbacks are exhausted.
+        self._ensure_asr()
+
     def _ensure_asr(self):
         if self._asr is not None:
             return
@@ -136,7 +229,40 @@ class WhisperXBackend(ASRBackend):
                 # vad_method="silero" is the default; keep it so short gaps
                 # get cleaned up before transcription.
             )
-        except RuntimeError as e:
+        except (ValueError, RuntimeError) as e:
+            # #551: GPUs without efficient fp16 (older Maxwell/Pascal, GTX 16xx)
+            # or a CTranslate2/cuDNN binary mismatch raise a *ValueError*
+            # ("Requested float16 compute type, but the target device or backend
+            # do not support efficient float16 computation") at load — not an
+            # OOM, not a RuntimeError. Retry on the SAME device with the next
+            # compute_type candidate (cuda: int8_float16 → int8) before touching
+            # the OOM→CPU path, so we degrade rather than crash every chunk.
+            if _is_compute_type_error(str(e)):
+                candidates = _compute_type_candidates(self._device)
+                try:
+                    nxt = candidates[candidates.index(self._compute_type) + 1:]
+                except ValueError:
+                    nxt = [c for c in candidates if c != self._compute_type]
+                for ct in nxt:
+                    logger.warning(
+                        "whisperx %s unsupported on %s — retrying with %s. Detail: %s",
+                        self._compute_type, self._device, ct, e,
+                    )
+                    self._compute_type = ct
+                    try:
+                        self._asr = whisperx.load_model(
+                            self._model_name,
+                            device=self._device,
+                            compute_type=self._compute_type,
+                        )
+                        return
+                    except (ValueError, RuntimeError) as e2:
+                        if _is_compute_type_error(str(e2)):
+                            e = e2
+                            continue
+                        raise
+                # Exhausted compute-type candidates on this device — re-raise.
+                raise
             # CUDA OOM: a resident TTS model + the GPU worker pool can starve
             # VRAM on small (e.g. 8 GB laptop) GPUs, so loading large-v3 on
             # CUDA dies here — which previously surfaced as a bare 500 from
@@ -326,10 +452,13 @@ class WhisperXBackend(ASRBackend):
             return None
 
     def transcribe(self, audio_path: str, *, word_timestamps: bool = True) -> dict:
-        import whisperx
+        import whisperx  # used for whisperx.align() below
         self._ensure_asr()
         logger.info("whisperx transcribing %s (word_timestamps=%s)", audio_path, word_timestamps)
-        audio = whisperx.load_audio(audio_path)
+        # Decode via OmniVoice's validated ffmpeg, NOT whisperx.load_audio's bare
+        # "ffmpeg" PATH lookup which yields [WinError 193] -> "no segments" on
+        # Windows (#479). Same 16 kHz mono s16le array whisperx expects.
+        audio = _decode_audio_16k_mono(audio_path)
         try:
             result = self._asr.transcribe(audio)
         except IndexError:
@@ -406,6 +535,10 @@ class FasterWhisperBackend(ASRBackend):
             "ASR_MODEL_FASTER", "Systran/faster-whisper-large-v3"
         )
         self._model = None  # lazy — first transcribe() loads weights
+        # Set by _ensure_model() to the device/compute_type that actually loaded
+        # (after the #551 compute_type / #255 OOM→CPU fallback chain).
+        self._device: str | None = None
+        self._compute_type: str | None = None
 
     @classmethod
     def is_available(cls) -> tuple[bool, str]:
@@ -434,9 +567,58 @@ class FasterWhisperBackend(ASRBackend):
             "faster-whisper loading %s on %s (%s)",
             self._model_name, device, compute_type,
         )
-        self._model = WhisperModel(
-            self._model_name, device=device, compute_type=compute_type
-        )
+        # Try the per-device compute_type chain (cuda: float16 → int8_float16 →
+        # int8; cpu: int8 → float32). A GPU without efficient fp16 (older
+        # Maxwell/Pascal, GTX 16xx, or a CTranslate2/cuDNN mismatch) raises a
+        # *ValueError* at construction (#551) — degrade to the next candidate
+        # instead of failing every chunk. A genuine CUDA OOM falls back to CPU
+        # (slower, same model/accuracy), preserving the existing #255 behaviour.
+        candidates = _compute_type_candidates(device)
+        if compute_type in candidates:
+            candidates = candidates[candidates.index(compute_type):]
+        last_err: Exception | None = None
+        while True:
+            for ct in candidates:
+                try:
+                    self._model = WhisperModel(
+                        self._model_name, device=device, compute_type=ct
+                    )
+                    self._device, self._compute_type = device, ct
+                    return
+                except (ValueError, RuntimeError) as e:
+                    last_err = e
+                    if _is_compute_type_error(str(e)):
+                        logger.warning(
+                            "faster-whisper %s unsupported on %s — trying next "
+                            "compute_type. Detail: %s", ct, device, e,
+                        )
+                        continue
+                    if device == "cuda" and "out of memory" in str(e).lower():
+                        # Stop scanning GPU candidates; fall back to CPU below.
+                        break
+                    raise
+            # Exhausted candidates for this device. If we were on CUDA and the
+            # last failure was an OOM, retry on CPU with its candidates (#255).
+            if device == "cuda" and last_err is not None and (
+                "out of memory" in str(last_err).lower()
+            ):
+                logger.warning(
+                    "faster-whisper CUDA OOM loading %s — retrying on CPU "
+                    "(slower). Free VRAM (Flush the TTS model) for GPU-speed "
+                    "ASR. Detail: %s", self._model_name, last_err,
+                )
+                try:
+                    import torch
+                    torch.cuda.empty_cache()
+                except Exception:  # noqa: BLE001 — cache clear is best-effort
+                    pass
+                device = "cpu"
+                candidates = _compute_type_candidates(device)
+                compute_type = candidates[0]
+                continue
+            # All candidates exhausted (and no OOM→CPU retry available) — surface
+            # the last error.
+            raise last_err
 
     def transcribe(self, audio_path: str, *, word_timestamps: bool = True) -> dict:
         self._ensure_model()
@@ -625,12 +807,25 @@ class PyTorchWhisperBackend(ASRBackend):
             "PyTorchWhisperBackend: loading standalone ASR pipeline %s on %s",
             model_name, device,
         )
-        self._pipe = hf_pipeline(
-            "automatic-speech-recognition",
-            model=model_name,
-            dtype=asr_dtype,
-            device_map=device,
-        )
+        try:
+            self._pipe = hf_pipeline(
+                "automatic-speech-recognition",
+                model=model_name,
+                dtype=asr_dtype,
+                device_map=device,
+            )
+        except Exception as e:
+            # #549: an incomplete transformers install fails to build the ASR
+            # pipeline (e.g. "Could not import module 'AutoFeatureExtractor'").
+            # The raw error is opaque; re-raise with an actionable next step so
+            # the toast tells the user how to recover instead of "no segments".
+            raise RuntimeError(
+                "transformers ASR pipeline failed to import (AutoFeatureExtractor) "
+                "— your transformers install is incomplete; reinstall with "
+                "`uv pip install --reinstall transformers`, or use faster-whisper "
+                "(OmniVoice's default ASR) which avoids the transformers pipeline. "
+                f"Underlying: {e}"
+            ) from e
 
     def transcribe(self, audio_path: str, *, word_timestamps: bool = True) -> dict:
         import soundfile as sf
