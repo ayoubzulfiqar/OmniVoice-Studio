@@ -28,6 +28,7 @@ from services.incremental import segment_fingerprint, fit_fingerprint
 from services.fit_planner import FitParams, plan_fit
 from services.watermark import embed_watermark
 from api.routers.dub_core import _get_job, _save_job
+from omnivoice.utils.voice_design import heal_design_instruct
 
 logger = logging.getLogger("omnivoice.dub")
 
@@ -215,17 +216,31 @@ async def dub_generate(job_id: str, req: DubRequest):
                     profile_id = None  # prevent the voice_profiles lookup below
 
                 elif profile_id and profile_id.startswith("auto:"):
-                    key = profile_id[len("auto:"):]
-                    clones = job.get("speaker_clones") or {}
-                    # Match by the safe-name key first, fall back to speaker_id.
-                    auto = None
-                    for spk, info in clones.items():
-                        if spk.lower().replace(" ", "_") == key or spk == key:
-                            auto = info
-                            break
-                    if auto:
-                        ref_audio = auto.get("ref_audio")
-                        ref_text = auto.get("ref_text")
+                    # #486: an `auto:{speaker}` binding still prefers THIS
+                    # segment's own per-segment ref when one exists (cut from
+                    # this line's source audio → matches its prosody), falling
+                    # back to the per-speaker clone otherwise. This keeps the
+                    # Wave 3.2 per-segment-ref quality win while letting every
+                    # segment carry the UI-visible `auto:` id the dub editor's
+                    # Voice dropdown can actually render ("From Video →
+                    # Speaker N"). `seg_id` is closed over from the per-segment
+                    # loop below.
+                    seg_ref = (job.get("segment_clones") or {}).get(str(seg_id))
+                    if seg_ref:
+                        ref_audio = seg_ref.get("ref_audio")
+                        ref_text = seg_ref.get("ref_text")
+                    else:
+                        key = profile_id[len("auto:"):]
+                        clones = job.get("speaker_clones") or {}
+                        # Match by the safe-name key first, fall back to speaker_id.
+                        auto = None
+                        for spk, info in clones.items():
+                            if spk.lower().replace(" ", "_") == key or spk == key:
+                                auto = info
+                                break
+                        if auto:
+                            ref_audio = auto.get("ref_audio")
+                            ref_text = auto.get("ref_text")
                     profile_id = None  # prevent the voice_profiles lookup below
 
                 if profile_id:
@@ -244,7 +259,11 @@ async def dub_generate(job_id: str, req: DubRequest):
                             used_seed = row["seed"]
                             
                         if not instruct_str:
-                            instruct_str = row["instruct"]
+                            try:
+                                _vd = row["vd_states"]
+                            except (KeyError, IndexError):
+                                _vd = None
+                            instruct_str = heal_design_instruct(row["instruct"], _vd)
 
                 if used_seed is not None:
                     torch.manual_seed(used_seed)

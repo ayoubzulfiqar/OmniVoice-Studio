@@ -136,7 +136,10 @@
 .clone-insert-btn {
   position: absolute;
   right: 8px;
-  bottom: 8px;
+  /* Lifted off the textarea's bottom-right resize grip so the ⊕ button no
+     longer covers the drag handle (#481). The popover's `bottom` offset below
+     is anchored to this row, so they move together. */
+  bottom: 30px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -154,12 +157,17 @@
 .clone-insert-pop {
   position: absolute;
   right: 8px;
-  bottom: 38px;
+  /* Opens upward, clearing the lifted ⊕ button (bottom:30px + its height). */
+  bottom: 60px;
   z-index: 20;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  max-width: 360px;
+  /* Viewport-edge guard (#481): the 14-chip grid can't spill past the window
+     even when the script panel is narrow. The script panel's
+     `.clone-panel--overflow-visible` (applied in the JSX) stops the parent
+     `overflow:auto` from clipping it. */
+  max-width: min(360px, calc(100vw - 16px));
   padding: 8px;
   background: var(--chrome-bg);
   border: 1px solid var(--chrome-border-strong);
@@ -264,9 +272,16 @@
 
 /* Text input + textarea tweaks */
 .clone-text-area {
-  flex: 1;
-  resize: none;
-  min-height: 60px;
+  /* #595: the script field "couldn't be expanded". It was `flex: 1` inside a
+     flex column, so flex-grow recomputed its height on every reflow and
+     snapped the user's drag back — `resize: vertical` is silently ignored on a
+     flex-grown item in Chromium/WebView2 (Windows). Drop flex-grow (`flex: 0 1
+     auto`) so the textarea owns its height: it starts at min-height and the
+     corner grip now grows it reliably on every platform. The ⊕ Insert button is
+     lifted off the bottom-right so it doesn't cover the grip (#481). */
+  flex: 0 1 auto;
+  resize: vertical;
+  min-height: 160px;
   margin-bottom: 6px;
 }
 .clone-auto-extract-btn { border-color: #b8bb26; color: #b8bb26; }
@@ -408,4 +423,28 @@
   background: rgba(255, 255, 255, 0.03);
   border-radius: 4px;
   border: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+/* #526: voice-design seed control — show + pin + re-roll. */
+.design-seed {
+  margin-top: var(--space-3, 12px);
+}
+.design-seed__row {
+  display: flex;
+  gap: var(--space-3, 12px);
+  align-items: center;
+}
+.design-seed__input {
+  width: 9rem;
+  flex: 0 0 auto;
+}
+.design-seed__keep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: var(--color-fg-muted, #928374);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
 }

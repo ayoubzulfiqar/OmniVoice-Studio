@@ -435,6 +435,60 @@ def _ensure_browser_playable_mp4(video_path: str) -> str:
     return video_path
 
 
+# Bounded retry for transient download failures (#579/#598). yt-dlp's own
+# `retries`/`fragment_retries` cover per-fragment HTTP flakes, but a broken
+# pipe ([Errno 32]) raised while the write side of a pipe closes mid-stream
+# (a killed ffmpeg merge child, a CDN reset during muxing) aborts the whole
+# `extract_info` call and is NOT covered by them — so a single transient blip
+# failed the entire ingest with a raw "Broken pipe". We add a small download-
+# level retry on top, cleaning up the partial download between attempts so a
+# half-written `original.*` can't poison the next try.
+_YT_DOWNLOAD_RETRIES = 2  # total attempts = 1 + retries = 3
+
+
+def _is_transient_download_error(exc: BaseException) -> bool:
+    """True when a download failure is worth retrying (broken pipe / net drop).
+
+    Reuses the single failure taxonomy (`VIDEO_DOWNLOAD_NETWORK`) rather than a
+    parallel keyword list, so "what counts as transient" stays single-sourced
+    with the error-hint classification. ``BrokenPipeError``/``ConnectionError``
+    are matched by class too, since a bare instance may be wrapped or re-raised
+    with a stripped message that no longer contains "broken pipe".
+    """
+    if isinstance(exc, (BrokenPipeError, ConnectionError)):
+        return True
+    return failure.classify(str(exc)) == "VIDEO_DOWNLOAD_NETWORK"
+
+
+# YouTube serves some videos' high-quality formats signature-protected to the
+# default player client, so the media download 403s even though extraction
+# worked. Forcing an alternate client commonly bypasses it; on a 403 we escalate
+# through these (in order) before giving up (#625).
+_YT_PLAYER_CLIENTS = ["tv", "android", "web_safari"]
+
+
+def _is_forbidden_download_error(exc: BaseException) -> bool:
+    """True for an HTTP 403 — not transient (the same client keeps 403ing), but
+    often fixable by switching the YouTube player client."""
+    s = str(exc)
+    return "403" in s or "Forbidden" in s
+
+
+def _cleanup_partial_download(job_dir: str) -> None:
+    """Remove any half-written `original.*` files before a retry.
+
+    A partial download left on disk would otherwise be picked up as a "finished"
+    file by the post-download codec probe, or collide with the next attempt's
+    output. Best-effort — never raises on the failure path.
+    """
+    import glob
+    for stale in glob.glob(os.path.join(job_dir, "original.*")):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+
+
 def yt_download_sync(
     url: str,
     job_dir: str,
@@ -480,6 +534,12 @@ def yt_download_sync(
         "quiet": True,
         "no_warnings": True,
         "restrictfilenames": True,
+        # Don't stamp the downloaded file's mtime with the video's upload date
+        # (#642): on Windows an out-of-range/invalid timestamp makes the os.utime
+        # call raise `[Errno 22] Invalid argument`, failing the whole ingest. We
+        # download to a throwaway `original.*` and never use its mtime, so skip
+        # it entirely (equivalent to yt-dlp's --no-mtime).
+        "updatetime": False,
         "socket_timeout": 30,
         # Resilience against YouTube CDN flakes: a single empty fragment
         # (commonly the very last one — "Did not get any data blocks")
@@ -493,15 +553,53 @@ def yt_download_sync(
     }
     if progress_hook is not None:
         ydl_opts["progress_hooks"] = [progress_hook]
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        path = ydl.prepare_filename(info)
-        root, _ = os.path.splitext(path)
-        mp4 = root + ".mp4"
-        if os.path.exists(mp4):
-            video_path = mp4
-        else:
-            video_path = path
+
+    # Download with a bounded retry on transient/broken-pipe-class failures
+    # (#579/#598). A broken pipe mid-mux isn't recoverable inside yt-dlp's own
+    # fragment retries, but a fresh `extract_info` usually succeeds. Between
+    # attempts we wipe the partial `original.*` so a half-written file can't be
+    # mistaken for a finished download.
+    info = None
+    path = None
+    transient_used = 0
+    client_idx = 0
+    while True:
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                path = ydl.prepare_filename(info)
+            break
+        except Exception as exc:
+            _cleanup_partial_download(job_dir)
+            # 403 Forbidden: not transient — escalate the YouTube player client,
+            # which commonly bypasses a signature-protected format set (#625).
+            if _is_forbidden_download_error(exc) and client_idx < len(_YT_PLAYER_CLIENTS):
+                client = _YT_PLAYER_CLIENTS[client_idx]
+                client_idx += 1
+                ydl_opts = {**ydl_opts, "extractor_args": {"youtube": {"player_client": [client]}}}
+                logger.warning(
+                    "Download 403 for %s — retrying with player_client=%s (#625)", url, client,
+                )
+                continue
+            # Transient/broken-pipe: a fresh extract_info usually succeeds
+            # (#579/#598). A 403 never counts here — it's escalated above.
+            if (transient_used < _YT_DOWNLOAD_RETRIES
+                    and _is_transient_download_error(exc)
+                    and not _is_forbidden_download_error(exc)):
+                transient_used += 1
+                logger.warning(
+                    "Transient download failure for %s (attempt %d/%d): %s — retrying",
+                    url, transient_used, _YT_DOWNLOAD_RETRIES, exc,
+                )
+                time.sleep(2 * transient_used)  # brief, increasing backoff
+                continue
+            raise
+    root, _ = os.path.splitext(path)
+    mp4 = root + ".mp4"
+    if os.path.exists(mp4):
+        video_path = mp4
+    else:
+        video_path = path
     # Browser-playability guard: WKWebView (Tauri on macOS) refuses to
     # decode VP9/AV1 video and Opus audio even when they're wrapped in an
     # mp4 container, and refuses .webm/.mkv outright. We probe the actual
