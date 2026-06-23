@@ -6,13 +6,14 @@ import {
   transcribeStreamUrl, dubImportSrt,
 } from '../api/dub';
 import { dialectMatchesLang } from '../api/dialects';
-import { segmentGenInputs } from '../utils/segments';
+import { segmentGenInputs, applySpeakerCloneDefaults } from '../utils/segments';
 import { apiPost } from '../api/client';
 import { API } from '../api/client';
 import { playPing, isTauri } from '../utils/media';
 import { toast } from 'react-hot-toast';
 import { toastErrorWithReport } from '../utils/errorToast';
 import { addBreadcrumb } from '../utils/breadcrumbs';
+import { evaluateDonationPrompt } from '../components/donate/evaluateDonationPrompt';
 import i18next from 'i18next';
 const t = i18next.t.bind(i18next);
 
@@ -79,6 +80,13 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
     const numSpeakers = useAppStore.getState().dubNumSpeakers;
     const evt = new EventSource(transcribeStreamUrl(jobId, numSpeakers));
     let gotFinal = false;
+    // Latch the real cause from a named `error` event. EventSource also fires
+    // its *native* error (no `data`) on any connection close, which can race
+    // and win against the backend's structured `error` event — if it did, we
+    // used to throw away the real cause and show the generic "stream dropped …
+    // ASR backend failed" message (#578). Holding the detail here lets the
+    // native-close handler surface the real cause instead.
+    let lastErrorDetail = null;
     const close = () => { try { evt.close(); } catch {} };
     const onAbortSignal = () => { close(); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
     ctrl.signal.addEventListener('abort', onAbortSignal, { once: true });
@@ -99,11 +107,14 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
       try {
         const m = JSON.parse(e.data);
         gotFinal = true;
-        setDubSegments((m.segments || []).map((s, i) => ({
+        const normalized = (m.segments || []).map((s, i) => ({
           ...s,
           id: s.id != null ? String(s.id) : String(i),
           text_original: s.text_original || s.text || '',
-        })));
+        }));
+        // #486: bind each segment to its detected speaker's clone up front, so
+        // a 2-speaker dub doesn't land every row on "Default".
+        setDubSegments(applySpeakerCloneDefaults(normalized, m.speaker_clones));
         setDubTranscript(m.full_transcript || '');
         if (m.speaker_clones && typeof m.speaker_clones === 'object') {
           setSpeakerClones(m.speaker_clones);
@@ -121,7 +132,18 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
     evt.addEventListener('done', () => { close(); ctrl.signal.removeEventListener('abort', onAbortSignal); resolve(); });
     evt.addEventListener('aborted', () => { close(); ctrl.signal.removeEventListener('abort', onAbortSignal); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); });
     evt.addEventListener('error', (e) => {
-      try { const m = e.data ? JSON.parse(e.data) : null; if (m && m.detail) { close(); reject(new Error(m.detail)); return; } } catch {}
+      // A named `error` event carries the real cause in `data.detail`. Latch
+      // it AND reject with it. The backend now always follows it with `done`,
+      // but we reject eagerly here so the cause survives even if the native
+      // connection-drop error arrives first/concurrently (#578).
+      try {
+        const m = e.data ? JSON.parse(e.data) : null;
+        if (m && m.detail) { lastErrorDetail = m.detail; close(); reject(new Error(m.detail)); return; }
+      } catch { /* malformed error payload — fall through */ }
+      // No fresh detail on this event (native EventSource connection error).
+      // If we already saw a structured error, surface its cause, not the
+      // generic message.
+      if (lastErrorDetail) { close(); reject(new Error(lastErrorDetail)); return; }
       if (gotFinal) { close(); resolve(); return; }
       close();
       reject(new Error('Transcribe stream dropped before emitting any segments. Likely ASR backend failed to load — check backend log + Settings → Models.'));
@@ -495,6 +517,9 @@ export default function useDubWorkflow({ loadProjects, loadProfiles, loadDubHist
         if (dubStep !== 'done') setDubStep('done');
         loadDubHistory(); loadProjects(); playPing();
         useAppStore.getState().completePill(t('dub_workflow.dub_complete'));
+        // Success-only donation prompt (#007) — a finished dub is a real
+        // deliverable. Never fires on the error / cancel branches below.
+        evaluateDonationPrompt('dub');
       } else { useAppStore.getState().dismissPill(); }
     } catch (err) {
       setDubError(err.message); setDubStep('editing'); setDubTaskId(null);

@@ -23,6 +23,9 @@ from services.segmentation import (
     assign_speakers_from_diarization,
     assign_speakers_from_turns,
     assign_speakers_heuristic,
+    resplit_segments_by_diarization,
+    resplit_segments_by_turns,
+    _words_from_whisper,
     clean_up_segments,
 )
 from services.onset_align import snap_segment_starts
@@ -425,10 +428,22 @@ async def dub_transcribe_stream(
                 try:
                     # The PyTorch-Whisper backend lazily builds its own pipeline
                     # when no preloaded `_asr_pipe` is present (issue #255), so it
-                    # no longer needs OMNIVOICE_PRELOAD_TTS_ASR=1 — don't reject it
-                    # here; any load failure surfaces per-chunk with a real cause.
+                    # no longer needs OMNIVOICE_PRELOAD_TTS_ASR=1.
                     _asr_backend = get_active_asr_backend(asr_pipe=getattr(_model, "_asr_pipe", None))
+                    # Eagerly load the model HERE so a real load failure (e.g.
+                    # WhisperX: missing weights, CTranslate2/cuDNN mismatch, the
+                    # torch-2.6 weights-only VAD regression) surfaces once, with
+                    # its actual cause, as a clean preflight `error` event —
+                    # instead of being buried in N cryptic per-chunk failures
+                    # and retried on every chunk (#578). Run in a thread so the
+                    # (blocking) load doesn't stall the event loop.
+                    _ensure_loaded = getattr(_asr_backend, "ensure_loaded", None)
+                    if callable(_ensure_loaded):
+                        await asyncio.get_running_loop().run_in_executor(
+                            _gpu_pool, _ensure_loaded
+                        )
                 except Exception as e:
+                    logger.exception("transcribe preflight: ASR load failed (job=%s)", job_id)
                     from core.failure import build_failure
                     f = build_failure(e, stage="transcribe-preflight", include_diagnostic=False)
                     preflight_error = "ASR backend initialization failed: " + f["reason"] + (
@@ -436,9 +451,16 @@ async def dub_transcribe_stream(
                     )
                 scene_cuts = job.get("scene_cuts") or []
 
-    async def gen():
+    async def _gen_body():
         if preflight_error:
-            yield _sse_event("error", {"detail": preflight_error})
+            # Always follow a terminal `error` with `done` so the stream closes
+            # via a named event, not a raw connection drop. A bare error+close
+            # races the browser's native EventSource error (which carries no
+            # `data`); if that native error wins, the client falls back to the
+            # misleading generic "stream dropped … ASR backend failed" message
+            # and the real cause (in `detail`) is lost (#578).
+            yield _sse_event("error", {"detail": preflight_error, "retryable": True})
+            yield _sse_event("done", {})
             return
         import math
         import tempfile
@@ -453,7 +475,9 @@ async def dub_transcribe_stream(
         try:
             audio_np, sr = await loop.run_in_executor(_cpu_pool, _load)
         except Exception as e:
-            yield _sse_event("error", {"detail": f"audio load failed: {e}"})
+            # Terminal error → always emit `done` (see preflight note, #578).
+            yield _sse_event("error", {"detail": f"audio load failed: {e}", "retryable": True})
+            yield _sse_event("done", {})
             return
 
         total = float(len(audio_np)) / float(sr) if sr else 0.0
@@ -470,6 +494,9 @@ async def dub_transcribe_stream(
             logger.warning("offload_tts_for_asr failed (continuing): %s", e)
 
         all_segments: list[dict] = []
+        # Words (global-timeline) retained so diarization can re-split a segment
+        # that spans two speakers' turns at the word boundary (#486).
+        all_words: list = []
         detected_lang = None
         next_seg_id = 0
         chunk_errors: list[str] = []
@@ -553,6 +580,12 @@ async def dub_transcribe_stream(
                 detected_lang = part["language"]
             asr_speaker_turns.extend(part.get("speaker_turns") or [])
             chunk_segs = segment_transcript(part, duration=t1, scene_cuts=scene_cuts)
+            # Same word source segment_transcript used (already global-timeline),
+            # kept for the post-diarization speaker re-split (#486).
+            try:
+                all_words.extend(_words_from_whisper(part))
+            except Exception:
+                pass
             # #280: Whisper often stretches a segment's start back over
             # leading music/silence (classic case: speech begins at 0:03,
             # transcript says 0.0 → the dub plays 3 s early). Snap starts
@@ -631,7 +664,10 @@ async def dub_transcribe_stream(
             # use its speaker turns directly and skip pyannote entirely (#182).
             if asr_speaker_turns:
                 logger.info("Using inline ASR diarization (%d turns); skipping pyannote.", len(asr_speaker_turns))
-                return assign_speakers_from_turns(all_segments, asr_speaker_turns), None
+                assigned = assign_speakers_from_turns(all_segments, asr_speaker_turns)
+                # #486: split any segment that spans two speakers' turns at the
+                # word boundary (single-speaker segments pass through unchanged).
+                return resplit_segments_by_turns(assigned, all_words, asr_speaker_turns), None
 
             from services.model_manager import (
                 DIARIZATION_ERR_LICENSE,
@@ -708,7 +744,10 @@ async def dub_transcribe_stream(
                     diar = diar_pipe(asr_audio_target, num_speakers=num_speakers)
                 else:
                     diar = diar_pipe(asr_audio_target)
-                return assign_speakers_from_diarization(all_segments, diar), None
+                assigned = assign_speakers_from_diarization(all_segments, diar)
+                # #486: split any segment that spans two speakers' turns at the
+                # word boundary (single-speaker segments pass through unchanged).
+                return resplit_segments_by_diarization(assigned, all_words, diar), None
             except Exception as e:
                 logger.error(f"Diarization failed: {e}")
                 # Mid-run failure — classify against the same sentinels so a
@@ -799,19 +838,35 @@ async def dub_transcribe_stream(
             if clones or seg_clones:
                 if clones:
                     job["speaker_clones"] = clones
-                # Default each segment's profile_id to its own per-segment ref
-                # when available, else its speaker's auto-clone — but only if
-                # the user hasn't already assigned something.
+                # Default each segment's profile_id to its detected speaker's
+                # auto-clone — but only if the user hasn't already assigned
+                # something. (#486)
+                #
+                # We prefer the UI-visible `auto:{speaker}` id over the
+                # per-segment `auto-seg:{id}` id even when a per-segment ref
+                # exists, because the dub editor's Voice dropdown only renders
+                # `auto:` options ("From Video → Speaker N"). An `auto-seg:`
+                # value matches no <option>, so the row silently read
+                # "Default" while the speaker was actually bound — exactly the
+                # reported bug. The per-segment ref is NOT lost: dub_generate's
+                # `auto:` branch transparently prefers this segment's own
+                # per-segment ref (job["segment_clones"][seg_id]) when present,
+                # so a row shown as "Speaker 1" still clones from its own line
+                # when that line is long enough.
                 for s in final_segs:
                     if s.get("profile_id"):
-                        continue
-                    sid = str(s.get("id", ""))
-                    if sid and sid in seg_clones:
-                        s["profile_id"] = f"auto-seg:{sid}"
                         continue
                     spk = s.get("speaker_id") or "Speaker 1"
                     if spk in clones:
                         s["profile_id"] = auto_profile_id(spk)
+                        continue
+                    # No per-speaker clone for this speaker (too little usable
+                    # audio overall) but this single line was long enough for
+                    # its own ref — fall back to the per-segment id. The editor
+                    # can't render it, but generation still clones correctly.
+                    sid = str(s.get("id", ""))
+                    if sid and sid in seg_clones:
+                        s["profile_id"] = f"auto-seg:{sid}"
         except Exception as e:
             logger.warning("speaker_clone extraction skipped: %s", e)
 
@@ -839,6 +894,25 @@ async def dub_transcribe_stream(
             "speaker_clones": job.get("speaker_clones", {}),
         })
         yield _sse_event("done", {})
+
+    async def gen():
+        # Terminal-event guard (#516): the SSE stream must NEVER close without a
+        # terminal event. Any unanticipated exception in the body (e.g. an ASR
+        # load that escapes the per-chunk handler) previously dropped the
+        # connection, which the frontend can only report as "stream dropped,
+        # likely ASR failed" — hiding the real cause. Emit a structured `error`
+        # (with the actionable hint from build_failure) then `done`, so the user
+        # sees the real failure + a Retry instead of a silent disconnect.
+        try:
+            async for ev in _gen_body():
+                yield ev
+        except Exception as e:  # noqa: BLE001 — last-resort stream finalizer
+            logger.exception("transcribe stream crashed (job=%s)", job_id)
+            from core.failure import build_failure
+            f = build_failure(e, stage="transcribe", include_diagnostic=False)
+            detail = f["reason"] + (f" — {f['hint']}" if f.get("hint") else "")
+            yield _sse_event("error", {"detail": detail, "retryable": True})
+            yield _sse_event("done", {})
 
     return StreamingResponse(
         gen(),
