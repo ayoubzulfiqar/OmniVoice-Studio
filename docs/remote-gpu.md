@@ -4,6 +4,11 @@ Run the OmniVoice backend on one machine (a GPU box, a home server) and drive
 it from the desktop app or a browser on another — over your tailnet, with the
 inference staying on the powerful machine.
 
+> Calling the API from your own scripts rather than the desktop app? See
+> [docs/api-auth.md](api-auth.md) for a consumer-focused reference of every auth
+> gate (share PIN, API key, dictation WebSocket, trusted networks) with the exact
+> headers, params, and `401`/`403`/`429` meanings.
+
 This is opt-in and off by default: with no API key set, the backend stays
 loopback-only exactly as before.
 
@@ -76,9 +81,32 @@ Settings → Sharing → **Remote backend**:
 - **Test connection** hits `{url}/health` and shows the remote's version and
   device.
 - **Save & reload** stores both in this browser/app and restarts the UI
-  against the remote.
+  against the remote. The URL must be a full `http://` or `https://` URL
+  (`gpu-box:3900` alone is rejected), and saving a URL that hasn't passed
+  **Test connection** asks for confirmation first — a wrong base would leave
+  the app unable to reach any backend until you change it back here.
 
 Leave the URL empty to go back to the local backend.
+
+### From a browser (no desktop app)
+
+You can also drive the remote from a plain browser — open the URL with the key
+in the **fragment** once:
+
+```
+https://gpu-box.your-tailnet.ts.net/#api_key=<key>
+```
+
+Use the fragment (`#`, not `?`) deliberately: fragments are never sent to the
+server, so the key stays out of the GPU box's and any reverse proxy's request
+logs. The key is stored for that browser and the fragment is scrubbed from the
+address bar (so it doesn't linger in history or get re-applied on a reload). If
+your key contains `+`, `&`, `#`, or `=`, URL-encode it (e.g. `#api_key=a%2Bb`);
+keys from `secrets.token_urlsafe` (above) need no encoding.
+Thereafter the UI loads normally with the key attached to every request. If a
+request ever 401s again (wrong/rotated key), you're prompted to re-enter it. The
+same gate shows a LAN-share **PIN** prompt instead when network sharing — not a
+remote key — is what's gating access.
 
 ## Security notes
 
@@ -89,6 +117,25 @@ Leave the URL empty to go back to the local backend.
   casual share session, the key is the durable remote credential. Either can
   be active; both are checked when set.
 - Admin routes (`/system/*`, `/api/settings/*`) stay loopback-gated unless
-  `OMNIVOICE_SERVER_MODE=1` is set on the box; in server mode the key is the
-  access control for those too.
+  `OMNIVOICE_SERVER_MODE=1` is set on the box; in server mode the **API key** is
+  the access control for those too (the short share PIN is consumption-only and
+  does not gate admin) — see the credential rule below.
+- **Trust a LAN or reverse proxy with `OMNIVOICE_TRUSTED_NETWORKS`.** If you run
+  OmniVoice behind a reverse proxy (nginx, Caddy, NPM) or only expose it on a
+  trusted LAN/Tailnet, set `OMNIVOICE_TRUSTED_NETWORKS` to a comma-separated list
+  of CIDRs (e.g. `192.168.1.0/24,10.0.0.0/8`); clients from those networks are
+  then treated as trusted by the **consumption** gates (share PIN, API key,
+  dictation WebSocket) and need no key/PIN. **Admin routes** (`/system/*`,
+  `/api/settings/*`) stay true-loopback-only — use `OMNIVOICE_SERVER_MODE=1` for
+  headless admin. It's the granular alternative to
+  `OMNIVOICE_SERVER_MODE=1` (which trusts *all* non-loopback sources) and
+  sidesteps a proxy that strips the `Authorization` header. Default empty — no
+  change to the strict loopback default. **Trusted-network membership is a
+  *consumption* exemption only — it never unlocks admin by itself, even in
+  server mode (#1213).** When combined with `OMNIVOICE_SERVER_MODE=1`, a
+  trusted-network client that presents no credential still gets `403` on the
+  admin routes (unless no credential is configured at all, the bare-Docker #261
+  flow, where admin is open); if a credential is set, only the **API key** — not
+  the share PIN — reaches admin. See [`api-auth.md`](api-auth.md) for the full
+  two-tier model.
 - The key is compared in constant time and never logged.

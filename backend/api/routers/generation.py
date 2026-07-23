@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import uuid
 import time
 import random
@@ -11,11 +12,18 @@ import traceback
 from typing import Optional
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-from core.db import db_conn
+import sqlite3
+from core.db import db_conn, ensure_schema
 from core.config import OUTPUTS_DIR, VOICES_DIR
-from services.model_manager import get_model, _gpu_pool
+import functools
+from services.model_manager import (
+    get_model, _gpu_pool, run_on_gpu_pool_guarded, GpuJobTimeoutError,
+    GpuPoolBusyError,
+)
 from services.audio_io import _safe_torchaudio_save
+from services.binary_preflight import InvalidBinaryError
 from core import event_bus
 from omnivoice.utils.voice_design import heal_design_instruct
 
@@ -100,8 +108,8 @@ def _apply_effect_chain(audio_out, sample_rate, effect_preset, *, skip_mastering
 
     ``skip_mastering`` honors a backend's ``applies_own_mastering`` flag
     (issue #312): studio engines (e.g. VoxCPM2's native 48 kHz output)
-    opt out of the broadcast Compressor + Reverb chain that's tuned for
-    OmniVoice's 24 kHz clone output. Loudness normalization still runs —
+    opt out of the broadcast highpass + Compressor pre-stage that's tuned
+    for OmniVoice's 24 kHz clone output. Loudness normalization still runs —
     it's a benign peak scale. Mirrors ``_run_tts`` in openai_compat.py.
     """
     from services.audio_dsp import (
@@ -136,6 +144,158 @@ def _apply_effect_chain(audio_out, sample_rate, effect_preset, *, skip_mastering
             audio_out, sample_rate=sample_rate, chain=chain,
         )
     return normalize_audio(audio_out, target_dBFS=-2.0)
+
+
+def _safe_exc_text(e: BaseException) -> str:
+    """``f"{type(e).__name__}: {e}"`` — the house style used for
+    unrecognized-error formatting throughout the backend (grep
+    ``type(e).__name__`` in settings.py / asr_backend.py / model_manager.py
+    / engines.py) — with a guard against leaking a raw container repr.
+
+    #977: an AssertionError raised deep inside a vendored dependency
+    (mlx-audio's Kokoro pipeline) had ``.args`` shaped like
+    ``('du', {'a': 'American English', ...})`` — a tuple containing a dict.
+    ``str(e)`` on that renders the WHOLE table straight into the user-facing
+    message. Any engine's ``generate()`` can raise something shaped like
+    this (not just Kokoro), so guard generically: if any element of
+    ``e.args`` is a container rather than a plain string, don't interpolate
+    ``str(e)`` at all — name the exception type and point at the log
+    instead.
+    """
+    args = getattr(e, "args", ())
+    if any(isinstance(a, (dict, list, tuple, set, frozenset)) for a in args):
+        return f"{type(e).__name__} — see Settings → Logs → Backend for details"
+    return f"{type(e).__name__}: {e}"
+
+
+def _exception_chain(e):
+    """Yield ``e`` plus every ``__cause__``/``__context__`` beneath it
+    (cycle-safe). Engines and hub libraries routinely wrap the original
+    transport/allocator error, so classification must look at the whole
+    chain, not just the outermost message."""
+    seen = set()
+    stack = [e]
+    while stack:
+        exc = stack.pop()
+        if exc is None or id(exc) in seen:
+            continue
+        seen.add(id(exc))
+        yield exc
+        stack.append(exc.__cause__)
+        stack.append(exc.__context__)
+
+
+# #880: transport-level exception type names from httpx (huggingface_hub ≥1.x
+# downloads over it) and requests/urllib3 (older engine deps). Any of these
+# anywhere in the exception chain means the network — not memory — killed the
+# generation.
+_NETWORK_EXC_NAMES = frozenset({
+    # httpx
+    "ConnectError", "ConnectTimeout", "ReadTimeout", "ReadError",
+    "WriteError", "WriteTimeout", "PoolTimeout", "NetworkError",
+    "TransportError", "RemoteProtocolError", "ProxyError", "CloseError",
+    # requests / urllib3
+    "ConnectionError", "ChunkedEncodingError", "MaxRetryError",
+    "NewConnectionError", "ProtocolError",
+    # stdlib socket-level drops mid-download
+    "ConnectionResetError", "ConnectionAbortedError", "ConnectionRefusedError",
+    # huggingface_hub: failed first-use download with nothing in the disk cache
+    "LocalEntryNotFoundError",
+})
+
+# Same class, but the transport error was stringified into a wrapper message
+# (so the type name is gone). All lowercase; matched against .lower().
+_NETWORK_MSG_SIGNATURES = (
+    "client has been closed",    # httpx closed-client lifecycle error (#880)
+    "cannot send a request",     # httpx: same error, message head
+    "connection error",          # requests / huggingface_hub wording
+    "connection reset",          # ECONNRESET mid-download
+    "read timed out",            # requests/urllib3 timeout wording
+    "max retries exceeded",      # urllib3 retry exhaustion
+    "temporary failure in name resolution",  # DNS down (glibc)
+    "name or service not known",             # DNS down (glibc)
+    "getaddrinfo failed",                    # DNS down (Windows)
+)
+
+
+def _is_network_failure(e) -> bool:
+    """True iff the failure (anywhere in its chain) is an HTTP-client
+    lifecycle / network-transport error — e.g. a first-use model download
+    from the HF Hub dying mid-generation (#880)."""
+    for exc in _exception_chain(e):
+        if type(exc).__name__ in _NETWORK_EXC_NAMES:
+            return True
+        low = str(exc).lower()
+        if any(sig in low for sig in _NETWORK_MSG_SIGNATURES):
+            return True
+    return False
+
+
+# Signatures of an *actual* out-of-memory condition. All lowercase.
+_OOM_MSG_SIGNATURES = (
+    "out of memory",               # CUDA / MPS / generic torch wording
+    "not enough memory",           # torch CPU DefaultCPUAllocator
+    "cannot allocate memory",      # OS-level ENOMEM
+    "std::bad_alloc",              # C++ allocator failure
+    "cublas_status_alloc_failed",  # cuBLAS workspace allocation
+    "cuda_error_out_of_memory",    # raw CUDA driver error name
+    "paging file is too small",    # Windows [WinError 1455] mapping DLLs
+)
+
+
+def _is_oom_failure(e) -> bool:
+    """True iff the failure (anywhere in its chain) actually looks like an
+    out-of-memory condition — the only case where the Flush hint is honest."""
+    for exc in _exception_chain(e):
+        if isinstance(exc, MemoryError):
+            return True
+        # torch.cuda.OutOfMemoryError subclasses RuntimeError; match by name
+        # so this needs no torch import (and covers other frameworks' twins).
+        if type(exc).__name__ == "OutOfMemoryError":
+            return True
+        low = str(exc).lower()
+        if any(sig in low for sig in _OOM_MSG_SIGNATURES):
+            return True
+    return False
+
+
+# #919: an engine that requires a model path / env var which isn't set (or is
+# set to a directory missing its model files) fails with a *configuration*
+# error, not a runtime one. The reporting user selected sherpa-onnx and hit
+# "OMNIVOICE_SHERPA_MODEL not set. Point it to a sherpa-onnx TTS model
+# directory …" — a pure setup problem — yet the OOM catch-all told them (on a
+# 63 GB-RAM box) to press Flush for memory they never ran out of. Classify the
+# whole CLASS of "engine not configured / required env var not set" errors so
+# any current or future opt-in engine (sherpa/Confucius4/dots/MOSS …) surfaces
+# actionable setup guidance instead of the memory hint. All lowercase; matched
+# over the whole exception chain (engines wrap the original error).
+_CONFIG_MSG_SIGNATURES = (
+    "not set. point it to",      # sherpa: OMNIVOICE_SHERPA_MODEL not set
+    "no model.onnx found in",    # sherpa: dir set but the model file is missing
+    "not configured",            # generic "engine not configured" wording
+    "venv not found. set",       # confucius4/dots/MOSS dedicated-venv opt-ins
+    "unavailable: omnivoice_",   # is_available() reason wrapped by _ensure_loaded
+)
+
+# An OMNIVOICE_* engine env var named alongside "not set" / "point it to" /
+# "set omnivoice_…" is the strongest config-missing signal and generalizes to
+# any engine gated on such a var (issue #919 class).
+_CONFIG_ENV_RE = re.compile(r"omnivoice_[a-z0-9_]+")
+
+
+def _is_config_failure(e) -> bool:
+    """True iff the failure is a *configuration* problem — a required engine
+    model path / env var that isn't set (or points nowhere) — rather than a
+    runtime fault. The remedy is to set the value, never to Flush VRAM."""
+    for exc in _exception_chain(e):
+        low = str(exc).lower()
+        if any(sig in low for sig in _CONFIG_MSG_SIGNATURES):
+            return True
+        if _CONFIG_ENV_RE.search(low) and (
+            "not set" in low or "point it to" in low or "set omnivoice_" in low
+        ):
+            return True
+    return False
 
 
 def _oom_friendly_reraise(e):
@@ -178,10 +338,152 @@ def _oom_friendly_reraise(e):
             f"usually a transient glitch. Use the Flush button to reload the model, "
             f"then regenerate. Underlying error: {e}"
         ) from e
+    # #664: a bad voice-design instruct (free-form prose, mixed EN/ZH, or
+    # conflicting tags) raises "Unsupported instruct items …" / "Cannot mix …
+    # in a single instruct" / "Conflicting instruct items …" from omnivoice's
+    # _resolve_instruct. That's a USER-INPUT validation error, not an OOM. Match
+    # on the message signature (NOT the type — a lower layer can wrap the original
+    # ValueError, which is why the route's `except ValueError` guard misses it)
+    # and re-raise as a clean ValueError so the route returns a 400 with the
+    # instruct guidance, instead of a 500 telling the user to Flush for memory
+    # they never ran out of. (Complements the client-side guard in #658/#612.)
+    _low = es.lower()
+    if ("unsupported instruct items" in _low
+            or "conflicting instruct items" in _low
+            or "in a single instruct" in _low):
+        raise ValueError(es) from e
+    # #705: a corrupt or wrong-architecture native component (a .dll / .pyd / .exe
+    # — torch, ffmpeg, or a bundled engine binary) fails to load/spawn on Windows
+    # with "[WinError 193] %1 is not a valid Win32 application". That is NOT OOM,
+    # and Flush won't help — reinstalling/repairing the component is the real fix.
+    if "[winerror 193]" in _low or "is not a valid win32 application" in _low:
+        raise RuntimeError(
+            f"A native component (a DLL / .pyd / .exe — e.g. torch, ffmpeg, or an "
+            f"engine binary) is corrupt or built for the wrong architecture "
+            f"([WinError 193]). Reinstall or repair that component — the Flush "
+            f"button won't help here. Underlying error: {e}"
+        ) from e
+    # #1227: Windows Smart App Control / an App Control (WDAC) policy blocked
+    # a file the engine needs — "[WinError 4551] An Application Control policy
+    # has blocked this file". WinError 1260 is the same class from the older
+    # Software Restriction / AppLocker policies. Not OOM, and Flush can't help:
+    # the OS is refusing to load the binary at all.
+    if ("[winerror 4551]" in _low or "[winerror 1260]" in _low
+            or "application control policy" in _low):
+        raise RuntimeError(
+            f"Windows blocked a file OmniVoice needs from running — an "
+            f"Application Control policy (Smart App Control, WDAC, or "
+            f"AppLocker) refused to load it. On a personal PC: Windows "
+            f"Security → App & browser control → Smart App Control → Off "
+            f"(note Windows only lets you turn it off once — re-enabling "
+            f"needs a Windows reset), then restart OmniVoice. On a managed/"
+            f"work PC ask IT to allow the OmniVoice install folder. The Flush "
+            f"button won't help. Underlying error: {e}"
+        ) from e
+    # #1221: libsndfile/soundfile could not read or write an audio file. Its
+    # errors are bare ("LibsndfileError: System error.") so they used to fall
+    # through to the unrecognized catch-all. audio_io._describe_write_failure
+    # already names the target for the WRITE path; this covers every other
+    # libsndfile surface (reading a reference clip, a decode) with the causes
+    # that actually produce an OS-level audio I/O failure.
+    if "libsndfile" in _low or "writing the audio file failed" in _low:
+        raise RuntimeError(
+            f"An audio file couldn't be read or written (libsndfile failed at "
+            f"the OS level). This is a file/disk problem, not a memory one: "
+            f"check the drive isn't full, the output and temp folders exist "
+            f"and are writable, and that antivirus or OneDrive isn't locking "
+            f"them (add an OmniVoice exclusion if you use one). If it happens "
+            f"only with one reference clip, re-import that clip. Underlying "
+            f"error: {e}"
+        ) from e
+    # #715: a "[Errno 32] Broken pipe" (BrokenPipeError) surfacing from
+    # generation is NOT out of memory — it means the backend's stdout/stderr
+    # pipe to the desktop shell that launched it closed mid-render (an orphaned
+    # backend whose parent shell exited or relaunched). main.py wraps
+    # sys.stdout/stderr to swallow EPIPE, but a C-level write inside the native
+    # engine/torch can still raise one past that guard. Flush won't help —
+    # relaunching the app re-parents the backend to a live shell.
+    # #756: the GPU's compute capability isn't in this PyTorch build's arch list,
+    # so CUDA can't launch kernels ("no kernel image is available for execution").
+    # NOT OOM. get_best_device() now falls back to CPU up front, but classify the
+    # raw error too in case CUDA was forced (OMNIVOICE_FORCE_CUDA) or a sub-path
+    # still ran on the GPU — point at the real fix, not the Flush button.
+    if "no kernel image is available" in _low:
+        raise RuntimeError(
+            f"Your GPU isn't supported by the installed PyTorch build (CUDA can't "
+            f"launch kernels for its compute capability). Switch the compute device "
+            f"to CPU in Settings, or install a matching PyTorch (e.g. a cu128 build "
+            f"for newer GPUs). The Flush button won't help. Underlying error: {e}"
+        ) from e
+    if isinstance(e, BrokenPipeError) or "broken pipe" in _low or "errno 32" in _low:
+        raise RuntimeError(
+            f"The backend lost its output pipe mid-generation — the desktop app "
+            f"that launched it closed or relaunched ([Errno 32] Broken pipe). "
+            f"Restart the app and try again; the Flush button won't help here. "
+            f"Underlying error: {e}"
+        ) from e
+    # #880: an httpx/requests transport failure surfacing from generation —
+    # most commonly a first-use model download from the HF Hub dying with
+    # httpx's "Cannot send a request, as the client has been closed" (the
+    # shared client got closed mid-lifecycle), a connect/read timeout, or a
+    # dropped connection — is NOT out of memory. The model never finished
+    # loading, so Flush is the wrong remedy; retrying is. Matched over the
+    # whole exception chain (type names + stringified signatures) because
+    # engines wrap the original transport error.
+    if _is_network_failure(e):
+        raise RuntimeError(
+            f"A model download or network call failed mid-generation (usually "
+            f"the engine fetching its model files on first use). This is a "
+            f"network problem, not a memory problem — flushing VRAM won't "
+            f"help. Retry the generation; if it keeps failing, check your "
+            f"internet connection and any HF_ENDPOINT/mirror setting. "
+            f"Underlying error: {e}"
+        ) from e
+    # #919: a required engine model path / env var that isn't set is a pure
+    # CONFIGURATION problem, not a runtime one. sherpa-onnx's
+    # "OMNIVOICE_SHERPA_MODEL not set. Point it to …" used to fall through to
+    # the OOM catch-all, telling a user with 63 GB of RAM to press Flush. Point
+    # at the real fix — set the variable — and never mention memory or Flush.
+    # The underlying error already names the exact variable + what to point it
+    # at (and Settings → Engines shows a copy-paste setup line), so keep it
+    # front-and-center. Checked before the OOM branch so a config error can
+    # never be mislabeled as memory.
+    if _is_config_failure(e):
+        raise RuntimeError(
+            f"This TTS engine isn't set up yet — it needs a model path or "
+            f"environment variable that isn't configured, so nothing was "
+            f"generated. Set it as the underlying error describes (it names the "
+            f"exact variable and what to point it at), then restart OmniVoice — "
+            f"or pick a ready engine in Settings → Engines. This is a setup "
+            f"problem, not a memory one. Underlying error: {e}"
+        ) from e
+    # #880 (the class bug): the OOM hint used to be the catch-all fallback,
+    # so ANY unrecognized error told the user to press Flush for memory they
+    # never ran out of. Only claim OOM when something in the chain actually
+    # looks like one; everything else surfaces as what it is — unrecognized —
+    # with the real error front and center.
+    if _is_oom_failure(e):
+        raise RuntimeError(
+            f"TTS engine stopped mid-generation. This usually means it ran out of memory. "
+            f"Try the Flush button to reload the model, then regenerate. Underlying error: {e}"
+        ) from e
     raise RuntimeError(
-        f"TTS engine stopped mid-generation. This usually means it ran out of memory. "
-        f"Try the Flush button to reload the model, then regenerate. Underlying error: {e}"
-    )
+        f"TTS engine stopped mid-generation with an error OmniVoice doesn't "
+        f"recognize. Retry once; if it keeps failing, please report it with "
+        f"the full trace. Underlying error: {_safe_exc_text(e)}"
+    ) from e
+
+
+def _generate_timeout_s(text: str) -> float:
+    """Wall-clock budget for one generate, scaled to the request.
+
+    Thin alias for the canonical helper, which moved to
+    ``services.model_manager.generate_timeout_s`` (#1190) so /v1/audio/speech,
+    batch, dub and archetype previews share it instead of each re-deriving (or,
+    as they did, silently keeping the flat 300s).
+    """
+    from services.model_manager import generate_timeout_s
+    return generate_timeout_s(text)
 
 
 def _run_inference(
@@ -204,6 +506,18 @@ def _run_inference(
 
         sr = model.sampling_rate if hasattr(model, 'sampling_rate') else 24000
 
+        from services.tts_backend import generate_with_cached_ref
+
+        def _gen(gen_text, gen_duration):
+            """One generate call for this request's voice, reference encoded once."""
+            return generate_with_cached_ref(
+                model, ref_audio=ref_audio_path, ref_text=ref_text,
+                text=gen_text, language=language, instruct=instruct,
+                duration=gen_duration, num_step=num_step,
+                guidance_scale=guidance_scale, speed=speed, denoise=denoise,
+                postprocess_output=postprocess_output, **kwargs
+            )
+
         # Inline [pause Nms] markers (issue #276): split the text and stitch
         # silence between independently-synthesized spans. Fully opt-in — text
         # without a marker takes the unchanged single-shot path below.
@@ -215,13 +529,7 @@ def _run_inference(
             def _gen_span(span_text):
                 # Per-span duration is left to the model; an explicit overall
                 # `duration` can't be meaningfully split across spans.
-                return model.generate(
-                    text=span_text, language=language, ref_audio=ref_audio_path,
-                    ref_text=ref_text, instruct=instruct, duration=None,
-                    num_step=num_step, guidance_scale=guidance_scale, speed=speed,
-                    denoise=denoise, postprocess_output=postprocess_output,
-                    **kwargs
-                )[0]
+                return _gen(span_text, None)[0]
             audio_out = _render_with_pauses(_gen_span, segments, sr)
         else:
             # Wave 1.2: long text is split at sentence boundaries and the
@@ -242,23 +550,10 @@ def _run_inference(
                     # correlated RNG artifacts across chunk boundaries.
                     if used_seed is not None:
                         torch.manual_seed(used_seed + i)
-                    parts.append(model.generate(
-                        text=chunk_text, language=language, ref_audio=ref_audio_path,
-                        ref_text=ref_text, instruct=instruct, duration=None,
-                        num_step=num_step, guidance_scale=guidance_scale, speed=speed,
-                        denoise=denoise, postprocess_output=postprocess_output,
-                        **kwargs
-                    )[0])
+                    parts.append(_gen(chunk_text, None)[0])
                 audio_out = concatenate_audio_chunks(parts, sr, _xfade_ms)
             else:
-                audios = model.generate(
-                    text=text, language=language, ref_audio=ref_audio_path,
-                    ref_text=ref_text, instruct=instruct, duration=duration,
-                    num_step=num_step, guidance_scale=guidance_scale, speed=speed,
-                    denoise=denoise, postprocess_output=postprocess_output,
-                    **kwargs
-                )
-                audio_out = audios[0]
+                audio_out = _gen(text, duration)[0]
 
         # Apply DSP effect preset. The OmniVoice model never masters its own
         # output, so mastering always runs here (unchanged behavior).
@@ -344,6 +639,146 @@ def _run_backend_inference(
         _oom_friendly_reraise(e)
 
 
+def _persist_profile_ref_text(profile_id: str, ref_text: str) -> None:
+    """Cache an auto-transcribed reference transcript onto its profile row.
+
+    #1032 perf regression: profiles saved without a transcript re-ran a FULL
+    ASR model load + transcribe on every /generate (the #308 auto-transcribe
+    path). Persisting the first transcript makes subsequent generates read it
+    from the row like a user-entered one. The guarded UPDATE only ever fills
+    an empty column — it can never overwrite a transcript the user typed or a
+    lock wrote — and a failure is logged, never raised (best-effort, same
+    contract as the transcribe itself)."""
+    try:
+        with db_conn() as conn:
+            updated = conn.execute(
+                "UPDATE voice_profiles SET ref_text=? "
+                "WHERE id=? AND (ref_text IS NULL OR ref_text='')",
+                (ref_text, profile_id),
+            ).rowcount
+        if updated:
+            event_bus.emit("profiles", {"action": "updated", "id": profile_id})
+    except Exception as e:  # noqa: BLE001 — cache write must not break generate
+        logger.warning(
+            "could not persist auto-transcribed ref_text onto profile %s: %s",
+            profile_id, e,
+        )
+
+
+async def _finalize_generation(
+    audio_tensor, sample_rate, *, text, history_mode, ref_audio_path,
+    language, instruct, resolved_profile_id, used_seed, start_time,
+):
+    """Shared tail of a successful generation: watermark → save WAV →
+    history row (self-healing) → retention prune → event emit.
+
+    Used verbatim by both the classic whole-file response path and the
+    streaming-preview path (``stream=true``), so the on-disk artifact —
+    watermark, filename, history row, retention behavior — is identical
+    regardless of how the audio was delivered to the client.
+
+    Returns ``(watermarked_tensor, meta)`` where ``meta`` carries
+    ``id`` / ``filename`` / ``duration`` / ``gen_time``.
+    """
+    loop = asyncio.get_running_loop()
+    # Invisible AudioSeal provenance watermark on the final audio. Embedding
+    # was previously only wired into the dub pipeline (dub_generate.py), so
+    # plain TTS came out unmarked despite the setting being on — and the same
+    # class of gap later bit /v1/audio/speech (#1169), which is why ALL
+    # producers now share the mark_synthetic chokepoint. It self-gates on the
+    # user's watermark setting + AudioSeal availability and passes the audio
+    # through unchanged on any failure, so it never breaks generation.
+    # Dispatched to the dedicated watermark pool, not the GPU pool (#1190):
+    # AudioSeal embedding is CPU work that holds no VRAM, so occupying a GPU
+    # worker with it only delays the next generate on 1-worker hosts.
+    from services.watermark import mark_synthetic
+    from services.model_manager import get_watermark_pool
+    audio_tensor = await loop.run_in_executor(
+        get_watermark_pool(),
+        functools.partial(mark_synthetic, audio_tensor, sample_rate,
+                          context="generate.finalize"),
+    )
+    gen_time = round(time.time() - start_time, 2)
+
+    audio_id = str(uuid.uuid4())[:8]
+    audio_filename = f"{audio_id}.wav"
+    audio_path = os.path.join(OUTPUTS_DIR, audio_filename)
+    _safe_torchaudio_save(audio_path, audio_tensor, sample_rate)
+
+    audio_dur = round(audio_tensor.shape[-1] / sample_rate, 2)
+
+    # #710: the clip is already generated and saved above. A history-write
+    # failure — e.g. "no such table: generation_history" on a DB that missed
+    # schema init — must NOT 500 the user's generation. Self-heal the schema
+    # once and retry; if it still fails, log and return the audio anyway.
+    def _write_history():
+        with db_conn() as conn:
+            conn.execute(
+                "INSERT INTO generation_history (id, text, mode, language, instruct, profile_id, audio_path, duration_seconds, generation_time, seed, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (audio_id, text[:200], history_mode or ("clone" if ref_audio_path else "design"),
+                 language or "Auto", instruct or "", resolved_profile_id,
+                 audio_filename, audio_dur, gen_time, used_seed, time.time())
+            )
+    try:
+        _write_history()
+    except sqlite3.OperationalError as e:
+        logger.warning("generation history write failed (%s); healing schema + retrying", e)
+        try:
+            ensure_schema()
+            _write_history()
+        except Exception as e2:
+            logger.warning("history write still failed after schema heal; returning audio anyway: %s", e2)
+    except Exception as e:
+        logger.warning("generation history write failed; returning audio anyway: %s", e)
+    # Retention cap: without it, takes (rows + WAVs in OUTPUTS_DIR) grow
+    # unbounded forever. Best-effort — a prune failure must never affect
+    # the generation that just succeeded.
+    try:
+        _prune_history_over_cap()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("history retention prune failed (non-fatal): %s", e)
+    event_bus.emit("generation_history", {"action": "created", "id": audio_id})
+
+    # Opt-in analytics (core/analytics.py): no-op unless the user turned it on.
+    # Metadata only — text_length is the LENGTH of the text, never the text; the
+    # allowlist in analytics.sanitize_properties() enforces that regardless.
+    try:
+        from core.analytics import capture as _ph
+
+        _ph("speech_generated", {
+            "mode": history_mode,
+            "language": language or "auto",
+            "duration_seconds": audio_dur,
+            "gen_time_seconds": gen_time,
+            "text_length": len(text or ""),          # the LENGTH. never the text.
+            "has_profile": bool(resolved_profile_id),
+        })
+    except Exception:  # noqa: BLE001 — analytics may never break a generation…
+        # …but it must not fail SILENTLY either: a typo'd variable here would
+        # otherwise mean the event simply never fires and nobody ever knows.
+        logger.warning("analytics: speech_generated capture failed", exc_info=True)
+
+    return audio_tensor, {
+        "id": audio_id,
+        "filename": audio_filename,
+        "duration": audio_dur,
+        "gen_time": gen_time,
+    }
+
+
+def _pcm16_b64(wav_tensor) -> str:
+    """Mono 16-bit little-endian PCM, base64-encoded — the streaming-preview
+    wire format (same conversion as /ws/tts). N-D tensors take channel 0."""
+    import base64
+
+    import torch
+
+    pcm = (wav_tensor * 32767).clamp(-32768, 32767).to(torch.int16)
+    while pcm.ndim > 1:
+        pcm = pcm[0]
+    return base64.b64encode(pcm.cpu().numpy().tobytes()).decode("ascii")
+
+
 @router.post("/generate")
 async def generate_speech(
     text: str = Form(...),
@@ -369,6 +804,19 @@ async def generate_speech(
     # boundaries and crossfaded. 0 disables chunking (whole text to engine).
     max_chunk_chars: int = Form(800, ge=0),
     crossfade_ms: int = Form(50, ge=0, le=1000),
+    # Expressive-TTS Spec 01: apply the user pronunciation dictionary + inline
+    # [[…]] overrides to the text before synthesis. Default ON; the global
+    # OMNIVOICE_PRONUNCIATION pref can disable it for power users. Omitting it
+    # with an empty dictionary is byte-identical to legacy behavior.
+    pronounce: bool = Form(True),
+    # Streaming preview: when true, the response is application/x-ndjson —
+    # one JSON event per line ("start" → N × "chunk" (base64 PCM16 preview of
+    # each text chunk, playable the moment it arrives) → "done" with the saved
+    # take's metadata, or "error"). The final WAV on disk (watermark, history
+    # row, retention) is produced by the exact same finalize path as the
+    # classic flow, so streaming is purely a delivery channel — engine-agnostic
+    # (text-level chunking, no per-engine token streaming).
+    stream: bool = Form(False),
 ):
     # #502: NFC-normalize the input text so decomposed (NFD) diacritics — common
     # in pasted Vietnamese and other Latin-with-marks text — are composed to the
@@ -401,6 +849,33 @@ async def generate_speech(
             ),
         )
 
+    # Crash forensics (#1164): a generate is exactly the kind of work an OOM
+    # kill lands on — record it (engine id only, never the text) so an
+    # unclean death is attributable by the next run. Throttled + never raises.
+    from core.run_sentinel import touch_activity
+    touch_activity("generate", engine_id)
+
+    # Single-active-engine memory discipline: hand back any OTHER resident TTS
+    # engine's model before loading this one, so switching engines (or a
+    # per-request engine= override, which bypasses /engines/select entirely)
+    # doesn't stack two multi-GB models in memory — the accumulation behind the
+    # 16 GB-Mac OOM deaths. No-op when nothing else is resident, so steady-state
+    # single-engine use pays nothing. Opt out: OMNIVOICE_SINGLE_ENGINE_RESIDENT=0.
+    from services.engine_memory import evict_other_tts_engines
+    await evict_other_tts_engines(engine_id)
+
+    # Non-blocking breadcrumb: if free memory is already low before this load,
+    # log it. A later OOM kill (the 16 GB-Mac class) then has a trail pointing
+    # at the load that tipped it, instead of a silent process death. Never
+    # blocks — the OS can reclaim cache, and a hard refuse would brick
+    # legitimate loads.
+    try:
+        from services.memory_budget import log_if_low
+
+        log_if_low(f"TTS load ({engine_id})")
+    except Exception:
+        pass
+
     _model = None
     _backend = None
     if backend_cls is OmniVoiceBackend:
@@ -428,17 +903,65 @@ async def generate_speech(
     # /engines/select gate, so this is the only place it's enforced for synth).
     from core.device_caps import detect_host_caps
     from services.engine_routing import resolve_routing, routing_notice
-    _routing = resolve_routing(getattr(backend_cls, "gpu_compat", ("cpu",)), detect_host_caps())
+    # The engine's declared VRAM floor (#1226) — used by the routing gate and,
+    # below, to let a generate TIMEOUT name the same shortfall. Resolved once:
+    # every other job on this GPU pool (reference transcribe, assemble) leaves
+    # it at 0, so only TTS generates can get the under-provisioned wording.
+    _engine_min_vram_gb = getattr(backend_cls, "min_vram_gb", 0.0)
+    _routing = resolve_routing(
+        getattr(backend_cls, "gpu_compat", ("cpu",)), detect_host_caps(),
+        _engine_min_vram_gb,
+    )
     if _routing["routing_status"] == "unavailable":
         # The engine needs an accelerator this host lacks and has no CPU path.
         raise HTTPException(status_code=400, detail=_routing["routing_reason"])
     _routing_notice = routing_notice(_routing)  # (status, reason) or None
+
+    # ── #1033/#1037: warm the engine under the LOAD budget, not the generate
+    # budget. A cold adapter lazily loads (and possibly downloads multi-GB
+    # weights) inside generate(), so a fresh install's first request burned
+    # its whole OMNIVOICE_GENERATE_TIMEOUT_S window on the download and died
+    # with a misleading "too heavy for the available compute" 503 (#1014
+    # measured it: 0% GPU util for the full 300s). Model loading gets its own,
+    # larger budget (OMNIVOICE_MODEL_LOAD_TIMEOUT, default 1200s) — the same
+    # split get_model() already has for the native engine. Once warm, this is
+    # a no-op per request.
+    if _backend is not None:
+        from services.model_manager import _model_load_timeout
+        try:
+            await run_on_gpu_pool_guarded(
+                _backend.ensure_ready,
+                what=f"TTS engine '{engine_id}' model load",
+                timeout=_model_load_timeout(),
+            )
+        # Builtin TimeoutError base, not GpuJobTimeoutError — reload-proof
+        # class identity (see the twin catch in openai_compat.py).
+        except TimeoutError as exc:
+            logger.warning("engine load exceeded the model-load budget: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"TTS engine '{engine_id}' did not finish loading within its "
+                    f"model-load budget — on a first run this usually means the "
+                    f"weight download is slow or stalled (check Settings → Models "
+                    f"for progress), not that generation failed. Retry once the "
+                    f"model shows as installed."
+                ),
+            ) from exc
 
     ref_audio_path = None
     cleanup_ref = False
     used_seed = seed
     resolved_profile_id = None
     history_mode = None  # profile.kind when a profile drives; else inferred at insert
+    # #1032: profile id to persist an auto-transcribed reference transcript to.
+    # Set only for a plain (unlocked) clone profile whose stored ref_text is
+    # empty — the case where every /generate re-ran a full ASR model load +
+    # transcribe of the same clip. Locked profiles are excluded (their ref
+    # audio is the locked take, and unlocking would leave a mismatched
+    # transcript paired with the original reference); design profiles are
+    # excluded (a re-render replaces the sample, stranding a stale transcript).
+    persist_ref_text_profile_id = None
 
     if profile_id:
         with db_conn() as conn:
@@ -484,6 +1007,11 @@ async def generate_speech(
                 ref_audio_path = os.path.join(VOICES_DIR, row["ref_audio_path"]) if row["ref_audio_path"] else None
                 if not ref_text and row["ref_text"]:
                     ref_text = row["ref_text"]
+                elif ref_audio_path and not ref_text:
+                    # Empty stored transcript → the auto-transcribe below will
+                    # run; cache its result onto the profile so it runs ONCE,
+                    # not on every generate (#1032 perf regression).
+                    persist_ref_text_profile_id = profile_id
                 if not instruct and row["instruct"]:
                     instruct = row["instruct"]
                 if used_seed is None and row["seed"] is not None:
@@ -520,9 +1048,30 @@ async def generate_speech(
     # fallback behaves exactly as before.
     if ref_audio_path and not ref_text:
         from services.asr_backend import transcribe_reference
-        ref_text = await asyncio.get_running_loop().run_in_executor(
-            _gpu_pool, transcribe_reference, ref_audio_path
-        )
+        # Same #730 hang risk as any whisperx transcribe — bound + reset the pool
+        # so a wedged reference transcribe can't brick the backend. This path is
+        # best-effort (transcribe_reference returns None on failure → the model's
+        # built-in ASR fallback), so a timeout degrades to None rather than
+        # failing the whole generate.
+        try:
+            ref_text = await run_on_gpu_pool_guarded(
+                functools.partial(transcribe_reference, ref_audio_path),
+                what="Reference transcribe",
+                # Floor budget (#1190): a reference clip is seconds of audio,
+                # so the length-scaled bonus never applies — but the timeout is
+                # explicit here too, so no dispatch relies on a hidden default.
+                timeout=_generate_timeout_s(""),
+            )
+        # TimeoutError covers both the execution bound and pool saturation:
+        # this path is best-effort either way.
+        except TimeoutError as e:
+            logger.warning("reference transcribe hung (%s); using model ASR fallback", e)
+            ref_text = None
+        # #1032: cache the transcript onto its clone profile so the ASR model
+        # load + transcribe above happens once per profile, not per generate.
+        # Only fills an empty column — a user-entered transcript always wins.
+        if ref_text and persist_ref_text_profile_id:
+            _persist_profile_ref_text(persist_ref_text_profile_id, ref_text)
 
     # #526: materialize a concrete seed when none was supplied (and no profile
     # pinned one) so the take is reproducible and we can hand it back via the
@@ -532,57 +1081,346 @@ async def generate_speech(
     if used_seed is None:
         used_seed = random.randint(0, 2**31 - 1)
 
+    # Engine-agnostic text normalization (junk strip, numbers→words,
+    # abbreviations) — AFTER `language` is fully resolved, and BEFORE the
+    # pronunciation dictionary so user dictionary entries operate on
+    # normalized text and respellings are never re-mangled (ordering rationale
+    # in services/text_normalization.py). Pref-gated (default ON), idempotent,
+    # never raises; applied exactly once per request, at this choke point.
+    from services.text_normalization import normalize_for_tts
+    text = normalize_for_tts(text, language)
+
+    # Expressive-TTS Spec 01: apply the user pronunciation dictionary + inline
+    # [[…]] one-off overrides to the text, here — AFTER `language` is fully
+    # resolved (a profile may fill it above) so per-language entries match the
+    # real render language, and BEFORE the text reaches either inference path
+    # (native OmniVoice or a pluggable backend) and the chunk splitter. This is
+    # the single point user text → normalized text → model, so the transform
+    # covers generate for every engine. Pure text substitution → identical on
+    # mac/Win/Linux. A disabled pref or empty dictionary is a pass-through, so
+    # plain text stays byte-identical (#G5 backward-compat).
+    from core import prefs as _prefs
+    _pron_env = os.environ.get("OMNIVOICE_PRONUNCIATION")
+    if _pron_env is not None:
+        # Env wins (power-user override); "0"/"false"/"no"/"off" disable it.
+        _pron_enabled = _pron_env.strip().lower() not in ("0", "false", "no", "off", "")
+    else:
+        _pron_enabled = bool(_prefs.get("pronunciation_enabled", True))
+    if pronounce and _pron_enabled:
+        from services.pronunciation import apply_pronunciation, load_entries_from_db
+        try:
+            _pron_rows = load_entries_from_db()
+        except Exception:  # noqa: BLE001 — table missing / DB locked → no-op
+            _pron_rows = []
+        text = apply_pronunciation(text, _pron_rows, language)
+    else:
+        # Even with the dictionary off, inline [[…]] overrides are an explicit,
+        # in-text authoring choice → always honored (and never left as literal
+        # double-bracket text the model would mispronounce).
+        from services.pronunciation import apply_inline_overrides
+        text = apply_inline_overrides(text)
+
     start_time = time.time()
+
+    # ── Streaming preview (feat: streaming-tts-preview) ─────────────────────
+    # Long scripts used to mean staring at a spinner until the ENTIRE render
+    # finished. With stream=true the existing text chunks (the Wave 1.2
+    # sentence-boundary splitter — unchanged) are synthesized sequentially and
+    # each chunk's audio is yielded the moment it's rendered, so playback can
+    # begin after the first chunk. The final file is then assembled through
+    # the SAME concat → effect-chain → watermark → save → history pipeline as
+    # the classic path, so the on-disk take is identical to a non-streamed
+    # one. [pause]-marker inputs and single-chunk (short) texts keep their
+    # unchanged single-shot pipeline and stream as one chunk. All prep above
+    # (engine warm under the #1039 model-load budget, routing gate, profile /
+    # seed / normalization) already ran, so per-chunk jobs spend the generate
+    # budget on generation only — and each chunk gets its own budget, so a
+    # long script can't time out merely for being long.
+    if stream:
+        from omnivoice.utils.text import parse_pause_markers
+        from services.chunked_tts import split_text_into_chunks
+
+        _segments = parse_pause_markers(text)
+        _has_pause = len(_segments) > 1 or (_segments and _segments[0][1] > 0)
+        _text_chunks = [] if _has_pause else split_text_into_chunks(text, max_chunk_chars)
+
+        def _render_stream_chunk(i: int, chunk_text: str):
+            """One text chunk → (raw engine tensor, preview-DSP tensor, sr).
+
+            Runs on the GPU pool. Mirrors ONE iteration of the multi-chunk
+            loop in _run_inference/_run_backend_inference exactly (per-chunk
+            deterministic seed, same generate kwargs), so concatenating the
+            raw parts afterwards reproduces the non-streaming output. The
+            preview copy gets the same effect chain the final file will get,
+            so what the user hears mid-stream matches the saved take.
+            """
+            import torch
+            try:
+                if used_seed is not None:
+                    torch.manual_seed(used_seed + i)
+                if _backend is not None:
+                    _lang = None if (language and language.lower() == "auto") else language
+                    raw = _backend.generate(
+                        chunk_text, duration=None, language=_lang,
+                        ref_audio=ref_audio_path, ref_text=ref_text,
+                        instruct=instruct, num_step=num_step,
+                        guidance_scale=guidance_scale, speed=speed,
+                        denoise=denoise, postprocess_output=postprocess_output,
+                    )
+                    sr = _backend.sample_rate
+                    skip = getattr(_backend, "applies_own_mastering", False)
+                else:
+                    kwargs = {}
+                    if t_shift is not None: kwargs["t_shift"] = t_shift
+                    if layer_penalty_factor is not None: kwargs["layer_penalty_factor"] = layer_penalty_factor
+                    if position_temperature is not None: kwargs["position_temperature"] = position_temperature
+                    if class_temperature is not None: kwargs["class_temperature"] = class_temperature
+                    # Same cached-reference path as _run_inference: chunk 0 encodes
+                    # the reference, chunks 1..N hit the cache instead of re-encoding.
+                    from services.tts_backend import generate_with_cached_ref
+                    raw = generate_with_cached_ref(
+                        _model, ref_audio=ref_audio_path, ref_text=ref_text,
+                        text=chunk_text, language=language, instruct=instruct,
+                        duration=None, num_step=num_step,
+                        guidance_scale=guidance_scale, speed=speed, denoise=denoise,
+                        postprocess_output=postprocess_output, **kwargs
+                    )[0]
+                    sr = _model.sampling_rate if hasattr(_model, "sampling_rate") else 24000
+                    skip = False
+                preview = _apply_effect_chain(raw, sr, effect_preset, skip_mastering=skip)
+                # The STREAMED copy is provenance-marked by the caller (#1169
+                # mark, moved off this GPU job in #1190): the preview PCM
+                # leaves the app the moment it's yielded, before
+                # _finalize_generation marks the assembled take, so it needs
+                # its own mark — but AudioSeal embedding is CPU work, and
+                # doing it here held the GPU worker for the whole embed on
+                # every one of N chunks. `raw` stays unmarked — the saved
+                # artifact gets exactly one whole-take mark in the finalize
+                # path (no double-embed on the file users keep).
+                return raw, preview, sr
+            except ValueError:
+                raise
+            except Exception as e:
+                _oom_friendly_reraise(e)
+
+        def _assemble_stream_chunks(parts, sr):
+            """Concat + whole-take effect chain — the same tail the
+            non-streaming multi-chunk loop runs, as one pool job."""
+            from services.chunked_tts import concatenate_audio_chunks
+            try:
+                audio_out = concatenate_audio_chunks(parts, sr, crossfade_ms)
+                skip = (getattr(_backend, "applies_own_mastering", False)
+                        if _backend is not None else False)
+                return _apply_effect_chain(audio_out, sr, effect_preset, skip_mastering=skip)
+            except ValueError:
+                raise
+            except Exception as e:
+                _oom_friendly_reraise(e)
+
+        async def _stream_events():
+            import json
+
+            def _line(obj) -> bytes:
+                return (json.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8")
+
+            try:
+                if _has_pause or len(_text_chunks) <= 1:
+                    # Single-shot pipeline, unchanged — streamed as one chunk.
+                    if _backend is not None:
+                        audio_tensor = await run_on_gpu_pool_guarded(
+                            functools.partial(
+                                _run_backend_inference,
+                                _backend, text, language, ref_audio_path, ref_text,
+                                instruct, duration, num_step, guidance_scale, speed,
+                                denoise, postprocess_output, used_seed, effect_preset,
+                                max_chunk_chars, crossfade_ms,
+                            ),
+                            what="TTS generate",
+                            min_vram_gb=_engine_min_vram_gb,
+                            timeout=_generate_timeout_s(text),
+                        )
+                        sample_rate = _backend.sample_rate
+                    else:
+                        audio_tensor = await run_on_gpu_pool_guarded(
+                            functools.partial(
+                                _run_inference,
+                                _model, text, language, ref_audio_path, ref_text,
+                                instruct, duration, num_step, guidance_scale, speed,
+                                t_shift, denoise, postprocess_output,
+                                layer_penalty_factor, position_temperature,
+                                class_temperature, used_seed, effect_preset,
+                                max_chunk_chars, crossfade_ms,
+                            ),
+                            what="TTS generate",
+                            min_vram_gb=_engine_min_vram_gb,
+                            timeout=_generate_timeout_s(text),
+                        )
+                        sample_rate = _model.sampling_rate
+                    yield _line({
+                        "type": "start", "sample_rate": sample_rate, "channels": 1,
+                        "format": "pcm16", "total_chunks": 1, "crossfade_ms": 0,
+                        "seed": used_seed,
+                    })
+                    # Provenance-mark the streamed copy (#1169): these PCM
+                    # bytes leave the app before _finalize_generation marks
+                    # the saved take. Marking a copy keeps the artifact's
+                    # single whole-take mark (embed_watermark returns a new
+                    # tensor; audio_tensor itself is untouched).
+                    # Runs on the dedicated watermark pool, not the GPU pool
+                    # (#1190): AudioSeal embedding is CPU work that owns no
+                    # VRAM, and on a 1-worker host it used to serialize
+                    # directly ahead of the next generate.
+                    from services.watermark import mark_synthetic
+                    from services.model_manager import get_watermark_pool
+                    _preview = await asyncio.get_running_loop().run_in_executor(
+                        get_watermark_pool(),
+                        functools.partial(mark_synthetic, audio_tensor, sample_rate,
+                                          context="generate.stream_preview"),
+                    )
+                    yield _line({"type": "chunk", "seq": 0, "pcm": _pcm16_b64(_preview)})
+                else:
+                    parts = []
+                    sample_rate = None
+                    for i, chunk_text in enumerate(_text_chunks):
+                        # Bounded per chunk + pool-reset on hang (#730 class);
+                        # a timeout surfaces as an "error" event below.
+                        raw, preview, sample_rate = await run_on_gpu_pool_guarded(
+                            functools.partial(_render_stream_chunk, i, chunk_text),
+                            what="TTS generate",
+                            min_vram_gb=_engine_min_vram_gb,
+                            # Budget scaled to THIS chunk (#1190) — the flat
+                            # 300s here is what made long streamed renders fail
+                            # even after the v0.3.22 scaled budget shipped.
+                            timeout=_generate_timeout_s(chunk_text),
+                        )
+                        parts.append(raw)
+                        # Provenance-mark the streamed copy off the GPU pool
+                        # (#1169 mark, #1190 placement): CPU-only AudioSeal
+                        # work must not occupy a GPU worker between chunks.
+                        from services.watermark import mark_synthetic
+                        from services.model_manager import get_watermark_pool
+                        preview = await asyncio.get_running_loop().run_in_executor(
+                            get_watermark_pool(),
+                            functools.partial(mark_synthetic, preview, sample_rate,
+                                              context="generate.stream_preview"),
+                        )
+                        if i == 0:
+                            # After the first render so lazy-loading engines
+                            # report their REAL sample rate (see /ws/tts).
+                            yield _line({
+                                "type": "start", "sample_rate": sample_rate,
+                                "channels": 1, "format": "pcm16",
+                                "total_chunks": len(_text_chunks),
+                                "crossfade_ms": crossfade_ms, "seed": used_seed,
+                            })
+                        yield _line({"type": "chunk", "seq": i, "pcm": _pcm16_b64(preview)})
+                    audio_tensor = await run_on_gpu_pool_guarded(
+                        functools.partial(_assemble_stream_chunks, parts, sample_rate),
+                        what="TTS assemble",
+                        timeout=_generate_timeout_s(text),
+                    )
+
+                _, meta = await _finalize_generation(
+                    audio_tensor, sample_rate, text=text, history_mode=history_mode,
+                    ref_audio_path=ref_audio_path, language=language,
+                    instruct=instruct, resolved_profile_id=resolved_profile_id,
+                    used_seed=used_seed, start_time=start_time,
+                )
+                yield _line({
+                    "type": "done", "id": meta["id"], "audio_path": meta["filename"],
+                    "duration": meta["duration"], "gen_time": meta["gen_time"],
+                    "seed": used_seed, "sample_rate": sample_rate,
+                })
+            except (asyncio.CancelledError, GeneratorExit):
+                # Client went away mid-stream — same semantics as aborting a
+                # classic /generate mid-render: nothing is saved.
+                raise
+            except (GpuJobTimeoutError, GpuPoolBusyError) as e:
+                # In-band error frame carries the machine-readable retryable
+                # marker (#1190) — an NDJSON consumer can back off instead of
+                # guessing from the prose.
+                logger.error("Streaming generate timed out: %s", e)
+                yield _line({
+                    "type": "error", "detail": str(e), "retryable": True,
+                    "retry_after": getattr(e, "retry_after", 30),
+                })
+            except ValueError as e:
+                logger.error("Streaming generate validation failed: %s", e)
+                yield _line({"type": "error", "detail": str(e)})
+            except Exception as e:
+                logger.error("Streaming generate failed: %s\n%s", e, traceback.format_exc())
+                yield _line({"type": "error", "detail": _safe_exc_text(e)})
+            finally:
+                # Ownership of the temp reference clip moves to this generator
+                # in stream mode (the route returns before rendering starts).
+                if cleanup_ref and ref_audio_path:
+                    with contextlib.suppress(OSError):
+                        os.remove(ref_audio_path)
+
+        _stream_headers = {
+            "X-Seed": str(used_seed) if used_seed is not None else "",
+            "Cache-Control": "no-cache",
+        }
+        # Routing notice (#21): known before the stream starts, so it rides the
+        # same headers the classic path uses.
+        if _routing_notice:
+            from services.engine_routing import header_safe_reason
+            _stream_headers["X-OmniVoice-Routing"] = _routing_notice[0]
+            _hr = header_safe_reason(_routing_notice[1])
+            if _hr:
+                _stream_headers["X-OmniVoice-Routing-Reason"] = _hr
+        return StreamingResponse(
+            _stream_events(),
+            media_type="application/x-ndjson",
+            headers=_stream_headers,
+        )
+
     try:
-        loop = asyncio.get_running_loop()
         if _backend is not None:
-            audio_tensor = await loop.run_in_executor(
-                _gpu_pool, _run_backend_inference,
-                _backend, text, language, ref_audio_path, ref_text, instruct,
-                duration, num_step, guidance_scale, speed, denoise,
-                postprocess_output, used_seed, effect_preset,
-                max_chunk_chars, crossfade_ms,
+            # Bounded + pool-reset on hang so a wedged generate can't starve the
+            # GPU pool and brick the backend ("can't reach backend", #730 class).
+            audio_tensor = await run_on_gpu_pool_guarded(
+                functools.partial(
+                    _run_backend_inference,
+                    _backend, text, language, ref_audio_path, ref_text, instruct,
+                    duration, num_step, guidance_scale, speed, denoise,
+                    postprocess_output, used_seed, effect_preset,
+                    max_chunk_chars, crossfade_ms,
+                ),
+                what="TTS generate",
+                min_vram_gb=_engine_min_vram_gb,
+                timeout=_generate_timeout_s(text),
             )
             # Read after generation: engines with lazy model loading report
             # their real rate only once weights are up.
             sample_rate = _backend.sample_rate
         else:
-            audio_tensor = await loop.run_in_executor(
-                _gpu_pool, _run_inference,
-                _model, text, language, ref_audio_path, ref_text, instruct, duration,
-                num_step, guidance_scale, speed, t_shift, denoise,
-                postprocess_output, layer_penalty_factor, position_temperature,
-                class_temperature, used_seed, effect_preset,
-                max_chunk_chars, crossfade_ms,
+            audio_tensor = await run_on_gpu_pool_guarded(
+                functools.partial(
+                    _run_inference,
+                    _model, text, language, ref_audio_path, ref_text, instruct, duration,
+                    num_step, guidance_scale, speed, t_shift, denoise,
+                    postprocess_output, layer_penalty_factor, position_temperature,
+                    class_temperature, used_seed, effect_preset,
+                    max_chunk_chars, crossfade_ms,
+                ),
+                what="TTS generate",
+                min_vram_gb=_engine_min_vram_gb,
+                timeout=_generate_timeout_s(text),
             )
             sample_rate = _model.sampling_rate
-        # Invisible AudioSeal provenance watermark on the final audio. Embedding
-        # was previously only wired into the dub pipeline (dub_generate.py), so
-        # plain TTS came out unmarked despite the setting being on. embed_watermark
-        # self-gates on the user's watermark setting + AudioSeal availability and
-        # passes the audio through unchanged on any failure, so it never breaks
-        # generation.
-        from services.watermark import embed_watermark
-        audio_tensor = await loop.run_in_executor(
-            _gpu_pool, embed_watermark, audio_tensor, sample_rate
+        # Watermark → save → history → prune → emit, shared with the streaming
+        # path (see _finalize_generation) so both flows produce identical takes.
+        audio_tensor, _meta = await _finalize_generation(
+            audio_tensor, sample_rate, text=text, history_mode=history_mode,
+            ref_audio_path=ref_audio_path, language=language, instruct=instruct,
+            resolved_profile_id=resolved_profile_id, used_seed=used_seed,
+            start_time=start_time,
         )
-        gen_time = round(time.time() - start_time, 2)
-
-        audio_id = str(uuid.uuid4())[:8]
-        audio_filename = f"{audio_id}.wav"
-        audio_path = os.path.join(OUTPUTS_DIR, audio_filename)
-        _safe_torchaudio_save(audio_path, audio_tensor, sample_rate)
-
-        audio_dur = round(audio_tensor.shape[-1] / sample_rate, 2)
-
-        with db_conn() as conn:
-            conn.execute(
-                "INSERT INTO generation_history (id, text, mode, language, instruct, profile_id, audio_path, duration_seconds, generation_time, seed, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (audio_id, text[:200], history_mode or ("clone" if ref_audio_path else "design"),
-                 language or "Auto", instruct or "", resolved_profile_id,
-                 audio_filename, audio_dur, gen_time, used_seed, time.time())
-            )
-        event_bus.emit("generation_history", {"action": "created", "id": audio_id})
+        audio_id = _meta["id"]
+        audio_filename = _meta["filename"]
+        audio_dur = _meta["duration"]
+        gen_time = _meta["gen_time"]
 
         buffer = io.BytesIO()
         _safe_torchaudio_save(buffer, audio_tensor, sample_rate, format="wav")
@@ -617,6 +1455,31 @@ async def generate_speech(
         )
     except HTTPException:
         raise
+    except GpuPoolBusyError as e:
+        # Saturation, not failure (#1190): the job never started, so the caller
+        # can retry the identical request. Retry-After + the retryable marker
+        # make that machine-readable for scripted clients.
+        logger.warning("Generate refused — GPU pool saturated: %s", e)
+        raise HTTPException(
+            status_code=503, detail=str(e),
+            headers={"Retry-After": str(e.retry_after),
+                     "X-OmniVoice-Retryable": "true"},
+        ) from e
+    except GpuJobTimeoutError as e:
+        # A generate that really ran and overran its budget (#730 class). The
+        # abandoned worker still holds the device until it drains — the message
+        # says so, and Retry-After spaces the retry out accordingly.
+        logger.error("Generate timed out: %s", e)
+        raise HTTPException(
+            status_code=503, detail=str(e),
+            headers={"Retry-After": "30", "X-OmniVoice-Retryable": "true"},
+        ) from e
+    except InvalidBinaryError as e:
+        # #1172 class: a managed engine binary is a placeholder / corrupt /
+        # refused by the OS. The message carries the repair hint — surface it
+        # as 503 (engine unavailable), not a generic 500.
+        logger.error("Engine binary preflight failed: %s", e)
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except ValueError as e:
         logger.error("Validation failed: %s", e)
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -627,7 +1490,7 @@ async def generate_speech(
             status_code=500,
             detail=(
                 f"Couldn't synthesize audio. See Settings → Logs → Backend for the full trace. "
-                f"Underlying error: {e}"
+                f"Underlying error: {_safe_exc_text(e)}"
             ),
         )
     finally:
@@ -648,17 +1511,101 @@ def _safe_output_path(name):
     return candidate
 
 
+def _remove_wav_if_unreferenced(conn, audio_path, exclude_ids=()):
+    """Delete a history WAV from OUTPUTS_DIR — but only when no *other*
+    generation_history row still references the same file.
+
+    History WAVs are uniquely owned by their row (lock/save-as-profile COPY
+    into VOICES_DIR, exports copy to the user's destination), so this guard is
+    normally a no-op — it exists so any future path that duplicates a row can
+    never make a delete/prune yank audio out from under a surviving take."""
+    if not audio_path:
+        return
+    p = _safe_output_path(audio_path)
+    if not p or not os.path.exists(p):
+        return
+    placeholders = ",".join("?" for _ in exclude_ids)
+    others = conn.execute(
+        "SELECT COUNT(*) FROM generation_history WHERE audio_path=?"
+        + (f" AND id NOT IN ({placeholders})" if exclude_ids else ""),
+        (audio_path, *exclude_ids),
+    ).fetchone()[0]
+    if others:
+        return
+    with contextlib.suppress(OSError):
+        os.remove(p)
+
+
+# How many takes to keep before pruning the oldest UNstarred ones (rows + their
+# WAVs). User-tunable via Settings → Storage; 0 = unlimited. The pref key is
+# shared with api/routers/settings.py (the GET/PUT endpoint) — same pattern as
+# perf.torch_compile_disabled, which settings.py and engine_env.py both name.
+HISTORY_CAP_PREF_KEY = "generation_history_cap"
+DEFAULT_HISTORY_CAP = 200
+
+
+def _history_cap() -> int:
+    from core import prefs
+
+    try:
+        cap = int(prefs.get(HISTORY_CAP_PREF_KEY, DEFAULT_HISTORY_CAP))
+    except (TypeError, ValueError):
+        return DEFAULT_HISTORY_CAP
+    return max(0, cap)
+
+
+def _prune_history_over_cap() -> int:
+    """Retention: keep the newest ``_history_cap()`` takes; delete the oldest
+    UNstarred rows over the cap plus their WAVs (via the unreferenced guard).
+    Starred takes are never pruned — even when they alone exceed the cap.
+    Returns the number of rows pruned."""
+    cap = _history_cap()
+    if cap <= 0:
+        return 0  # 0 = unlimited
+    with db_conn() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM generation_history").fetchone()[0]
+        excess = total - cap
+        if excess <= 0:
+            return 0
+        victims = conn.execute(
+            "SELECT id, audio_path FROM generation_history "
+            "WHERE COALESCE(starred, 0)=0 ORDER BY created_at ASC LIMIT ?",
+            (excess,),
+        ).fetchall()
+        if not victims:
+            return 0
+        victim_ids = [r["id"] for r in victims]
+        conn.executemany(
+            "DELETE FROM generation_history WHERE id=?", [(i,) for i in victim_ids]
+        )
+        for r in victims:
+            _remove_wav_if_unreferenced(conn, r["audio_path"], exclude_ids=victim_ids)
+        logger.info("history retention: pruned %d takes over the %d cap", len(victims), cap)
+        return len(victims)
+
+
 @router.get("/history")
 def list_history():
-    """Newest 50 generations whose audio still exists on disk.
+    """The newest 50 generations plus every starred take, newest first, kept to
+    rows whose audio still exists on disk.
 
-    Rows whose WAV was deleted out-of-band (cleared outputs dir, manual
-    cleanup) used to come back anyway and render dead players that 404 on
-    every fetch; prune them here so the UI never sees them again."""
+    Starred takes ride along past the 50-row window so a keeper can never age
+    off the rail. Rows whose WAV was deleted out-of-band (cleared outputs dir,
+    manual cleanup) used to come back anyway and render dead players that 404
+    on every fetch; prune them here so the UI never sees them again."""
+    query = (
+        "SELECT * FROM generation_history WHERE COALESCE(starred, 0)=1 "
+        "OR id IN (SELECT id FROM generation_history ORDER BY created_at DESC LIMIT 50) "
+        "ORDER BY created_at DESC"
+    )
     with db_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM generation_history ORDER BY created_at DESC LIMIT 50"
-        ).fetchall()
+        try:
+            rows = conn.execute(query).fetchall()
+        except sqlite3.OperationalError:
+            # Same class as #710/#552: a DB that missed init or the additive
+            # `starred` column. Heal once and retry inside this connection.
+            ensure_schema()
+            rows = conn.execute(query).fetchall()
         alive, stale_ids = [], []
         for r in rows:
             p = _safe_output_path(r["audio_path"]) if r["audio_path"] else None
@@ -673,6 +1620,39 @@ def list_history():
             )
             logger.info("pruned %d stale history rows (audio file gone)", len(stale_ids))
     return alive
+
+
+class _StarBody(BaseModel):
+    starred: bool
+
+
+@router.put("/history/{history_id}/starred")
+def set_history_starred(history_id: str, body: _StarBody):
+    """Star/unstar a take. Starred takes survive the retention cap and always
+    appear in GET /history regardless of the recency window."""
+    def _update():
+        with db_conn() as conn:
+            cur = conn.execute(
+                "UPDATE generation_history SET starred=? WHERE id=?",
+                (1 if body.starred else 0, history_id),
+            )
+            return cur.rowcount
+
+    try:
+        changed = _update()
+    except sqlite3.OperationalError as e:
+        # `no such column: starred` on a pre-migration DB (or the #710
+        # missing-table class) — heal the schema and retry once.
+        logger.warning("star update failed (%s); healing schema + retrying", e)
+        ensure_schema()
+        changed = _update()
+    if not changed:
+        raise HTTPException(
+            status_code=404,
+            detail="That take no longer exists — it may have been pruned or deleted.",
+        )
+    event_bus.emit("generation_history", {"action": "starred", "id": history_id})
+    return {"id": history_id, "starred": body.starred}
 
 @router.delete("/history")
 def clear_history():
@@ -691,11 +1671,10 @@ def clear_history():
 def delete_single_history(history_id: str):
     with db_conn() as conn:
         row = conn.execute("SELECT audio_path FROM generation_history WHERE id=?", (history_id,)).fetchone()
-        if row and row["audio_path"]:
-            p = _safe_output_path(row["audio_path"])
-            if p and os.path.exists(p):
-                with contextlib.suppress(OSError):
-                    os.remove(p)
         conn.execute("DELETE FROM generation_history WHERE id=?", (history_id,))
+        if row:
+            # Row first, file second — the WAV goes only if no surviving take
+            # still references it (see _remove_wav_if_unreferenced).
+            _remove_wav_if_unreferenced(conn, row["audio_path"], exclude_ids=(history_id,))
     event_bus.emit("generation_history", {"action": "deleted", "id": history_id})
     return {"deleted": True}

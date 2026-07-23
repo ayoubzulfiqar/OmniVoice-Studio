@@ -42,11 +42,25 @@ IDEAL_REF_DURATION_S = 8.0  # target window — long enough for prosody, short e
 # is the empirical floor below which our zero-shot clone gets unstable.
 MIN_SEGMENT_REF_DURATION_S = 3.0
 
+# Clone-purity guards (speaker-hint fix): a per-speaker reference cut from
+# mislabeled or boundary-adjacent audio mixes two people's voices and the
+# resulting clone sounds "made up".
+#   * A slice below MIN_SLICE_DURATION_S is too short to be a reliable
+#     single-speaker sample (and diarization boundary jitter dominates it).
+#   * A slice whose edges come within ADJACENT_TURN_GUARD_S of a *different*
+#     speaker's turn risks bleeding that speaker's audio across the imprecise
+#     boundary — deprioritized (scoring preference, not a hard filter, so
+#     extraction still succeeds on dense dialogue).
+MIN_SLICE_DURATION_S = 1.5
+ADJACENT_TURN_GUARD_S = 0.3
+
 
 def extract_speaker_clones(
     vocals_path: str,
     segments: list[dict],
     out_dir: str,
+    *,
+    labels_source: str | None = None,
 ) -> dict[str, dict]:
     """Build a per-speaker reference sample from `vocals_path` + `segments`.
 
@@ -63,7 +77,20 @@ def extract_speaker_clones(
 
     Speakers whose segments total < MIN_REF_DURATION_S are skipped — we'd
     rather fall back to the default TTS voice than ship a bad clone.
+
+    ``labels_source`` records where the ``speaker_id`` labels came from
+    (``"pyannote"`` | ``"turns"`` | ``"heuristic"``; ``None`` = unknown,
+    treated as trusted for backward compatibility). ``"heuristic"`` labels
+    are silence-gap *estimates*, not voice identity — a reference cut from
+    them routinely concatenates two people's audio, so extraction is skipped
+    entirely (the caller warns the user and falls back to the default voice).
     """
+    if labels_source == "heuristic":
+        logger.info(
+            "speaker_clone: skipping auto-clone extraction — speaker labels "
+            "are gap-based heuristic estimates, not voice identity"
+        )
+        return {}
     if not vocals_path or not os.path.exists(vocals_path):
         logger.info("speaker_clone: no vocals track at %s; skipping", vocals_path)
         return {}
@@ -88,7 +115,12 @@ def extract_speaker_clones(
     out: dict[str, dict] = {}
 
     for speaker_id, items in by_speaker.items():
-        chosen = _pick_reference_slices(items)
+        chosen = _pick_reference_slices(
+            items,
+            speaker_id=speaker_id,
+            all_segments=segments,
+            labels_source=labels_source,
+        )
         if not chosen:
             logger.info(
                 "speaker_clone: %s has <%ss of usable audio; will fall back to default voice",
@@ -191,34 +223,144 @@ def extract_segment_refs(
     return out
 
 
+def refine_ref_text(ref_audio_path: str, asr_backend, fallback_text: str) -> str:
+    """Re-transcribe a written reference clip and return that transcript.
+
+    `extract_speaker_clones`/`extract_segment_refs` pair each audio slice with
+    the ASR segment's OWN text field, on the assumption that the segment's
+    timestamps and its transcribed text agree. They routinely don't — Whisper
+    (and friends) frequently drift on segment boundaries: a trailing word
+    audible in `[start, end]` but missing from `text`, or vice versa. When the
+    (ref_audio, ref_text) pair disagrees, zero-shot TTS prompt-priming breaks
+    down and the clone can speak the mismatched reference text itself instead
+    of the target-language text it was given to synthesize (issue #1004).
+
+    Re-transcribing the *actual written clip* guarantees the pair matches by
+    construction — the model doesn't care whether the original ASR text was
+    right, only that ref_text is what's really in ref_audio. `asr_backend` is
+    the caller's already-loaded active backend (duck-typed:
+    `.transcribe(path, word_timestamps=...) -> dict` with a `chunks` list of
+    `{"text": ...}`); the model is already warm, so this costs one more short
+    transcribe call, not a fresh load. Falls back to `fallback_text` — never
+    raises — so a re-transcribe failure is a strict no-op, never a regression
+    from the original (matching) behavior.
+    """
+    if asr_backend is None:
+        return fallback_text
+    try:
+        result = asr_backend.transcribe(ref_audio_path, word_timestamps=False)
+        text = " ".join(
+            (c.get("text") or "").strip() for c in (result.get("chunks") or [])
+        ).strip()
+        return text or fallback_text
+    except Exception as e:
+        logger.warning(
+            "speaker_clone: re-transcribe of %s failed, keeping original ref_text: %s",
+            ref_audio_path, e,
+        )
+        return fallback_text
+
+
+def refine_ref_texts(clones: dict[str, dict], asr_backend) -> dict[str, dict]:
+    """Apply `refine_ref_text` to every entry's `ref_text` in place.
+
+    Batches the whole dict (per-speaker `clones` from `extract_speaker_clones`
+    or per-segment `seg_clones` from `extract_segment_refs`) into the single
+    executor round-trip the caller submits to the GPU pool, rather than one
+    dispatch per reference. Mutates and returns `clones` for a convenient
+    call-and-reassign at the call site.
+    """
+    for entry in clones.values():
+        entry["ref_text"] = refine_ref_text(
+            entry["ref_audio"], asr_backend, entry.get("ref_text", "")
+        )
+    return clones
+
+
 # ── Internals ───────────────────────────────────────────────────────────────
 
 
-def _pick_reference_slices(items: list[tuple[int, dict]]) -> list[tuple[int, dict]]:
+def _adjacent_to_other_speaker(
+    seg: dict, speaker_id: str, all_segments: list[dict] | None
+) -> bool:
+    """True when `seg`'s edges come within ADJACENT_TURN_GUARD_S of (or
+    overlap) a segment attributed to a *different* speaker — a boundary where
+    imprecise diarization timestamps risk bleeding the other voice into the
+    reference slice."""
+    if not all_segments:
+        return False
+    s0 = float(seg.get("start", 0.0))
+    s1 = float(seg.get("end", 0.0))
+    for other in all_segments:
+        if other is seg:
+            continue
+        if (other.get("speaker_id") or "Speaker 1") == speaker_id:
+            continue
+        o0 = float(other.get("start", 0.0))
+        o1 = float(other.get("end", 0.0))
+        # Signed gap between the two spans; negative = overlap.
+        if max(o0 - s1, s0 - o1) < ADJACENT_TURN_GUARD_S:
+            return True
+    return False
+
+
+def _pick_reference_slices(
+    items: list[tuple[int, dict]],
+    *,
+    speaker_id: str | None = None,
+    all_segments: list[dict] | None = None,
+    labels_source: str | None = None,
+) -> list[tuple[int, dict]]:
     """Select the subset of a speaker's segments to use as reference audio.
 
-    Strategy: take the single longest segment; if it's short, accumulate the
-    next longest ones in original order until we clear IDEAL_REF_DURATION_S.
-    Cap at MAX_REF_DURATION_S. Return [] if we can't reach MIN_REF_DURATION_S.
+    Strategy: rank candidates clean-first (not temporally adjacent to a
+    different speaker's turn — see ``_adjacent_to_other_speaker``), longest
+    first within each tier, and accumulate until IDEAL_REF_DURATION_S is
+    cleared. Adjacency is a scoring preference, NOT a hard filter — on dense
+    dialogue where every slice borders another speaker, extraction still
+    succeeds using the adjacent ones. Two hard guards protect clone purity:
+
+    * slices shorter than MIN_SLICE_DURATION_S are rejected outright
+      (boundary jitter dominates them, so they're the likeliest to carry a
+      second speaker's audio);
+    * ``labels_source="heuristic"`` returns [] — gap-based labels are not
+      voice identity, so no slice of them is safe to clone from.
+
+    Cap at MAX_REF_DURATION_S. Return [] if we can't reach
+    MIN_REF_DURATION_S. When ``all_segments``/``speaker_id`` are not
+    provided (legacy callers), adjacency scoring degrades to duration-only —
+    the pre-guard behavior.
     """
     if not items:
         return []
+    if labels_source == "heuristic":
+        return []
+    if speaker_id is None:
+        speaker_id = items[0][1].get("speaker_id") or "Speaker 1"
 
-    # Longest-first candidates. Keep original indices so we can preserve order.
-    by_dur = sorted(
+    def _dur(pair) -> float:
+        return max(0.0, float(pair[1].get("end", 0.0)) - float(pair[1].get("start", 0.0)))
+
+    # Rank: clean (non-adjacent) before adjacent, longest first within each
+    # tier. Keep original indices so we can restore transcript order below.
+    ranked = sorted(
         items,
-        key=lambda pair: (pair[1].get("end", 0.0) - pair[1].get("start", 0.0)),
-        reverse=True,
+        key=lambda pair: (
+            _adjacent_to_other_speaker(pair[1], speaker_id, all_segments),
+            -_dur(pair),
+        ),
     )
 
     picked: list[tuple[int, dict]] = []
     total = 0.0
-    for idx, seg in by_dur:
-        dur = max(0.0, float(seg.get("end", 0.0)) - float(seg.get("start", 0.0)))
-        if dur <= 0.0:
+    for idx, seg in ranked:
+        dur = _dur((idx, seg))
+        if dur < MIN_SLICE_DURATION_S:
             continue
         if total + dur > MAX_REF_DURATION_S and picked:
-            break
+            # Ranking is no longer duration-monotonic, so a later (shorter or
+            # adjacent) slice may still fit — skip, don't stop.
+            continue
         picked.append((idx, seg))
         total += dur
         if total >= IDEAL_REF_DURATION_S:

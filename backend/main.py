@@ -9,6 +9,16 @@ _backend_dir = os.path.dirname(os.path.abspath(__file__))
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
+# Windows: run every child process (ffmpeg, engine sidecars, yt-dlp, demucs, …)
+# WITHOUT popping a console window. The backend itself is spawned console-less by
+# the Tauri shell, so on Windows each console subprocess it launches would
+# otherwise get a brand-new cmd window flashed on screen. Patch subprocess.Popen
+# once, before anything spawns, so our 70+ call sites AND third-party libraries
+# (imageio-ffmpeg, yt-dlp) are all covered. No-op off Windows. (#1178)
+from core.win_subprocess import install as _install_no_window  # noqa: E402
+
+_install_no_window()
+
 # #564: also make the project's OWN `omnivoice` package importable from source
 # when the venv's editable install is missing/broken (interrupted/offline
 # `uv sync`, antivirus-quarantined `_editable_impl_omnivoice.pth`, …). Without
@@ -29,6 +39,16 @@ if sys.platform == "win32":
     os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
     os.environ.setdefault("TORCHINDUCTOR_DISABLE", "1")
 
+# The Intel Fortran runtime bundled with MKL (under numpy/scipy) installs a
+# console CTRL handler that aborts the whole process with `forrtl: error
+# (200): program aborting due to window-CLOSE event` when a Windows console
+# CLOSE/LOGOFF/SHUTDOWN event reaches it — seen in the wild as backend crashes
+# with exit code 2 / 0xC000013A mid-session (#1153 class). The RTL reads this
+# at DLL init, so it must be set before torch/numpy import MKL; setdefault so
+# an explicit user value wins. A no-op everywhere the Fortran RTL isn't
+# handling console events (macOS/Linux), hence unconditional (and testable).
+os.environ.setdefault("FOR_DISABLE_CONSOLE_CTRL_HANDLER", "1")
+
 # The backend's stdout/stderr are pipes owned by the desktop shell that
 # spawned it. If that shell exits while the backend survives (crash,
 # relaunch, orphan), the pipes close — and the next write raises
@@ -39,6 +59,17 @@ if sys.platform == "win32":
 # (utils.hf_progress.SafeFileWrapper — same wrapper the patched hub tqdm
 # already uses for its own fp.)
 from utils.hf_progress import SafeFileWrapper as _SafeStdio  # noqa: E402
+
+# Force UTF-8 stdio before wrapping (#1155): on Windows the spawned backend's
+# stdout defaults to cp1252, and any library that prints user text (kittentts
+# prints the full synth text on every generate) raised UnicodeEncodeError on
+# Vietnamese/CJK/…, killing the request with a bogus 400. backslashreplace
+# keeps even a non-UTF-8-able sink from ever raising.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except Exception:  # noqa: BLE001 — pythonw/frozen builds may lack reconfigure
+        pass
 
 if not getattr(sys.stdout, "_is_safe_wrapper", False):
     sys.stdout = _SafeStdio(sys.stdout)
@@ -139,6 +170,24 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "15")
 os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
 
+# ── OS trust store for TLS (#976) ───────────────────────────────────────────
+# Users behind a corporate/antivirus proxy that TLS-inspects HTTPS traffic get
+# a raw "[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure"
+# on every model install — the TCP connection succeeds (a different failure
+# mode from #984's TCP-level blocked-host case), but the proxy re-signs the
+# certificate with its own root CA, which the OS trusts (Windows CryptoAPI/
+# SChannel) and Python's bundled `certifi` CA list does not. `inject_into_ssl`
+# patches `ssl.SSLContext` process-wide to verify against the OS trust store
+# instead, which is the actual fix (not just a nicer error message). Must run
+# here — at MODULE level, before huggingface_hub/requests/httpx do any network
+# I/O — not inside lifespan(), which runs too late. Not platform-gated: it's a
+# correctness improvement everywhere. Best-effort: never block startup.
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+except Exception:
+    pass
 
 # Prevent torchaudio from lazy-importing torchcodec (broken on some installs).
 # Proper fix = exclude torchcodec in pyproject.toml; this is a belt-and-braces guard.
@@ -155,6 +204,16 @@ from logging.handlers import RotatingFileHandler
 # written to prefs.json so they survive backend restarts. Read them back
 # here — before any user code reads os.environ — so the values are available
 # from startup.
+#
+# Legacy (≤v0.3.7) Translation-LLM rows (env.TRANSLATE_*) must migrate into
+# the custom LLM provider's settings store BEFORE the re-import below — once
+# TRANSLATE_BASE_URL lands in os.environ it hijacks the LLM provider
+# selection for the whole session (#963). Real env vars are untouched.
+try:
+    from services.llm_providers import migrate_legacy_translate_prefs
+    migrate_legacy_translate_prefs()
+except Exception:
+    pass  # never block startup on the migration; it retries next launch
 _PERSISTED_ENV_PREFIX = "env."
 try:
     from core.prefs import _load as _load_all_prefs
@@ -166,6 +225,18 @@ try:
             os.environ.setdefault(_env_key, str(_v))
 except Exception:
     pass  # prefs.json missing or broken — fine on first run
+
+# ── Activate the yt-dlp user-update overlay (Settings → Audio tools) ──────
+# Must run before anything imports yt_dlp so a user-updated version (stored
+# under DATA_DIR, surviving app updates and uv drift syncs) wins over the
+# locked wheel. Best-effort: a broken overlay must never block startup.
+try:
+    from services.media_tools import activate_ytdlp_overlay
+    activate_ytdlp_overlay()
+except Exception:
+    # Best-effort by design: a broken/corrupt overlay must never block
+    # startup — the locked wheel on sys.path is the fallback.
+    pass
 
 warnings.filterwarnings("ignore", category=UserWarning)
 torchaudio.set_audio_backend("soundfile")
@@ -182,7 +253,8 @@ class _WindowsSafeRotatingFileHandler(RotatingFileHandler):
                 dfn = self.rotation_filename("%s.%d" % (self.baseFilename, i + 1))
                 if os.path.exists(sfn):
                     try:
-                        os.replace(sfn, dfn)
+                        from utils.fsops import safe_replace
+                        safe_replace(sfn, dfn)
                     except OSError as e:
                         _log.warning("log rotation rename failed: %s", e)
             dfn = self.rotation_filename(self.baseFilename + ".1")
@@ -310,8 +382,15 @@ from core.db import init_db
 from core.config import OUTPUTS_DIR, VOICES_DIR, CRASH_LOG_PATH
 from core.tasks import task_manager
 from core import job_store
-from services.model_manager import idle_worker, preload_model
+from services.model_manager import (
+    begin_shutdown as model_loads_begin_shutdown,
+    idle_worker,
+    preload_model,
+    reset_shutdown_flag as model_loads_reset_shutdown,
+)
 from services import network_share
+
+from api.dependencies import is_local_host  # loopback + OMNIVOICE_TRUSTED_NETWORKS
 
 from api.routers import (
     system,
@@ -337,6 +416,7 @@ from api.routers import (
     events,
     capture,
     capture_ws,
+    dictation,
     openai_compat,
     tts_stream,
     marketplace,
@@ -344,7 +424,9 @@ from api.routers import (
     sonitranslate,
     audiobook,
     longform_jobs,
+    pronunciation,  # Expressive-TTS Spec 01: user pronunciation dictionary
     settings as settings_router,  # Phase 1 AUTH-03: HF token save/clear/state
+    media_tools as media_tools_router,  # Audio tools: ffmpeg/ffprobe/yt-dlp management
 )
 from utils import hf_progress
 
@@ -385,6 +467,135 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _capture_preload_delay_s() -> float:
+    """Seconds after boot before the dictation (capture ASR) model warms.
+
+    Late enough that it never competes with startup I/O or the TTS preload;
+    overridable via OMNIVOICE_CAPTURE_PRELOAD_DELAY (mostly for tests)."""
+    raw = os.environ.get("OMNIVOICE_CAPTURE_PRELOAD_DELAY", "")
+    try:
+        v = float(raw)
+        if v >= 0:
+            return v
+    except (TypeError, ValueError):
+        pass
+    return 30.0
+
+
+def _capture_preload_ram_ok(min_free_bytes: int = 4 * 1024**3) -> bool:
+    """RAM guard for the dictation warm-up: skip below 4 GB free so the
+    background load never pushes a small machine into swap. If free memory
+    can't be measured, warm anyway (the load path has its own error handling)."""
+    try:
+        import psutil
+        return psutil.virtual_memory().available >= min_free_bytes
+    except Exception:
+        return True
+
+
+def _mcp_start_timeout_s() -> float:
+    """Seconds to wait for the MCP session manager to start before giving up
+    and serving without it (#632). Overridable via OMNIVOICE_MCP_START_TIMEOUT_S."""
+    raw = os.environ.get("OMNIVOICE_MCP_START_TIMEOUT_S", "")
+    try:
+        v = float(raw)
+        if v > 0:
+            return v
+    except (TypeError, ValueError):
+        pass
+    return 30.0
+
+
+async def _serve_mcp(session_manager, ready: "asyncio.Event", stop: "asyncio.Event") -> None:
+    """Own the MCP session manager's full enter→exit lifecycle in ONE task.
+
+    FastMCP's ``run()`` opens an anyio task group, and anyio requires the cancel
+    scope to be exited in the *same task* that entered it. So we must NOT enter
+    it via ``wait_for`` (which runs the enter in a throwaway sub-task) or on the
+    lifespan task and exit it elsewhere — either raises "Attempted to exit cancel
+    scope in a different task". This coroutine enters and exits the context
+    itself: it signals ``ready`` once mounted, then idles until ``stop``.
+    """
+    try:
+        async with session_manager.run():
+            ready.set()
+            await stop.wait()
+    except Exception as e:
+        logger.warning("MCP session manager stopped: %s", e)
+    finally:
+        ready.set()  # never leave startup blocked on the readiness wait
+
+
+async def _start_mcp_session_manager(session_manager, *, timeout: float):
+    """Start MCP off the startup critical path; wait up to ``timeout`` for it to
+    signal ready. Returns ``(task, stop_event, mounted)``.
+
+    The MCP layer is best-effort and must never wedge backend startup. On some
+    platforms (observed: Apple-Silicon M1, #632) ``run()`` can *hang* on its
+    anyio task group; the old code awaited the enter before serving, so the hang
+    meant "Application startup complete" never fired and the whole backend was
+    unreachable with no error. Now the enter lives in its own task and we only
+    *optionally* wait on a ready signal — a hang becomes a logged warning + a
+    backend that serves normally without MCP.
+    """
+    stop = asyncio.Event()
+    if session_manager is None:
+        return None, stop, False
+    ready = asyncio.Event()
+    task = asyncio.create_task(_serve_mcp(session_manager, ready, stop))
+    try:
+        await asyncio.wait_for(ready.wait(), timeout=timeout)
+        mounted = not task.done()  # ready is also set on failure → not mounted
+    except asyncio.TimeoutError:
+        logger.warning(
+            "MCP session manager did not signal ready within %.0fs (#632); "
+            "serving without waiting. Set OMNIVOICE_MCP_START_TIMEOUT_S to adjust.",
+            timeout,
+        )
+        mounted = False
+    return task, stop, mounted
+
+
+async def _cancel_and_await_tasks(*tasks, timeout: float = 3.0) -> None:
+    """Cancel each background task and give it a bounded chance to actually
+    finish before shutdown proceeds — ``None`` entries are skipped (a task
+    that's conditionally created, e.g. ``capture_preload_task``, may not
+    exist).
+
+    ``task.cancel()`` alone is not enough for a task awaiting
+    ``run_in_executor()``: once the underlying OS thread is inside blocking
+    native/import work, cancellation can't stop it, so cancel-and-move-on lets
+    shutdown finish while that thread is still running — invisible to
+    asyncio, but very much alive when the interpreter starts tearing down
+    module state under it (#1000 class). Awaiting with a bound (instead of
+    just cancelling) gives an early-stage task a real chance to exit cleanly
+    first; a task that's genuinely still deep in blocking work times out here
+    same as before, and the caller's own GPU-pool reset handles that case.
+    """
+    for t in tasks:
+        if t is None:
+            continue
+        t.cancel()
+    for t in tasks:
+        if t is None:
+            continue
+        try:
+            await asyncio.wait_for(t, timeout=timeout)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+        except Exception:
+            # A background task that dies with a real error during teardown
+            # must not abort the lifespan shutdown (#1174 class): uvicorn
+            # would mark the whole application shutdown failed, skip the rest
+            # of this cleanup (sentinel clear included), and the process exits
+            # crash-shaped for what was a deliberate SIGTERM. The task's own
+            # code already logged its failure.
+            logger.warning(
+                "Background task %r raised during shutdown (ignored)",
+                t.get_name(), exc_info=True,
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup watchdog (#632): a silent hang during startup (e.g. a model-load /
@@ -405,6 +616,28 @@ async def lifespan(app: FastAPI):
             logger.info("Startup watchdog armed: thread dump if startup exceeds %.0fs (#632).", _wd)
     except Exception:
         pass
+
+    # Run-sentinel forensics (#1164): detect an uncleanly-ended previous run
+    # (OOM kill, hard crash — anything that skipped the shutdown block) and
+    # write the crash record BEFORE any heavy init, so even a crash later in
+    # THIS startup is attributed by the next run. Best-effort by contract.
+    from core import run_sentinel
+    _crash_record = None
+    try:
+        _crash_record = run_sentinel.detect_unclean_shutdown()
+        run_sentinel.write_sentinel()
+    except Exception:
+        logger.exception("Run-sentinel startup failed (non-fatal).")
+    # Opt-in lifecycle analytics (core/analytics.py): install/update/crash
+    # events. A no-op without the user's explicit consent AND a build token.
+    # The run-sentinel record above is the ONE authoritative crash source —
+    # the desktop shell's markers cover the same deaths, so the frontend
+    # never emits a crash event (no double-count).
+    try:
+        from core import analytics
+        analytics.record_startup_lifecycle(_crash_record)
+    except Exception:
+        logger.exception("Analytics startup lifecycle failed (non-fatal).")
 
     init_db()
     # Network sharing is loopback-only by default; the PIN middleware stays
@@ -450,15 +683,28 @@ async def lifespan(app: FastAPI):
             )
     except Exception:
         logger.exception("Gatekeeper probe failed (non-fatal).")
+    # #1174: arm model loads for THIS run — an in-process relaunch (TestClient
+    # boot, the --health-check thread) may carry a stale shutting-down flag
+    # from a previous lifespan, which would silently skip every load.
+    model_loads_reset_shutdown()
     idle_task = asyncio.create_task(idle_worker())
     worker_task = asyncio.create_task(task_manager.worker())
     # Warm the TTS model in the background so first /generate is instant.
     preload_task = asyncio.create_task(preload_model())
-    # Capture ASR is useful to keep warm, but it is another large model in
-    # unified memory on Apple Silicon. Keep launch lean by default; users who
-    # prefer instant dictation can opt in with OMNIVOICE_PRELOAD_CAPTURE_ASR=1.
-    if _env_flag("OMNIVOICE_PRELOAD_CAPTURE_ASR"):
+    # Dictation v2: the capture ASR warms in the background BY DEFAULT — a
+    # deferred (~30s post-boot) load off the event loop, so startup stays
+    # lean and the first dictation is instant instead of a cold model load.
+    # OMNIVOICE_PRELOAD_CAPTURE_ASR=0 opts out; the warm-up is also skipped
+    # under 4 GB free RAM (checked at warm time, not boot time).
+    capture_preload_task = None  # only assigned when the preload actually runs (#1000 class)
+    if _env_flag("OMNIVOICE_PRELOAD_CAPTURE_ASR", default=True):
         async def _preload_capture_asr():
+            await asyncio.sleep(_capture_preload_delay_s())
+            if not _capture_preload_ram_ok():
+                logger.info(
+                    "Capture ASR preload skipped: <4GB free RAM; "
+                    "dictation ASR will load on first use.")
+                return
             loading_detail = None
             prev_loading_detail = None
             try:
@@ -467,7 +713,18 @@ async def lifespan(app: FastAPI):
                 prev_loading_detail = dict(loading_detail)
                 loop = asyncio.get_running_loop()
                 def _warm():
-                    from services.asr_backend import get_capture_asr_backend
+                    from services.asr_backend import (
+                        asr_model_missing_error,
+                        get_capture_asr_backend,
+                    )
+                    # TTS-only install: no dictation ASR model on disk. Warming
+                    # would silently auto-download weights at boot — skip; the
+                    # first dictation prompts for the download instead.
+                    if asr_model_missing_error(purpose="dictation") is not None:
+                        logger.info(
+                            "Capture ASR preload skipped: no ASR model installed; "
+                            "dictation will offer a download on first use.")
+                        return
                     loading_detail["sub_stage"] = "loading_asr"
                     loading_detail["detail"] = "Warming up ASR engine…"
                     backend = get_capture_asr_backend()
@@ -488,38 +745,71 @@ async def lifespan(app: FastAPI):
         logger.info("Capture ASR preload disabled; dictation ASR will load on first use.")
 
     # ── MCP session manager (Wave 2.2) ────────────────────────────────────
-    # FastMCP's Streamable-HTTP transport needs its session manager running
-    # for the lifetime of the app. It's created lazily by streamable_http_app()
-    # (called in mount_mcp below), so we stack its `run()` context into ours
-    # via AsyncExitStack rather than replacing this lifespan. Best-effort: a
-    # missing/broken MCP layer must never stop the rest of the backend.
-    from contextlib import AsyncExitStack
-    async with AsyncExitStack() as _mcp_stack:
-        _sm = getattr(app.state, "mcp_session_manager", None)
-        if _sm is not None:
-            try:
-                await _mcp_stack.enter_async_context(_sm.run())
-                logger.info("MCP server mounted at /mcp")
-            except Exception as e:
-                logger.warning("MCP session manager failed to start: %s", e)
-        # Startup finished — disarm the hang watchdog before serving (#632).
-        if _watchdog_armed:
-            try:
-                import faulthandler
-                faulthandler.cancel_dump_traceback_later()
-            except Exception:
-                pass
-        yield
+    # FastMCP's Streamable-HTTP transport needs its session manager running for
+    # the lifetime of the app. Run it in its OWN task that owns the full
+    # enter→exit lifecycle (anyio task-affinity, see _serve_mcp) and only wait,
+    # with a timeout, for it to signal ready — so a hang on its anyio group
+    # (observed on M1, #632) can never wedge "Application startup complete".
+    _sm = getattr(app.state, "mcp_session_manager", None)
+    mcp_task, mcp_stop, mcp_mounted = await _start_mcp_session_manager(
+        _sm, timeout=_mcp_start_timeout_s()
+    )
+    if mcp_mounted:
+        logger.info("MCP server mounted at /mcp")
+    # Startup finished — disarm the hang watchdog before serving (#632).
+    if _watchdog_armed:
+        try:
+            import faulthandler
+            faulthandler.cancel_dump_traceback_later()
+        except Exception:
+            pass
+    yield
     # ── Graceful shutdown (SIGTERM from Tauri, Ctrl+C, etc.) ────────────
     logger.info("Shutdown: cleaning up…")
-    idle_task.cancel()
-    worker_task.cancel()
-    # Wait for tasks to finish their current iteration
-    for t in (idle_task, worker_task):
+    # FIRST: flip model_manager into shutdown mode, so a model load that is
+    # in flight (or still queued) on a GPU-pool thread classifies executor
+    # rejections as a benign cancelled-load instead of a crash-shaped
+    # failure, and a not-yet-started load bails before importing torch
+    # (#1174: SIGTERM mid-weight-load → "cannot schedule new futures after
+    # interpreter shutdown" → ERROR traceback + nonzero exit).
+    model_loads_begin_shutdown()
+    # Stop MCP first — signal its task to exit its own anyio context (correct
+    # task-affinity), then bound the wait so a wedged manager can't hang exit.
+    mcp_stop.set()
+    if mcp_task is not None:
         try:
-            await asyncio.wait_for(t, timeout=3.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
+            await asyncio.wait_for(mcp_task, timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
+        except Exception:
+            pass
+    # preload_task/capture_preload_task matter most here (#1000 class): a quit
+    # mid-preload used to fall straight through to "Shutdown: done." while the
+    # model load was still running on a GPU-pool thread — cancel() can't stop
+    # a thread already inside blocking import/load work, so the process
+    # reported a clean exit while that background thread was still mid-
+    # `import transformers`, and got torn down by interpreter finalization
+    # instead. That surfaced as a misleading "Could not import module
+    # 'AutoFeatureExtractor'" — transformers' own generic lazy-import wrapper,
+    # not a real dependency problem. Awaiting here lets an early-stage load
+    # (still importing, not yet mid weight-download) finish cleanly before we
+    # report done; a load that's genuinely deep into a multi-GB download still
+    # times out — _reset_gpu_pool() below abandons it either way.
+    #
+    # 20s, not the original 3s (code-review finding post-merge): a cold
+    # transformers import alone can take longer than 3s on a slow disk or a
+    # first-ever launch, so the original bound left a real residual window —
+    # cancellation detaches the asyncio task, but the underlying OS thread
+    # keeps running past it, and shutdown could still report "done" while
+    # that thread was alive. Python cannot forcibly kill a running thread, so
+    # no finite bound eliminates this outright — 20s just shrinks the window
+    # from "any preload" to "an unusually slow cold-import," which is the
+    # practical ceiling before a longer shutdown itself becomes the
+    # complaint. A thread that's still running past 20s was never going to
+    # finish in a shutdown-appropriate timeframe regardless.
+    await _cancel_and_await_tasks(
+        idle_task, worker_task, preload_task, capture_preload_task, timeout=20.0,
+    )
     # Unload the model and free GPU memory
     try:
         import services.model_manager as mm
@@ -527,6 +817,10 @@ async def lifespan(app: FastAPI):
             mm.model = None
             logger.info("Shutdown: model unloaded.")
         mm.free_vram()
+        # Abandon a still-running preload's GPU-pool thread (Python can't kill
+        # a thread mid blocking call) so it can't outlive this shutdown block
+        # holding a reference into module state that's about to be torn down.
+        mm._reset_gpu_pool()
     except Exception:
         pass
     # Run GC to release any remaining references
@@ -542,6 +836,14 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     logger.info("Shutdown: done.")
+    # Last thing on a clean shutdown: retire the run sentinel so the next
+    # startup doesn't misread this exit as a crash (#1164). After "Shutdown:
+    # done." on purpose — if anything above dies, the sentinel survives and
+    # the death still gets reported.
+    try:
+        run_sentinel.clear_sentinel()
+    except Exception:
+        pass
 
 
 from core.version import APP_VERSION  # single source of truth (pyproject metadata)
@@ -586,7 +888,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         return Response(status_code=499)
     try:
         # Serialize writes so concurrent unhandled exceptions don't interleave frames.
-        with _crash_log_lock, open(CRASH_LOG_PATH, "a") as f:
+        with _crash_log_lock, open(CRASH_LOG_PATH, "a", encoding="utf-8", errors="backslashreplace") as f:
             f.write(f"\n--- {time.strftime('%Y-%m-%dT%H:%M:%S')} ---\n")
             f.write(f"Request: {request.url}\n")
             f.write(traceback.format_exc())
@@ -609,14 +911,22 @@ async def global_exception_handler(request: Request, exc: Exception):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
         headers["Vary"] = "Origin"
+    # #874: a model download that failed because the CONFIGURED Hugging Face
+    # mirror (HF_ENDPOINT) is unreachable used to leak the raw transformers
+    # message ("We couldn't connect to 'https://hf-mirror.com' …") as the 500
+    # detail with no next step. #959: same story for the SOCKS-proxy class
+    # ("Using SOCKS proxy, but the 'socksio' package is not installed").
+    # Appending the shared hints HERE covers every route that can leak a
+    # model-load/download error (generate, dub, archetypes, …), not just TTS
+    # generate. append_hint is a no-op for every other error and never raises.
+    from core.failure import append_hint
     return JSONResponse(
-        {"detail": str(exc), "error_class": _entry.get("error_class")},
+        {"detail": append_hint(str(exc)), "error_class": _entry.get("error_class")},
         status_code=500,
         headers=headers,
     )
 
 
-_LOOPBACK_CLIENTS = {"127.0.0.1", "::1"}
 _SHELL_PATHS = {"/", "/index.html", "/favicon.ico", "/health"}
 
 
@@ -647,7 +957,7 @@ class NetworkAccessMiddleware:
         if not pin:
             return await self.app(scope, receive, send)
         client = scope["client"][0] if scope.get("client") else None
-        if client in _LOOPBACK_CLIENTS:
+        if is_local_host(client):
             return await self.app(scope, receive, send)
         path = scope["path"]
         if path in _SHELL_PATHS or path.startswith("/assets/") or path.startswith("/favicon"):
@@ -698,7 +1008,7 @@ class BearerKeyMiddleware:
         if not key:
             return await self.app(scope, receive, send)
         client = scope["client"][0] if scope.get("client") else None
-        if client in _LOOPBACK_CLIENTS:
+        if is_local_host(client):
             return await self.app(scope, receive, send)
         path = scope.get("path", "")
         if scope["type"] == "http" and (
@@ -839,6 +1149,7 @@ app.include_router(watermark.router)
 app.include_router(events.router)
 app.include_router(capture.router)
 app.include_router(capture_ws.router)
+app.include_router(dictation.router)
 app.include_router(openai_compat.router)
 app.include_router(tts_stream.router)
 app.include_router(marketplace.router)
@@ -846,7 +1157,9 @@ app.include_router(personas.router)
 app.include_router(sonitranslate.router)
 app.include_router(audiobook.router)
 app.include_router(longform_jobs.router)
+app.include_router(pronunciation.router)  # Expressive-TTS Spec 01: pronunciation dictionary
 app.include_router(settings_router.router)  # Phase 1 AUTH-03 endpoints
+app.include_router(media_tools_router.router)  # Settings → Audio tools + wizard media-engine self-heal
 from api.routers import mcp_bindings as _mcp_bindings_router  # noqa: E402
 app.include_router(_mcp_bindings_router.router)  # Wave 2.2 per-agent voice bindings
 
@@ -857,14 +1170,13 @@ app.include_router(_mcp_bindings_router.router)  # Wave 2.2 per-agent voice bind
 # without it never breaks startup.
 if os.environ.get("OMNIVOICE_MCP_DISABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
     try:
-        from mcp_server import create_mcp_server
+        from mcp_server import mount_mcp
 
-        _mcp = create_mcp_server()
-        _mcp_app = _mcp.streamable_http_app()
-        app.state.mcp_session_manager = _mcp.session_manager
-        app.mount("/mcp", _mcp_app)
-        logging.getLogger("omnivoice.api").info("MCP app mounted at /mcp")
-    except Exception as _mcp_err:  # noqa: BLE001
+        mount_mcp(app)
+    except (Exception, SystemExit) as _mcp_err:  # noqa: BLE001
+        # SystemExit included (#1156): sys.exit from the MCP layer is a
+        # BaseException and used to escape `except Exception`, killing the
+        # backend with exit code 1 instead of degrading to "/mcp disabled".
         logging.getLogger("omnivoice.api").info(
             "MCP server not mounted (%s); /mcp disabled.", _mcp_err
         )
@@ -983,6 +1295,12 @@ if __name__ == "__main__":
         )
         sys.exit(1)
 
+    # Distinct exit code for "the port was already taken" (#1223), so the
+    # desktop shell can tell that apart from a crash without parsing an
+    # OS-translated error string. Kept out of the 0-2 range the interpreter
+    # itself uses, and mirrored in frontend/src-tauri/src/backend.rs.
+    _EXIT_PORT_IN_USE = 78  # EX_CONFIG, sysexits.h
+
     # Port 3900 picked to dodge common 8000 conflicts (Django/Rails/Jupyter).
     # Rust sidecar launcher in lib.rs::BACKEND_PORT must stay in sync.
     #
@@ -993,4 +1311,59 @@ if __name__ == "__main__":
     # set OMNIVOICE_BIND_HOST=0.0.0.0 explicitly (see deploy/docker-compose.yml)
     # — the host-side port mapping is what enforces 127.0.0.1-only there.
     _bind_host = os.environ.get("OMNIVOICE_BIND_HOST", "127.0.0.1")
-    uvicorn.run(app, host=_bind_host, port=_port)
+
+    def _port_taken(host: str, port: int) -> "OSError | None":
+        """The EADDRINUSE error a bind would raise, or None if the port is free.
+
+        Mirrors uvicorn's own socket options — notably SO_REUSEADDR off
+        Windows — so this can't report "taken" for a TIME_WAIT socket uvicorn
+        would happily bind. Any non-EADDRINUSE failure returns None: this is a
+        diagnostic, and uvicorn must remain the authority on whether the real
+        bind succeeds.
+        """
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if sys.platform != "win32":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind((host, port))
+            except OSError as exc:
+                in_use = exc.errno in (48, 98, 10048) or getattr(
+                    exc, "winerror", None
+                ) == 10048
+                return exc if in_use else None
+        return None
+
+    def _fail_port_in_use(exc: "OSError | None") -> None:
+        print(
+            f"FATAL: port {_port} is already in use — another OmniVoice "
+            f"backend (or another app) is listening on it. Quit the other "
+            f"instance and relaunch; if nothing is visibly running, an "
+            f"orphaned backend from a previous session is still holding the "
+            f"port." + (f" Underlying error: {exc}" if exc else ""),
+            file=sys.stderr,
+            flush=True,
+        )
+        sys.exit(_EXIT_PORT_IN_USE)
+
+    # #1223: uvicorn does NOT let a bind failure reach the caller — it logs the
+    # raw errno and raises SystemExit(1) from inside its startup, so an
+    # `except OSError` around uvicorn.run() never fires (verified, not assumed).
+    # And the message it logs is useless to match on: the Windows wording
+    # ("only one usage of each socket address is normally permitted") is
+    # OS-translated into the user's locale. So probe the port ourselves first —
+    # errno is locale-independent (EADDRINUSE = 48 macOS/BSD, 98 Linux, 10048
+    # Windows) — and exit with a code the shell can recognise.
+    if (_bind_err := _port_taken(_bind_host, _port)) is not None:
+        _fail_port_in_use(_bind_err)
+    try:
+        uvicorn.run(app, host=_bind_host, port=_port)
+    except SystemExit:
+        # Lost the race between the probe above and uvicorn's own bind (a
+        # competing process grabbed the port in between). Re-probe: if the port
+        # is taken now, that is what killed us, whatever exit code uvicorn
+        # chose.
+        if _port_taken(_bind_host, _port) is not None:
+            _fail_port_in_use(None)
+        raise

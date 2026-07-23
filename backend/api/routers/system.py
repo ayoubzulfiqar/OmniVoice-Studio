@@ -18,7 +18,7 @@ import shutil
 
 from core.config import OUTPUTS_DIR, DATA_DIR, CRASH_LOG_PATH, LOG_PATH, IDLE_TIMEOUT_SECONDS
 from core.version import APP_VERSION
-from services.model_manager import get_model_status, get_best_device
+from services.model_manager import get_model_status, get_best_device, resolve_omnivoice_checkpoint
 from services.ffmpeg_utils import find_ffmpeg, run_ffmpeg
 
 # Router-level loopback gate. Every route mounted on `router` (GET + POST,
@@ -208,7 +208,7 @@ def system_info():
             "outputs_dir": OUTPUTS_DIR,
             "crash_log_path": CRASH_LOG_PATH,
             "idle_timeout_seconds": IDLE_TIMEOUT_SECONDS,
-            "model_checkpoint": os.environ.get("OMNIVOICE_MODEL", "k2-fsa/OmniVoice"),
+            "model_checkpoint": resolve_omnivoice_checkpoint(),  # #693: show the effective checkpoint, not a leaked raw value
             "asr_model": os.environ.get("ASR_MODEL", "Systran/faster-whisper-large-v3"),
             "translate_provider": os.environ.get("TRANSLATE_PROVIDER", "google"),
             "has_hf_token": _has_hf_token(),
@@ -629,15 +629,17 @@ def system_notifications():
         notes.append({
             "id": "ffmpeg-missing",
             "level": "error",
-            "title": "ffmpeg not found",
+            "title": "Media engine unavailable",
             "message": (
-                "Video processing, audio conversion, and dubbing require ffmpeg. "
-                "Install it with: brew install ffmpeg (macOS) or apt install ffmpeg (Linux)."
+                "Video processing, audio conversion, and dubbing need the "
+                "media engine (ffmpeg), which the app normally provisions "
+                "itself. Open Settings > Audio tools and press Restore "
+                "bundled to re-download it, or point it at a system copy."
             ),
             "action": {
-                "label": "Install guide",
-                "type": "link",
-                "target": "https://ffmpeg.org/download.html",
+                "label": "Open Audio tools",
+                "type": "settings-tab",
+                "target": "audio-tools",
             },
         })
 
@@ -669,6 +671,41 @@ def system_notifications():
             ),
             "action": None,
         })
+
+    # 5a. The previous backend RUN died without a clean shutdown (#1164) —
+    #     the run-sentinel record is the browser/dev/Docker equivalent of the
+    #     desktop shell's crash marker. The id embeds detected_at so a NEW
+    #     unclean death re-notifies even after an older one was dismissed.
+    #     Coexists with the crash-last-session note below (that one covers
+    #     caught unhandled exceptions; this one covers process death).
+    try:
+        from core import run_sentinel
+
+        rec = run_sentinel.newest_record()
+        if rec is not None and not rec[1]:
+            record = rec[0]
+            last = record.get("last_activity") or {}
+            doing = f" Last activity: {last.get('kind')}." if last.get("kind") else ""
+            notes.append({
+                # ms resolution: two deaths in the same second must still get
+                # distinct ids, or the second one stays invisible post-ack.
+                "id": f"last-run-crash-{int((record.get('detected_at') or 0) * 1000)}",
+                "level": "error",
+                "title": "The backend did not shut down cleanly last run",
+                "message": (
+                    "The previous backend process ended without a clean "
+                    "shutdown — it likely crashed or was killed (for example "
+                    "by the OS running out of memory)." + doing +
+                    " A log tail was captured for bug reports."
+                ),
+                "action": {
+                    "label": "View logs",
+                    "type": "navigate",
+                    "target": "settings",
+                },
+            })
+    except Exception:
+        pass
 
     # 5. A previous session logged a crash the user never saw.
     #    crash_log grew past the last acknowledged size AND predates this
@@ -724,6 +761,33 @@ def _crashed_last_session() -> bool:
     return mtime < _PROCESS_START_TS
 
 
+@router.get("/system/last-run-crash")
+async def get_last_run_crash():
+    """Newest unclean-shutdown record from the previous backend run (#1164)
+    — the deployment-agnostic twin of the desktop shell's crash marker
+    (`get_last_backend_crash`), for browser/dev/Docker frontends that have no
+    shell to ask. Version-gated like the shell's markers: records from a
+    different release than the running build are ignored (kept on disk)."""
+    from core import run_sentinel
+
+    rec = run_sentinel.newest_record()
+    if rec is None:
+        return {"record": None, "acknowledged": True}
+    record, acked = rec
+    return {"record": record, "acknowledged": acked}
+
+
+@router.post("/system/last-run-crash/ack")
+async def ack_last_run_crash():
+    """Mark the newest unclean-shutdown record as seen. Watermark semantics
+    (like the shell's ack): the record itself is retained so bug reports can
+    still attach the evidence; a NEWER death re-arms the notice."""
+    from core import run_sentinel
+
+    run_sentinel.acknowledge()
+    return {"ok": True}
+
+
 @router.post("/system/crash/ack")
 async def ack_crash():
     """Mark the current crash log as seen — dismisses the
@@ -751,6 +815,17 @@ PERSISTENT_KEYS = {
     # the LAN-share/UI ports from the others.
     "OMNIVOICE_PORT", "OMNIVOICE_SHARE_PORT", "OMNIVOICE_UI_PORT",
 }
+
+# Sidecar-engine install dirs (OMNIVOICE_INDEXTTS_DIR, …). The one-click
+# installer persists these via prefs.json `env.*` (restored at startup in
+# main.py); merging them here lets users inspect/clear them from the same
+# Settings env panel as every other persisted var. Single-sourced from the
+# installer's SPECS so a future sidecar engine can't forget to register.
+try:
+    from services.sidecar_install import persistent_env_vars as _sidecar_env_vars
+    PERSISTENT_KEYS |= _sidecar_env_vars()
+except Exception:  # pragma: no cover — defensive: env panel > installer wiring
+    pass
 
 # Keys whose value must be a valid TCP port (1024–65535). Validated before
 # being set so a bad value never reaches uvicorn / the share listener.
@@ -1068,3 +1143,19 @@ async def tailscale_enable():
 @router.post("/system/tailscale/disable")
 async def tailscale_disable():
     return _tailscale.serve_disable()
+
+
+# ── Local-only usage insights (the user's own numbers, never transmitted) ───
+# This answers "how am I using this?" for the USER by aggregating the history
+# the app has ALREADY written to their own database. It collects nothing new,
+# stores nothing new, and transmits nothing anywhere: the only consumer is the
+# user's own UI over loopback. Read-only, content-free (counts and totals,
+# never the text of a take). Product analytics for the PROJECT is a separate,
+# consent-gated path (core/analytics.py: opt-in PostHog behind the first-run
+# prompt, allowlisted content-free metadata only) — this endpoint stays local
+# regardless of that consent.
+@router.get("/stats/usage")
+def stats_usage():
+    from services.local_stats import usage_summary
+
+    return usage_summary()

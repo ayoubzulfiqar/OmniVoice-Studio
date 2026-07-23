@@ -1,0 +1,296 @@
+/**
+ * backendCrash — frontend bridge to the desktop shell's crash forensics
+ * (#941, src-tauri/src/crash.rs).
+ *
+ * When the backend PROCESS dies (native CUDA abort, OOM kill, DLL crash) the
+ * Rust death watcher persists a crash marker (exit code/signal + stderr tail).
+ * This module reads it so:
+ *   - api/client.ts can replace the vague "Can't reach the local backend"
+ *     with the honest story,
+ *   - components/BackendCrashNotice.jsx can offer "View crash details",
+ *   - utils/bugReport.js can attach the evidence to the GitHub-issue prefill.
+ *
+ * Outside the Tauri shell (browser dev, Docker, LAN share) the getters fall
+ * back to the BACKEND's own run-sentinel forensics (#1164,
+ * backend/core/run_sentinel.py): GET /system/last-run-crash reports a
+ * previous run that died without a clean shutdown, adapted here to the same
+ * CrashMarker shape — so BackendCrashNotice, the apiFetch crash branch, and
+ * the bug-report prefill light up in every deployment, not just desktop.
+ */
+
+export interface BackendCrashMarker {
+  /** Unix seconds when the death was detected. */
+  ts: number;
+  exit_code: number | null;
+  signal: number | null;
+  /** Human-readable ExitStatus display ("exit status: 134", …). */
+  exit_desc: string;
+  backend_version: string;
+  /** Seconds the backend had been running when it died. */
+  uptime_s: number;
+  /** Tail of backend_err.log captured at death time (~40 lines). */
+  last_stderr: string;
+  /** Whether the user already viewed/dismissed this crash. */
+  acknowledged: boolean;
+}
+
+function inTauri(): boolean {
+  const w = window as unknown as Record<string, unknown> | undefined;
+  return typeof window !== 'undefined' && !!(w?.__TAURI__ || w?.__TAURI_INTERNALS__);
+}
+
+// ── Browser/Docker fallback: the backend's run-sentinel record (#1164) ─────
+
+/** Shape of GET /system/last-run-crash's `record` (backend/core/run_sentinel.py). */
+export interface LastRunCrashRecord {
+  detected_at: number;
+  started_at: number | null;
+  ended_between: [number, number];
+  uptime_hint_s: number | null;
+  version: string;
+  last_activity: { ts: number | null; kind: string; detail: string | null } | null;
+  log_tail: string[];
+}
+
+/** Adapt a run-sentinel record to the CrashMarker shape the whole crash UI
+ * already speaks. A sentinel can't know an exit code (the process died out
+ * from under it), so exit_code/signal are null and exit_desc carries the
+ * story; describeCrashExit() falls through to exit_desc for exactly this
+ * shape. Exported for unit tests. */
+export function _adaptLastRunCrash(
+  record: LastRunCrashRecord,
+  acknowledged: boolean,
+): BackendCrashMarker {
+  const activity = record.last_activity;
+  const activityLine = activity?.kind
+    ? [
+        `last activity before the death: ${activity.kind}${activity.detail ? ` (${activity.detail})` : ''}`,
+        '',
+      ]
+    : [];
+  return {
+    ts: Math.round(record.detected_at || 0),
+    exit_code: null,
+    signal: null,
+    exit_desc: 'process ended uncleanly (previous run)',
+    backend_version: record.version || '',
+    uptime_s: Math.max(0, Math.round(record.uptime_hint_s ?? 0)),
+    last_stderr: [...activityLine, ...(Array.isArray(record.log_tail) ? record.log_tail : [])]
+      .join('\n')
+      .trim(),
+    acknowledged,
+  };
+}
+
+const HTTP_FALLBACK_TIMEOUT_MS = 2500;
+
+/** Auth headers a non-desktop deployment may need (LAN-share PIN, remote API
+ * key) — mirrors apiFetch's injection. We deliberately do NOT call apiFetch:
+ * its give-up path calls back into this module, and its retry cascade would
+ * stall the very error message this fallback exists to enrich. */
+function _fallbackHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  try {
+    const pin = sessionStorage.getItem('ov_pin');
+    if (pin) headers['X-OmniVoice-Pin'] = pin;
+  } catch {
+    /* noop */
+  }
+  try {
+    const key = localStorage.getItem('ov_api_key');
+    if (key) headers['Authorization'] = `Bearer ${key}`;
+  } catch {
+    /* noop */
+  }
+  return headers;
+}
+
+/** Best-effort fetch of the backend's own crash record. Fast timeout, every
+ * error swallowed to null — when the backend is DOWN this fails instantly
+ * and the caller's mode-aware message stands; the record becomes fetchable
+ * once the backend is back (next dev restart / Docker restart policy). */
+async function fetchLastRunCrash(): Promise<BackendCrashMarker | null> {
+  try {
+    // Dynamic import: api/client.ts statically imports this module, so a
+    // static import back would be a cycle. apiUrl is only needed at call time.
+    const { apiUrl } = await import('../api/client.ts');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), HTTP_FALLBACK_TIMEOUT_MS);
+    try {
+      const res = await fetch(apiUrl('/system/last-run-crash'), {
+        signal: controller.signal,
+        headers: _fallbackHeaders(),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as {
+        record: LastRunCrashRecord | null;
+        acknowledged: boolean;
+      } | null;
+      if (!body?.record) return null;
+      return _adaptLastRunCrash(body.record, !!body.acknowledged);
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** Newest crash marker: the shell's (desktop) or the backend run-sentinel's
+ * (browser/dev/Docker), or null when nothing ever crashed / nothing answers. */
+export async function getLastBackendCrash(): Promise<BackendCrashMarker | null> {
+  if (!inTauri()) return fetchLastRunCrash();
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return ((await invoke('get_last_backend_crash')) as BackendCrashMarker | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Newest crash marker only if the user hasn't acknowledged it yet. */
+export async function getUnacknowledgedBackendCrash(): Promise<BackendCrashMarker | null> {
+  const marker = await getLastBackendCrash();
+  return marker && !marker.acknowledged ? marker : null;
+}
+
+/** Mark the newest crash as seen (the marker itself is retained for reports). */
+export async function acknowledgeBackendCrash(): Promise<void> {
+  if (!inTauri()) {
+    // Browser/dev/Docker: watermark the backend's run-sentinel record.
+    try {
+      const { apiUrl } = await import('../api/client.ts');
+      await fetch(apiUrl('/system/last-run-crash/ack'), {
+        method: 'POST',
+        headers: _fallbackHeaders(),
+      });
+    } catch {
+      /* backend unreachable — the notice will simply resurface, which is honest */
+    }
+    return;
+  }
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('acknowledge_backend_crash');
+  } catch {
+    /* shell unavailable — nothing to acknowledge */
+  }
+}
+
+/** "exit code 3221226505" / "signal 6" / the raw ExitStatus display. */
+export function describeCrashExit(
+  marker: Pick<BackendCrashMarker, 'exit_code' | 'signal' | 'exit_desc'>,
+): string {
+  if (marker.exit_code != null) return `exit code ${marker.exit_code}`;
+  if (marker.signal != null) return `signal ${marker.signal}`;
+  return marker.exit_desc || 'unknown exit';
+}
+
+/**
+ * Likely-cause line for the crash message, branched on HOW the process died.
+ *
+ * SIGKILL (signal 9) with no stderr is the operating system's memory killer —
+ * on a unified-memory Mac that means system RAM, and the old one-size message
+ * blamed "VRAM" on machines that have none (audit finding: OS-OOM kills were
+ * misattributed). Everything else keeps the small-GPU VRAM guidance, which is
+ * the dominant cause for real GPU aborts.
+ */
+export function crashCauseHint(marker: Pick<BackendCrashMarker, 'exit_code' | 'signal'>): string {
+  // #1223: the backend exits 78 (EX_CONFIG) when it could not bind its port.
+  // That is not a crash and has nothing to do with memory — the old message
+  // sent a user whose real problem was a leftover process off to shrink their
+  // ASR model. Keep in sync with _EXIT_PORT_IN_USE in backend/main.py.
+  if (marker.exit_code === 78) {
+    return (
+      'The backend could not start because port 3900 is already in use — another copy of ' +
+      'OmniVoice (or an app that claimed that port) is holding it. Quit the other instance and ' +
+      'relaunch; if nothing is visibly running, an orphaned backend from a previous session is ' +
+      'still holding the port.'
+    );
+  }
+  if (marker.signal === 9) {
+    return (
+      'It was force-killed (signal 9), which usually means the operating system ran out of ' +
+      'memory (RAM) and stopped it. Close memory-heavy apps, pick a smaller ASR model in ' +
+      'Settings → Models, or flush the TTS model before transcribing.'
+    );
+  }
+  return (
+    'On smaller GPUs the usual cause is running out of VRAM while loading the ASR model on top ' +
+    'of the TTS model: flush the TTS model first, or pick a smaller ASR model in Settings → Models.'
+  );
+}
+
+/** Coarse "12 s" / "3 min" / "2 h" age of a marker, for the honest message. */
+export function crashAge(marker: Pick<BackendCrashMarker, 'ts'>, nowMs = Date.now()): string {
+  const s = Math.max(0, Math.round(nowMs / 1000 - marker.ts));
+  if (s < 90) return `${s} s`;
+  const min = Math.round(s / 60);
+  if (min < 90) return `${min} min`;
+  return `${Math.round(min / 60)} h`;
+}
+
+/**
+ * The honest error for an SSE/stream that died with NO terminal event (#1062).
+ *
+ * Every long-running stream the backend serves is contract-bound to emit a
+ * terminal event before it closes — even on failure (tests/test_dub_transcribe.py
+ * ::test_transcribe_stream_never_closes_without_terminal_event). So a stream that
+ * simply goes silent did NOT "probably fail to load a model": the backend
+ * PROCESS went away underneath it. On smaller GPUs the usual trigger is running
+ * out of VRAM while loading the ASR model on top of a resident TTS model, which
+ * aborts the process natively rather than raising a catchable Python error.
+ *
+ * When the desktop shell recorded a crash marker (#941), say what actually
+ * happened — exit code, how long ago, and the VRAM next step — and raise the
+ * crash notice so "View crash details" is one click away. With no marker (or
+ * outside the Tauri shell) the caller's own message stands.
+ *
+ * `getCrash` is an injectable seam (same idea as services/endpoint_race's
+ * injectable probers) so the branch logic is unit-testable without a shell.
+ */
+export async function streamDropError(
+  fallbackMessage: string,
+  getCrash: () => Promise<BackendCrashMarker | null> = getUnacknowledgedBackendCrash,
+  opts: { waitMs?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<Error> {
+  // #1119: the shell learns the backend died from a ~2 s POLL — it must notice
+  // the child exit and write the crash marker. Asking for that marker ONCE, at
+  // the instant the stream drops, races that poll and loses: we found nothing
+  // and fell back to the guess ("Likely ASR backend failed to load") even when
+  // the backend had in fact just died. That's the same race #1102 fixed for
+  // apiFetch, which this path never got. Give the shell time to catch up before
+  // believing there was no crash.
+  const waitMs = opts.waitMs ?? 8_000;
+  const intervalMs = opts.intervalMs ?? 1_000;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+
+  let crash: BackendCrashMarker | null = null;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      crash = await getCrash();
+    } catch {
+      return new Error(fallbackMessage); // forensics unavailable — don't mask the caller
+    }
+    if (crash) break;
+    // Outside the Tauri shell there is no death watcher to wait for — the
+    // run-sentinel record (#1164) only appears after the backend RESTARTS,
+    // so one immediate ask is all the information there is; don't stall a
+    // browser/Docker user for 8 s to learn nothing more.
+    if (!inTauri()) break;
+    if (Date.now() >= deadline) break;
+    await sleep(intervalMs);
+  }
+  if (!crash) return new Error(fallbackMessage);
+  try {
+    window.dispatchEvent(new CustomEvent('ov:backend-crashed', { detail: crash }));
+  } catch {
+    /* no window (tests) — the Error below still tells the story */
+  }
+  return new Error(
+    `The local OmniVoice backend crashed (${describeCrashExit(crash)}) ${crashAge(crash)} ago, ` +
+      'which dropped this stream — it is being restarted automatically. Open the crash notice for ' +
+      `the error output. ${crashCauseHint(crash)}`,
+  );
+}
