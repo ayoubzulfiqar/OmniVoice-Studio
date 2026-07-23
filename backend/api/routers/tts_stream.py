@@ -90,6 +90,20 @@ async def ws_tts(websocket: WebSocket):
                     get_backend_class,
                 )
                 engine_id = data.get("engine")
+                # #1224: leave a breadcrumb when memory is already tight before
+                # a heavy load. /generate has done this since the 16 GB-Mac
+                # reports, but the streaming path — which the desktop UI tries
+                # FIRST — never did, so the load most likely to tip the machine
+                # into an OS OOM kill was the one load with no trail. The
+                # captured stderr tail is what a SIGKILL report has to go on.
+                # Advisory only: the OS can reclaim cache, and refusing here
+                # would brick loads that would actually have coped.
+                try:
+                    from services.memory_budget import log_if_low
+
+                    log_if_low(f"TTS stream load ({engine_id or 'active engine'})")
+                except Exception:
+                    pass
                 if engine_id:
                     cls = get_backend_class(engine_id)
                     backend = cls()
@@ -106,7 +120,8 @@ async def ws_tts(websocket: WebSocket):
                 from services.engine_routing import resolve_routing, routing_notice
                 from core.scrub import scrub_text
                 _routing = resolve_routing(
-                    getattr(backend, "gpu_compat", ("cpu",)), detect_host_caps())
+                    getattr(backend, "gpu_compat", ("cpu",)), detect_host_caps(),
+                    getattr(backend, "min_vram_gb", 0.0))
                 if _routing["routing_status"] == "unavailable":
                     await websocket.send_json({
                         "type": "error",
@@ -136,7 +151,10 @@ async def ws_tts(websocket: WebSocket):
                     kw["emo_text"] = data["emo_text"]
                 if data.get("emo_audio"):
                     kw["emo_audio"] = data["emo_audio"]
-                if data.get("emo_alpha") != 1.0:
+                # Default 1.0 when absent: a missing key must not trip the
+                # `!= 1.0` branch into a KeyError (any minimal request that
+                # omitted emo_alpha got an error frame instead of audio).
+                if data.get("emo_alpha", 1.0) != 1.0:
                     kw["emo_alpha"] = data["emo_alpha"]
 
                 # Resolve voice profile
@@ -168,6 +186,18 @@ async def ws_tts(websocket: WebSocket):
                     except Exception:
                         kw["voice"] = voice
 
+                # Engine-agnostic text normalization (junk strip,
+                # numbers→words, abbreviations) — the same pre-pass as
+                # /generate, applied exactly ONCE per request, on the whole
+                # text BEFORE the sentence chunker fans it out (so per-sentence
+                # generates never re-normalize, and expanded abbreviations
+                # can't confuse the sentence splitter). The request's
+                # `language` is all this route knows (None → universal safety
+                # filters only). Pref-gated (default ON), idempotent, never
+                # raises.
+                from services.text_normalization import normalize_for_tts
+                text = normalize_for_tts(text, data.get("language"))
+
                 # Wave 1.4: split the request into sentences so the first
                 # sentence's audio streams while later sentences are still
                 # synthesizing — this is the time-to-first-audio win. The
@@ -182,11 +212,12 @@ async def ws_tts(websocket: WebSocket):
                     sentences = [text]
 
                 # Run generation in the GPU pool
-                from services.model_manager import _gpu_pool
-                loop = asyncio.get_running_loop()
+                import functools
+                from services.model_manager import run_on_gpu_pool_guarded
 
                 def _generate(sentence_text):
                     from services.audio_dsp import apply_mastering, normalize_audio
+                    from services.watermark import mark_synthetic
                     wav = backend.generate(sentence_text, **kw)
                     sr_actual = backend.sample_rate
                     # Like _run_tts in openai_compat: studio engines (VoxCPM2)
@@ -196,6 +227,16 @@ async def ws_tts(websocket: WebSocket):
                     if not getattr(backend, "applies_own_mastering", False):
                         wav = apply_mastering(wav, sample_rate=sr_actual)
                     wav = normalize_audio(wav, target_dBFS=-2.0)
+                    # Invisible provenance mark per sentence, at the tensor
+                    # stage before PCM16 conversion (#1169) — streaming is a
+                    # delivery channel, not a watermark exemption. AudioSeal's
+                    # 16-bit message repeats through the audio, so per-sentence
+                    # embedding keeps whole-stream detection working; embedding
+                    # strength does degrade on sub-second sentences (AudioSeal
+                    # embeds poorly on very short segments — see
+                    # watermark._iter_chunks), which is inherent to marking
+                    # ultra-short clips, not a coverage gap.
+                    wav = mark_synthetic(wav, sr_actual, context="tts_stream.sentence")
                     return wav, sr_actual
 
                 import torch
@@ -204,8 +245,17 @@ async def ws_tts(websocket: WebSocket):
                 started = False
 
                 for sentence in sentences:
-                    wav_tensor, sr = await loop.run_in_executor(
-                        _gpu_pool, _generate, sentence
+                    # Bounded + pool-reset on hang so a wedged generate can't
+                    # starve the GPU pool and brick the backend (#730 class). On
+                    # timeout GpuJobTimeoutError propagates to the handler below,
+                    # which sends an actionable error frame.
+                    # Length-scaled budget per sentence (#1190) — the flat 300s
+                    # default is gone from every dispatch.
+                    from services.model_manager import generate_timeout_s
+                    wav_tensor, sr = await run_on_gpu_pool_guarded(
+                        functools.partial(_generate, sentence),
+                        what="TTS generate",
+                        timeout=generate_timeout_s(sentence),
                     )
 
                     if not started:

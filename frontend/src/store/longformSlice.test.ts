@@ -4,7 +4,9 @@ import { createStoriesSlice, DEFAULT_CAST, SLICE_DEFAULTS, genProjectId } from '
 
 function harness() {
   let state: any = {};
-  const set = (fn: any) => { state = { ...state, ...(typeof fn === 'function' ? fn(state) : fn) }; };
+  const set = (fn: any) => {
+    state = { ...state, ...(typeof fn === 'function' ? fn(state) : fn) };
+  };
   const get = () => state;
   state = createStoriesSlice(set as any, get as any, {} as any);
   return { get };
@@ -84,6 +86,27 @@ describe('longformSlice — long-form fields', () => {
     expect(get().projectMode).toBe('stories');
   });
 
+  it('lastOutput survives as store state and clears on newProject (#1139)', () => {
+    // The finished render's filename used to be AudiobookTab useState — the
+    // Download affordance evaporated on the first tab switch.
+    const { get } = harness();
+    expect(get().lastOutput).toBe('');
+    get().setLastOutput('audiobook_abc123.m4b');
+    expect(get().lastOutput).toBe('audiobook_abc123.m4b');
+    get().newProject('audiobook');
+    expect(get().lastOutput).toBe(''); // a new book doesn't show the old file
+  });
+
+  it('loadProject clears lastOutput — no cross-project leak (#1139 review)', () => {
+    const { get } = harness();
+    get().setScript('# Book B');
+    get().saveProject('B');
+    const idB = get().currentProjectId;
+    get().setLastOutput('audiobook_from_a.m4b'); // pretend A rendered meanwhile
+    get().loadProject(idB);
+    expect(get().lastOutput).toBe(''); // loading B never presents A's render
+  });
+
   it('setProjectMeta MERGES; setLexicon REPLACES; setOutputPrefs merges', () => {
     const { get } = harness();
     get().setProjectMeta({ title: 'The Crown' });
@@ -91,9 +114,9 @@ describe('longformSlice — long-form fields', () => {
     expect(get().meta).toEqual({ title: 'The Crown', author: 'A. Writer' });
     get().setLexicon({ gaol: 'jail' });
     get().setLexicon({ ye: 'yee' });
-    expect(get().lexicon).toEqual({ ye: 'yee' });   // replace, not merge
+    expect(get().lexicon).toEqual({ ye: 'yee' }); // replace, not merge
     get().setOutputPrefs({ loudness: 'acx' });
-    expect(get().outputFormat).toBe('m4b');         // untouched
+    expect(get().outputFormat).toBe('m4b'); // untouched
     expect(get().loudness).toBe('acx');
   });
 
@@ -130,7 +153,7 @@ describe('longformSlice — long-form fields', () => {
     get().loadProject('p_old');
     expect(get().projectMode).toBe('stories');
     expect(get().script).toBe(SLICE_DEFAULTS.script);
-    expect(get().meta).toEqual({});           // never undefined → no controlled-input warning
+    expect(get().meta).toEqual({}); // never undefined → no controlled-input warning
     expect(get().outputFormat).toBe('m4b');
     expect(get().storyTracks).toHaveLength(1);
   });
@@ -147,8 +170,8 @@ describe('longformSlice — long-form fields', () => {
     const b = get().currentProjectId;
     get().loadProject(a!);
     get().loadProject(b!);
-    expect(get().meta).toEqual({ author: 'Bee' });   // no 'Aaa' title bleed
-    expect(get().script).toBe('');                   // B never set a script
+    expect(get().meta).toEqual({ author: 'Bee' }); // no 'Aaa' title bleed
+    expect(get().script).toBe(''); // B never set a script
   });
 
   it('convertMode flips mode, is idempotent, and guards invalid values', () => {
@@ -156,9 +179,9 @@ describe('longformSlice — long-form fields', () => {
     expect(get().projectMode).toBe('stories');
     get().convertMode('audiobook');
     expect(get().projectMode).toBe('audiobook');
-    get().convertMode('audiobook');                  // idempotent
+    get().convertMode('audiobook'); // idempotent
     expect(get().projectMode).toBe('audiobook');
-    get().convertMode('bogus' as any);               // guarded
+    get().convertMode('bogus' as any); // guarded
     expect(get().projectMode).toBe('audiobook');
   });
 
@@ -176,7 +199,8 @@ describe('longformSlice — long-form fields', () => {
   });
 
   it('DEFAULT_CAST is not shared by reference between slices', () => {
-    const a = harness(); const b = harness();
+    const a = harness();
+    const b = harness();
     a.get().setCharacterVoice('narrator', 'x');
     expect(b.get().cast[0].profileId).toBeNull();
     expect(DEFAULT_CAST[0].profileId).toBeNull();

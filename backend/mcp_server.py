@@ -7,9 +7,12 @@ Run standalone:
 
 Tools exposed:
     generate_speech   — text → WAV audio (voice clone or design)
+    clone_voice       — base64 reference audio → new voice profile
+    transcribe        — base64 audio → text
     list_voices       — enumerate saved voice profiles
     list_languages    — available TTS languages
     list_personalities — voice personality presets
+    check_health      — backend status + active GPU device
 
 Resources exposed:
     voice://{profile_id}  — voice profile metadata
@@ -19,28 +22,77 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import logging
 import os
 import sys
 
 logger = logging.getLogger("omnivoice.mcp")
 
+
+def _decode_ref_audio(ref_audio_base64: str) -> "bytes | None":
+    """Decoded reference audio, or None when the input isn't valid base64.
+
+    LLM agents frequently prepend a data URI (``data:audio/wav;base64,…``)
+    when handing audio to file-upload tools — strip it before decoding so
+    that common shape round-trips instead of failing validation."""
+    import binascii
+
+    if ref_audio_base64.startswith("data:"):
+        ref_audio_base64 = ref_audio_base64.split(",", 1)[-1]
+    try:
+        return base64.b64decode(ref_audio_base64, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _sniff_audio_ext(raw: bytes) -> str:
+    """Filename extension matching the audio container's magic bytes.
+
+    The /profiles route stores the reference clip under the uploaded
+    filename's extension, and downstream consumers (HTML5 playback of the
+    stored ref, ffmpeg pipelines) treat that extension as a format hint — an
+    MP3 stored as ``.wav`` can silently fail there. WAV is the documented
+    default; MP3/FLAC/OGG/M4A are the other containers the tool invites."""
+    if raw.startswith(b"fLaC"):
+        return ".flac"
+    if raw.startswith(b"ID3") or raw[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return ".mp3"
+    if raw.startswith(b"OggS"):
+        return ".ogg"
+    if raw[4:8] == b"ftyp":
+        # ISO-BMFF requires the first box's size at bytes 0-3 and type at 4-7;
+        # a leading non-ftyp box (rare, spec-legal) falls through to the .wav
+        # default, which downstream decoders sniff by content anyway — the
+        # extension is a storage nicety, not a correctness gate (CR, #1198).
+        return ".m4a"
+    return ".wav"
+
+
 # ── Lazy imports — keeps startup fast when not using MCP ────────────────
 
 
 def _ensure_mcp():
     """Import `mcp` SDK lazily so the rest of the backend doesn't pay
-    for the import unless the MCP server is actually started."""
+    for the import unless the MCP server is actually started.
+
+    Raises ImportError (never SystemExit — #1156: a sys.exit here escaped
+    main.py's best-effort `except Exception` and killed the whole backend
+    on startup). The message carries the underlying error because the
+    import can fail with the package present — e.g. a broken pywin32
+    transitive import on Windows — and "not installed" was a misdiagnosis.
+    """
     try:
         from mcp.server.fastmcp import FastMCP  # noqa: F811
         return FastMCP
-    except ImportError:
-        logger.error(
-            "MCP SDK not installed. Install with:\n"
-            "  pip install 'mcp[cli]'\n"
-            "Then re-run this module."
+    except ImportError as e:
+        msg = (
+            f"MCP SDK import failed ({e}). The `mcp` package ships with the "
+            "app environment — the launcher's Clean & Retry (or `uv sync`) "
+            "reinstalls it. For a standalone run: pip install 'mcp[cli]'."
         )
-        sys.exit(1)
+        logger.error(msg)
+        raise ImportError(msg) from e
 
 
 def create_mcp_server():
@@ -245,7 +297,93 @@ def create_mcp_server():
         history = await _api_get("/history")
         return str(history[:20])
 
+    @mcp.tool()
+    async def clone_voice(
+        name: str,
+        ref_audio_base64: str,
+        ref_text: str = "",
+        instruct: str = "",
+        language: str = "Auto",
+    ) -> str:
+        """Clone a new voice profile from a reference audio sample.
+
+        The new voice is immediately available for use with generate_speech
+        (pass the returned profile_id as the profile_id argument).
+
+        Args:
+            name: A human-friendly name for the cloned voice.
+            ref_audio_base64: Base64-encoded audio (WAV, MP3, FLAC, etc.) of
+                the reference voice — 5-30 seconds of clean single-speaker
+                speech.
+            ref_text: Optional transcript of the reference audio (improves
+                quality for some engines).
+            instruct: Optional style instruction (e.g. 'whisper', 'excited').
+            language: Language of the reference audio (ISO code or 'Auto').
+
+        Returns:
+            JSON with the new profile's id, name, and kind.
+        """
+        # Reject oversized inputs before decoding (base64 is always larger
+        # than raw, so this is a safe lower bound on the decoded size).
+        if len(ref_audio_base64) > 200 * 1024 * 1024:
+            return '{"error":"reference audio exceeds 200 MB limit"}'
+        raw = _decode_ref_audio(ref_audio_base64)
+        if raw is None:
+            return '{"error":"ref_audio_base64 is not valid base64"}'
+        if not raw:
+            return '{"error":"ref_audio_base64 is empty"}'
+        import httpx
+        try:
+            r = await _api_post_form(
+                "/profiles",
+                data={
+                    "name": name,
+                    "kind": "clone",
+                    "ref_text": ref_text,
+                    "instruct": instruct,
+                    "language": language,
+                },
+                files={"ref_audio": (f"ref_audio{_sniff_audio_ext(raw)}", raw,
+                                     "application/octet-stream")},
+            )
+            p = r.json()
+        except httpx.HTTPStatusError as exc:
+            # Cloning commonly fails validation (duplicate name, audio too
+            # short, quality gate) — surface the backend's own detail as the
+            # structured error the agent expects, not a framework traceback.
+            try:
+                detail = exc.response.json().get("detail")
+            except ValueError:
+                detail = None
+            return json.dumps({"error": str(detail or exc.response.text
+                                             or f"HTTP {exc.response.status_code}")})
+        except (httpx.HTTPError, ValueError) as exc:
+            # Transport failures + non-JSON success bodies (proxy error page).
+            return json.dumps({"error": f"backend request failed: {exc}"})
+        return json.dumps({"profile_id": p["id"], "name": p["name"], "kind": p["kind"]})
+
     return mcp
+
+
+def mount_mcp(app) -> bool:
+    """Best-effort sub-mount of the MCP Streamable-HTTP app at /mcp.
+
+    Returns True on success, False on any failure. Contains SystemExit as
+    well as Exception (#1156): an integration dependency written as a CLI
+    can call sys.exit, and that must degrade to "/mcp disabled" — never
+    take down backend startup (same exit-containment class as the engine
+    boundary, #1143).
+    """
+    try:
+        mcp = create_mcp_server()
+        mcp_app = mcp.streamable_http_app()
+        app.state.mcp_session_manager = mcp.session_manager
+        app.mount("/mcp", mcp_app)
+        logger.info("MCP app mounted at /mcp")
+        return True
+    except (Exception, SystemExit) as err:  # noqa: BLE001
+        logger.info("MCP server not mounted (%s); /mcp disabled.", err)
+        return False
 
 
 # ── CLI entrypoint ──────────────────────────────────────────────────────
@@ -262,7 +400,13 @@ def main():
     )
     args = parser.parse_args()
 
-    mcp = create_mcp_server()
+    try:
+        mcp = create_mcp_server()
+    except ImportError as e:
+        # Standalone run: a missing SDK is fatal, and a nonzero exit is the
+        # right contract for a CLI (the embedded path uses mount_mcp above).
+        logger.exception("%s", e)
+        sys.exit(1)
 
     if args.sse:
         logger.info("Starting MCP server on SSE transport, port %d", args.port)

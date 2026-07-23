@@ -13,7 +13,12 @@ from fastapi.responses import FileResponse, StreamingResponse
 from core.config import DUB_DIR, dub_seg_path
 from core.tasks import task_manager
 from api.routers.dub_core import _get_job
-from services.ffmpeg_utils import find_ffmpeg, run_ffmpeg
+from services.ffmpeg_utils import (
+    bed_mix_filter,
+    explain_ffmpeg_failure,
+    find_ffmpeg,
+    run_ffmpeg,
+)
 from services.video_retime import (
     DRIFT_TOLERANCE_S,
     RetimeError,
@@ -170,8 +175,61 @@ async def dub_list_tracks(job_id: str):
     return {"tracks": job.get("dubbed_tracks", {})}
 
 
+@router.get("/dub/segments-text/{job_id}")
+async def dub_segments_text(job_id: str, lang: str = Query(...)):
+    """Per-segment texts for one generated track: ``{"texts": {segKey: text}}``.
+
+    Backing store is ``job["segments_i18n"]`` (P1.2) — the authoritative
+    per-language map every generate rebuilds. The Export preview tabs use it
+    to hydrate segments whose in-browser ``translations[lang]`` entry is
+    missing (tracks generated before per-language persistence, partial
+    regens), so switching the preview language can't leave a mixed-language
+    transcript. Empty map when the job predates segments_i18n or the track
+    was never generated — the client keeps whatever it has.
+    """
+    job = _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    i18n = job.get("segments_i18n") or {}
+    return {"texts": i18n.get(lang) or {}}
+
+
+def _segments_for_lang(job: dict, lang: "str | None") -> list:
+    """Job segments with `text` overlaid from ``job["segments_i18n"][lang]``.
+
+    P1.2 — ``job["segments"]`` is single-slot: it holds whichever language was
+    generated LAST, so exporting subtitles for track A after generating track B
+    emitted B's text under A's language label (the "N identical subtitle
+    files" class). ``segments_i18n`` ({lang: {segKey: text}}, written by
+    ``dub_generate._sync_job_segments``) preserves each generated track's text;
+    this overlays it non-destructively when present.
+
+    Back-compat: no lang requested, no ``segments_i18n`` on the job (predates
+    the field), no entry for this lang, or no text for a given segment — each
+    falls back to the segment as-is, i.e. exactly today's behaviour.
+    Segment keys are the stable id (str) with the list index (str) as the
+    legacy fallback, mirroring how the map is written.
+    """
+    segments = job.get("segments", [])
+    if not lang:
+        return segments
+    i18n = job.get("segments_i18n")
+    lang_texts = i18n.get(lang) if isinstance(i18n, dict) else None
+    if not isinstance(lang_texts, dict) or not lang_texts:
+        return segments
+    out = []
+    for i, seg in enumerate(segments):
+        key = str(seg.get("id")) if seg.get("id") is not None else str(i)
+        txt = lang_texts.get(key)
+        if txt is None:
+            txt = lang_texts.get(str(i))
+        out.append(dict(seg, text=txt) if isinstance(txt, str) and txt.strip() else seg)
+    return out
+
+
 def _write_burn_srt(job: dict, exports_dir: str, stamp: str, dual: bool,
-                    fitted_segments: "list[dict] | None" = None) -> str | None:
+                    fitted_segments: "list[dict] | None" = None,
+                    lang: "str | None" = None) -> str | None:
     """Build a temp SRT from job segments for use with ffmpeg's subtitles filter.
 
     Returned path is already ffmpeg-filter-safe (plain ASCII basename under exports_dir).
@@ -181,8 +239,11 @@ def _write_burn_srt(job: dict, exports_dir: str, stamp: str, dual: bool,
     fitted timeline — when provided, cue times come from there instead of
     the original ``job["segments"]`` timings, so burned subs track the
     retimed video / fitted audio rather than the source timeline.
+
+    ``lang`` (P1.2): burn the named track's text (see ``_segments_for_lang``)
+    instead of whatever language generated last.
     """
-    segments = job.get("segments", [])
+    segments = _segments_for_lang(job, lang)
     if not segments:
         return None
     if fitted_segments:
@@ -356,7 +417,7 @@ def _build_audio_export_cmd(
         # Mix the dubbed voice over the original background bed (same weights
         # as the video mux path) so ambience/music is preserved.
         cmd += ["-i", bg_path, "-filter_complex",
-                "[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2:weights=1.2 0.8[aout]",
+                bed_mix_filter("1:a", "0:a"),
                 "-map", "[aout]"]
     cmd += codec
     cmd.append(out_path)
@@ -440,7 +501,7 @@ async def dub_download(
         except Exception as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"ffmpeg failed to export dubbed audio: {e}. Verify ffmpeg is installed (`ffmpeg -version`) and the dubbed track exists.",
+                detail=explain_ffmpeg_failure(e, "export dubbed audio", cmd=cmd),
             )
         if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
             raise HTTPException(status_code=500, detail="ffmpeg audio export produced no output file")
@@ -486,7 +547,9 @@ async def dub_download(
     # Smart Fit: cue times come from the fitted timeline — that's where the
     # dubbed audio actually sits, whether or not the video retime succeeds.
     fitted_segments = _fitted_segments_for(job, default_track) if default_track and default_track != "original" else None
-    sub_path = _write_burn_srt(job, exports_dir, stamp, dual, fitted_segments=fitted_segments) if burn_subs else None
+    # Burn the DEFAULT track's text (P1.2) — it's the audio the viewer hears.
+    _burn_lang = default_track if default_track and default_track != "original" else None
+    sub_path = _write_burn_srt(job, exports_dir, stamp, dual, fitted_segments=fitted_segments, lang=_burn_lang) if burn_subs else None
 
     # ── Smart Fit video retime (two-tier) ─────────────────────────────────
     # Tier 1 (≤48 chunks): single filter_complex graph inlined into the mux
@@ -533,10 +596,10 @@ async def dub_download(
             from core.failure import build_failure
             retime_warning = build_failure(e, stage="video-retime", include_diagnostic=False)
             job["last_export_warning"] = {"type": "video_retime_fallback", **retime_warning}
-            logger.error(
+            logger.exception(
                 "Smart Fit video retime failed for job %s — exporting "
-                "without per-segment retime: %s",
-                job_id.replace("\n", " ").replace("\r", " "), e,
+                "without per-segment retime",
+                job_id.replace("\n", " ").replace("\r", " "),
             )
 
     cmd = [ffmpeg, "-i", video_path]
@@ -623,12 +686,11 @@ async def dub_download(
 
     if bg_idx is not None:
         for i, t in enumerate(tracks_to_process):
-            out_label = f"[aout{i}]"
-            chain = f"[{bg_idx}:a][{t['idx']}:a]amix=inputs=2:duration=longest:dropout_transition=2:weights=0.8 1.2"
-            if apad_dur:
-                chain += f",apad=whole_dur={apad_dur:.4f}"
-            filter_parts.append(chain + out_label)
-            t["out_label"] = out_label
+            tail = f",apad=whole_dur={apad_dur:.4f}" if apad_dur else ""
+            filter_parts.append(bed_mix_filter(
+                f"{bg_idx}:a", f"{t['idx']}:a", out=f"aout{i}", tail=tail, uniq=str(i),
+            ))
+            t["out_label"] = f"[aout{i}]"
         for t in tracks_to_process:
             cmd += ["-map", t["out_label"]]
     elif apad_dur:
@@ -702,7 +764,7 @@ async def dub_download(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"ffmpeg failed to combine video + dubbed audio: {e}. Verify ffmpeg is installed (`ffmpeg -version`), and check that every dubbed track file exists in the job folder.",
+            detail=explain_ffmpeg_failure(e, "combine video + dubbed audio", cmd=cmd),
         )
     finally:
         # The batched retime intermediate is a full re-encoded video — never
@@ -895,10 +957,10 @@ async def dub_preview_video(
                 # rather than a black player. The export path surfaces the
                 # structured warning; here we just log.
                 retime_decision = None
-                logger.error(
+                logger.exception(
                     "Smart Fit preview retime failed for job %s — previewing "
-                    "without per-segment retime: %s",
-                    job_id.replace("\n", " ").replace("\r", " "), e,
+                    "without per-segment retime",
+                    job_id.replace("\n", " ").replace("\r", " "),
                 )
 
         cmd = [ffmpeg, "-i", video_path]
@@ -959,10 +1021,8 @@ async def dub_preview_video(
 
         audio_map = f"{track_idx}:a:0"
         if bg_idx is not None:
-            chain = f"[{bg_idx}:a][{track_idx}:a]amix=inputs=2:duration=longest:dropout_transition=2:weights=0.8 1.2"
-            if apad_dur:
-                chain += f",apad=whole_dur={apad_dur:.4f}"
-            filter_parts.append(chain + "[aout]")
+            tail = f",apad=whole_dur={apad_dur:.4f}" if apad_dur else ""
+            filter_parts.append(bed_mix_filter(f"{bg_idx}:a", f"{track_idx}:a", tail=tail))
             audio_map = "[aout]"
         elif apad_dur:
             filter_parts.append(f"[{track_idx}:a]apad=whole_dur={apad_dur:.4f}[aout]")
@@ -1125,20 +1185,40 @@ async def dub_get_audio(job_id: str):
         raise HTTPException(status_code=404, detail="Audio file not found")
     return FileResponse(audio, media_type="audio/wav")
 
+def _seg_wav_candidates(job: dict, lang: "str | None", seg_keys: tuple) -> list:
+    """Per-segment WAV name candidates, language-keyed first (P1.3).
+
+    Generation writes ``seg_{lang}_{id}.wav`` now; ``lang`` defaults to the
+    job's last-generated track. Legacy un-keyed names (``seg_{id}.wav`` /
+    ``seg_{index}.wav``) stay as fallbacks so jobs rendered by previous
+    builds keep serving their audio — these read-only endpoints keep the
+    permissive fallback that matches their historic behaviour (the strict
+    single-track gate lives on the generate splice path, where a wrong-
+    language read would be baked into a track).
+    """
+    lang = lang or job.get("language_code")
+    keys = []
+    if lang:
+        keys.extend(f"{lang}_{k}" for k in seg_keys)
+    keys.extend(seg_keys)
+    return keys
+
+
 @router.get("/dub/preview/{job_id}/{segment_index}")
-async def dub_preview_segment(job_id: str, segment_index: int):
+async def dub_preview_segment(job_id: str, segment_index: int, lang: str = Query(None)):
     job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    # Resolve the stable-id-named WAV via the render manifest; fall back to the
-    # legacy index name for jobs rendered before id-based naming (#185). Each
-    # candidate is realpath-normalised and containment-checked BEFORE any
-    # filesystem access, so the guard dominates every path sink.
+    # Resolve the stable-id-named WAV via the render manifest — language-keyed
+    # name first (P1.3), then the legacy id/index names for jobs rendered
+    # before per-language (and before id-based, #185) naming. Each candidate
+    # is realpath-normalised and containment-checked BEFORE any filesystem
+    # access, so the guard dominates every path sink.
     order = job.get("seg_order") or []
     seg_id = order[segment_index] if 0 <= segment_index < len(order) else segment_index
     base = os.path.realpath(DUB_DIR)
     seg_path = None
-    for _sid in (seg_id, segment_index):
+    for _sid in _seg_wav_candidates(job, lang, (seg_id, segment_index)):
         cand = os.path.realpath(dub_seg_path(job_id, _sid))
         if cand.startswith(base + os.sep) and os.path.exists(cand):
             seg_path = cand
@@ -1179,6 +1259,16 @@ async def dub_qc_pass(job_id: str, lang: str = Query(None), drift_threshold: flo
     if not segments:
         raise HTTPException(status_code=400, detail="Job has no segments")
 
+    # TTS-only install: no ASR model on disk → typed 409 with a download CTA,
+    # BEFORE any backend load could silently auto-download whisper weights.
+    from services.asr_backend import asr_model_missing_detail, asr_model_missing_error
+    missing = await asyncio.to_thread(asr_model_missing_error)
+    if missing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={**missing, "message": asr_model_missing_detail(missing)},
+        )
+
     def _recognize():
         from services.asr_backend import get_active_asr_backend
         backend = get_active_asr_backend()
@@ -1187,8 +1277,14 @@ async def dub_qc_pass(job_id: str, lang: str = Query(None), drift_threshold: flo
 
     try:
         from services.model_manager import _get_gpu_pool
-        loop = asyncio.get_running_loop()
-        recognized, engine_id = await loop.run_in_executor(_get_gpu_pool(), _recognize)
+        from services.asr_backend import ASRTimeoutError, run_transcribe_guarded
+        recognized, engine_id = await run_transcribe_guarded(
+            _get_gpu_pool(), _recognize, what="QC",
+        )
+    except ASRTimeoutError as e:
+        # Backend is alive; ASR just couldn't finish in time. 504, not 500/connection.
+        logger.warning("dub QC ASR pass timed out for %s: %s", job_id, e)
+        raise HTTPException(status_code=504, detail=str(e))
     except Exception as e:
         logger.exception("dub QC ASR pass failed for %s", job_id)
         raise HTTPException(status_code=500, detail=f"QC transcription failed: {e}")
@@ -1265,7 +1361,7 @@ async def dub_download_audio(job_id: str, lang: str = Query(None), preserve_bg: 
         final_audio_path = os.path.join(exports_dir, f"mixed_dub_{lang_label}_{stamp}.wav")
         cmd = [
             ffmpeg, "-i", bg_audio, "-i", wav_path,
-            "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2:weights=0.8 1.2[aout]",
+            "-filter_complex", bed_mix_filter("0:a", "1:a"),
             "-map", "[aout]", "-c:a", "pcm_s16le", "-y", final_audio_path
         ]
         try:
@@ -1276,8 +1372,8 @@ async def dub_download_audio(job_id: str, lang: str = Query(None), preserve_bg: 
                 raise Exception("ffmpeg mix produced no output file")
             wav_path = final_audio_path
             logger.info("Dub audio mix wrote %s (%d bytes)", final_audio_path, os.path.getsize(final_audio_path))
-        except Exception as e:
-            logger.error(f"Failed to mix audio: {str(e)}")
+        except Exception:
+            logger.exception("Failed to mix audio")
 
     base_name = os.path.splitext(job.get('filename', 'audio'))[0]
     safe_name = ''.join(c for c in base_name if c.isalnum() or c in '-_ ').strip() or 'audio'
@@ -1336,13 +1432,16 @@ def _fitted_cue_times(job: dict, lang: str | None) -> list | None:
 async def dub_export_srt(
     job_id: str,
     dual: bool = False,
-    lang: str = Query(None, description="Track language code. When that track was generated under Smart Fit or stretch_video, cue times come from the fitted timeline."),
+    lang: str = Query(None, description="Track language code. Emits that track's text (segments_i18n) when the job carries it; when that track was generated under Smart Fit or stretch_video, cue times come from the fitted timeline."),
 ):
     job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    segments = job.get("segments", [])
+    # P1.2 — text follows the REQUESTED track, not whichever language was
+    # generated last (job["segments"] is single-slot). Legacy jobs without
+    # segments_i18n fall back to today's behaviour.
+    segments = _segments_for_lang(job, lang)
     if not segments:
         raise HTTPException(status_code=400, detail="No transcript segments available")
 
@@ -1385,13 +1484,14 @@ def _format_vtt_time(seconds):
 async def dub_export_vtt(
     job_id: str,
     dual: bool = False,
-    lang: str = Query(None, description="Track language code. When that track was generated under Smart Fit or stretch_video, cue times come from the fitted timeline."),
+    lang: str = Query(None, description="Track language code. Emits that track's text (segments_i18n) when the job carries it; when that track was generated under Smart Fit or stretch_video, cue times come from the fitted timeline."),
 ):
     job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    segments = job.get("segments", [])
+    # Same per-track text resolution as /dub/srt (see comment there, P1.2).
+    segments = _segments_for_lang(job, lang)
     if not segments:
         raise HTTPException(status_code=400, detail="No transcript segments available")
 
@@ -1421,7 +1521,7 @@ async def dub_export_vtt(
 
 
 @router.get("/dub/export-segments/{job_id}")
-async def dub_export_segments_zip(job_id: str):
+async def dub_export_segments_zip(job_id: str, lang: str = Query(None)):
     import zipfile
     job = _get_job(job_id)
     if not job:
@@ -1439,7 +1539,7 @@ async def dub_export_segments_zip(job_id: str):
             seg_id = order[i] if i < len(order) else i
             # realpath + containment guard before any filesystem access.
             seg_path = None
-            for _sid in (seg_id, i):
+            for _sid in _seg_wav_candidates(job, lang, (seg_id, i)):
                 cand = os.path.realpath(dub_seg_path(job_id, _sid))
                 if cand.startswith(base + os.sep) and os.path.exists(cand):
                     seg_path = cand
@@ -1490,15 +1590,15 @@ async def dub_download_mp3(job_id: str, lang: str = Query(None), preserve_bg: bo
         mixed_path = os.path.join(exports_dir, f"mixed_mp3_{lang_label}_{stamp}.wav")
         cmd_mix = [
             ffmpeg, "-i", bg_audio, "-i", wav_path,
-            "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2:weights=0.8 1.2[aout]",
+            "-filter_complex", bed_mix_filter("0:a", "1:a"),
             "-map", "[aout]", "-c:a", "pcm_s16le", "-y", mixed_path
         ]
         try:
             rc, _, _ = await run_ffmpeg(cmd_mix, timeout=900.0)
             if rc == 0 and os.path.exists(mixed_path) and os.path.getsize(mixed_path) > 0:
                 source_path = mixed_path
-        except Exception as e:
-            logger.error(f"Failed to mix audio for MP3: {e}")
+        except Exception:
+            logger.exception("Failed to mix audio for MP3")
 
     mp3_path = os.path.join(exports_dir, f"dubbed_{lang_label}_{stamp}.mp3")
     # Accept '128', '192k' etc. — normalize to ffmpeg's 'Nk' form and clamp
@@ -1519,10 +1619,12 @@ async def dub_download_mp3(job_id: str, lang: str = Query(None), preserve_bg: bo
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"ffmpeg couldn't encode MP3: {e}. Check that libmp3lame is compiled into your ffmpeg build (`ffmpeg -codecs | grep mp3`) — reinstall via homebrew if it's missing.",
-        )
+        detail = explain_ffmpeg_failure(e, "encode MP3", cmd=cmd)
+        if not isinstance(e, OSError):
+            # ffmpeg ran and failed: for MP3 the classic cause is a build
+            # without libmp3lame — keep that hint for the ran-and-failed case.
+            detail += " If the error mentions libmp3lame, your ffmpeg build lacks the MP3 encoder (`ffmpeg -codecs | grep mp3`)."
+        raise HTTPException(status_code=500, detail=detail)
 
     if not os.path.exists(mp3_path) or os.path.getsize(mp3_path) == 0:
         raise HTTPException(status_code=500, detail="MP3 encoding produced no output file")

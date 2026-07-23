@@ -10,6 +10,8 @@ cloning, and cinematic video dubbing — fully local, no API keys, no accounts.
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](https://github.com/debpalash/OmniVoice-Studio/blob/main/LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/bzQavDfVV9)
 
+[![debpalash/OmniVoice-Studio on Trendshift](https://trendshift.io/api/badge/trendshift/repositories/28176/daily?language=Python)](https://trendshift.io/repositories/28176?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-28176)
+
 ![OmniVoice Studio — the open-source ElevenLabs alternative](https://raw.githubusercontent.com/debpalash/OmniVoice-Studio/main/.github/assets/social-preview.png)
 
 OmniVoice runs entirely on your own hardware (CUDA / MPS / ROCm / CPU
@@ -21,6 +23,12 @@ the UI in a browser.
 > The Tauri desktop app's auto-updater and update-channel toggle are
 > **desktop-only** and do not apply to this image — to update, pull a newer tag
 > and recreate the container.
+
+**What you need:** 8 GB RAM (16 GB+ recommended), ~10 GB free disk for model
+weights + cache (20 GB+ comfortable), and optionally a GPU — 4 GB VRAM works
+(TTS auto-offloads to CPU), 8 GB+ is comfortable. No GPU at all is fine too:
+the entire pipeline runs on CPU, just slower. Pull size: ~5 GB compressed
+(CUDA/CPU image), ~15 GB for the `:rocm` variant.
 
 ---
 
@@ -49,7 +57,29 @@ docker run -d --name omnivoice --gpus all \
 
 GPU mode needs the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-on the host. There's also a Compose file in the repo with `cpu` / `gpu` profiles
+on the host.
+
+## Quick start (AMD GPU / ROCm)
+
+AMD GPUs use the dedicated `:rocm` image variant (the default image is
+CUDA-only and runs on CPU on AMD hardware). No toolkit needed — pass the GPU
+through as device nodes; the host only needs the `amdgpu` kernel driver:
+
+```bash
+docker run -d --name omnivoice \
+  --device /dev/kfd --device /dev/dri \
+  -p 127.0.0.1:3900:3900 \
+  -v omnivoice-data:/app/omnivoice_data \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  palashdeb/omnivoice-studio:rocm
+```
+
+Podman users: same two `--device` flags (Quadlet: `AddDevice=/dev/kfd` +
+`AddDevice=/dev/dri`). On RDNA3 consumer cards (RX 7900 XTX/XT), add
+`-e HSA_OVERRIDE_GFX_VERSION=11.0.0` if the GPU isn't detected — details in
+the [Docker install guide](https://github.com/debpalash/OmniVoice-Studio/blob/main/docs/install/docker.md).
+
+There's also a Compose file in the repo with `cpu` / `gpu` / `rocm` profiles
 — see the [Docker install guide](https://github.com/debpalash/OmniVoice-Studio/blob/main/docs/install/docker.md).
 
 ---
@@ -58,15 +88,17 @@ on the host. There's also a Compose file in the repo with `cpu` / `gpu` profiles
 
 | Tag | What you get |
 |-----|--------------|
-| `:latest` | **Rolling preview** — latest commit on `main` (always one patch ahead of the last release). This is the preview channel; pin `:stable` for production. |
+| `:latest` | **Rolling preview** — latest commit on `main`, at or ahead of the last release. This is the preview channel; pin `:stable` for production. |
 | `:stable` | Most recent versioned release (updated on every `v*` git tag) |
-| `:0.3.6` | Exact release version |
-| `:0.3` | Latest patch within the `0.3` minor |
+| `:0.4.0` | Exact release version |
+| `:0.4` | Latest patch within the `0.4` minor |
 | `:main` | Alias of the same rolling `main` build as `:latest` |
 | `:sha-xxxxxxx` | A specific commit (produced by manual workflow dispatch) |
+| `:rocm` | **AMD GPU (ROCm) build** of the rolling preview — the ROCm analogue of `:latest` |
+| `:stable-rocm`, `:0.4.0-rocm`, `:0.4-rocm`, `:sha-xxxxxxx-rocm` | ROCm builds of the corresponding tags above |
 
-`main` always carries *last release + 1 patch*, so `:latest` (preview)
-version-sorts above `:stable` — upgrades flow naturally. The same images and tags
+Preview builds always come from `main` and never version-sort below `:stable`,
+so upgrades flow naturally. The same images and tags
 are mirrored on GHCR at
 [`ghcr.io/debpalash/omnivoice-studio`](https://github.com/debpalash/OmniVoice-Studio/pkgs/container/omnivoice-studio).
 

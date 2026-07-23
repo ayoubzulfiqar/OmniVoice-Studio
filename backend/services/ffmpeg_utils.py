@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 
 # Leaf module (stdlib-only) — safe to import at module top, unlike
 # services.dub_pipeline which imports this module and would cycle.
@@ -15,12 +16,145 @@ logger = logging.getLogger("omnivoice.api")
 _FFMPEG_SEMAPHORE: "asyncio.Semaphore | None" = None
 _FFMPEG_CONCURRENCY = 2
 
+# ── Background-bed mixing (dub voice over the separated no_vocals stem) ──────
+#
+# Every dub export mixes the synthesized voice track over the original video's
+# separated background (music/ambience). Two fidelity bugs lived in the old
+# per-site `amix` strings, and they are exactly what "the background music
+# doesn't sound like the original" reports describe:
+#
+#   1. LEVEL — `amix` NORMALIZES: each input is scaled by weight/sum(weights).
+#      The old `weights=0.8 1.2` therefore played the music bed at 40% of its
+#      original level (−8 dB) and the voice at 60%. (batch.py was worse still:
+#      an explicit volume=0.15 plus amix's ÷2 left the bed at 7.5%.) We keep
+#      amix for its duration/dropout semantics but multiply the mix by
+#      sum(weights) afterwards, which cancels the normalization exactly — the
+#      weights below ARE the absolute gains.
+#   2. BANDWIDTH — the voice track is synthesized at 24 kHz and amix
+#      negotiates one common rate, so the 44.1/48 kHz bed was silently
+#      downsampled to 24 kHz: everything above 12 kHz (cymbals, air,
+#      brightness) vanished from the music. Both inputs are now explicitly
+#      resampled to 48 kHz before the mix, so the bed keeps its top end.
+#
+# Bed at −0.9 dB (0.9×) keeps the music essentially at the original level
+# while letting dialogue sit just above it; the limiter transparently catches
+# the rare summed peak that now can exceed full scale (the old normalization
+# made clipping impossible by making everything quiet).
+BED_MIX_SAMPLE_RATE = 48000
+BED_GAIN = 0.9
+VOICE_GAIN = 1.1
+
+# Whether the resolved ffmpeg's amix supports `normalize` (added in 5.x).
+# Probed once per process; None = not probed yet.
+_AMIX_NORMALIZE: "bool | None" = None
+
+
+def _amix_supports_normalize() -> bool:
+    """True when the resolved ffmpeg's ``amix`` accepts ``normalize=0``.
+
+    Matters because amix's normalization is DYNAMIC: it rescales whenever an
+    input ends. A constant post-mix compensation is therefore only exact while
+    both streams are active — after the (usually marginally shorter) voice
+    stream ends, the bed's internal scale jumps from w/sum to 1.0 and a fixed
+    multiply would BOOST the tail music into the limiter. ``normalize=0``
+    turns amix into a plain sum, immune to stream-end rescaling. Old system
+    ffmpegs (<5) lack the option and would reject the whole graph, so probe
+    once and fall back to the compensated form there (its tail quirk is the
+    lesser evil next to a failed export).
+    """
+    global _AMIX_NORMALIZE
+    if _AMIX_NORMALIZE is None:
+        supported = False
+        try:
+            ff = find_ffmpeg()
+            if ff:
+                res = subprocess.run(
+                    [ff, "-hide_banner", "-h", "filter=amix"],
+                    capture_output=True, timeout=10, check=False,
+                )
+                supported = b"normalize" in (res.stdout or b"")
+        except Exception as e:  # noqa: BLE001 — a probe failure must not break exports
+            logger.debug("amix normalize probe failed: %s", e)
+        _AMIX_NORMALIZE = supported
+    return _AMIX_NORMALIZE
+
+
+def bed_mix_filter(
+    bed_in: str,
+    voice_in: str,
+    *,
+    out: str = "aout",
+    duration: str = "longest",
+    tail: str = "",
+    uniq: str = "",
+) -> str:
+    """One ffmpeg filter chain mixing `voice_in` over `bed_in` at original level.
+
+    `bed_in`/`voice_in` are filtergraph input labels ("0:a", "1:a", …); `out`
+    is the output label (without brackets). `tail` appends extra filters after
+    the gain stage (e.g. ",apad=whole_dur=…"). `uniq` disambiguates internal
+    labels when several chains share one filtergraph.
+    """
+    b, v = f"bmb{uniq}", f"bmv{uniq}"
+    # Both legs are forced to STEREO before amix. The synthesized voice is
+    # mono, and amix negotiates one common layout for all inputs — without
+    # this, the negotiation collapsed the stereo music bed to mono (measured
+    # on a real dub: L/R correlation 1.000 vs the original's 0.754 — the
+    # entire stereo image gone). Upmixing the mono voice duplicates it into
+    # both channels (dead center, where dubbed dialogue belongs) so the bed
+    # keeps its width.
+    stereo = "aformat=channel_layouts=stereo"
+    if _amix_supports_normalize():
+        # Gains applied per input, amix reduced to a plain sum: levels are
+        # exact for the whole timeline, including after either stream ends.
+        return (
+            f"[{bed_in}]aresample={BED_MIX_SAMPLE_RATE},{stereo},volume={BED_GAIN:g}[{b}];"
+            f"[{voice_in}]aresample={BED_MIX_SAMPLE_RATE},{stereo},volume={VOICE_GAIN:g}[{v}];"
+            f"[{b}][{v}]amix=inputs=2:duration={duration}:dropout_transition=2:"
+            f"normalize=0,alimiter=level=false:limit=0.98{tail}[{out}]"
+        )
+    # Legacy ffmpeg (<5, no `normalize`): cancel amix's normalization with a
+    # compensating multiply. Exact while both streams run; if one ends early
+    # the tail is over-boosted into the limiter until the graph ends — a known
+    # quirk accepted only on old ffmpeg, where the alternative is no export.
+    total = BED_GAIN + VOICE_GAIN
+    return (
+        f"[{bed_in}]aresample={BED_MIX_SAMPLE_RATE},{stereo}[{b}];"
+        f"[{voice_in}]aresample={BED_MIX_SAMPLE_RATE},{stereo}[{v}];"
+        f"[{b}][{v}]amix=inputs=2:duration={duration}:dropout_transition=2:"
+        f"weights={BED_GAIN:g} {VOICE_GAIN:g},volume={total:g},"
+        f"alimiter=level=false:limit=0.98{tail}[{out}]"
+    )
+
 
 def _get_semaphore() -> asyncio.Semaphore:
     global _FFMPEG_SEMAPHORE
     if _FFMPEG_SEMAPHORE is None:
         _FFMPEG_SEMAPHORE = asyncio.Semaphore(_FFMPEG_CONCURRENCY)
     return _FFMPEG_SEMAPHORE
+
+
+def windows_tool_candidates(tool: str) -> "list[str]":
+    """Well-known Windows install locations for *tool* (ffmpeg/ffprobe).
+
+    Derived from the environment instead of hardcoding ``C:\\`` so machines
+    whose Windows/Program Files live on another drive still resolve (the
+    non-system-drive class): ``%ProgramFiles%``/``%ProgramW6432%`` for the
+    relocatable Program Files, ``%SystemDrive%``+D: for the conventional
+    ``<drive>:\\ffmpeg\\bin`` layout. Empty on non-Windows."""
+    if os.name != "nt":
+        return []
+    out: list[str] = []
+    drives = {os.environ.get("SystemDrive", "C:"), "C:", "D:"}
+    for drive in sorted(drives):
+        out.append(f"{drive}\\ffmpeg\\bin\\{tool}.exe")
+    pf_dirs = {
+        os.environ.get("ProgramFiles", "C:\\Program Files"),
+        os.environ.get("ProgramW6432", "C:\\Program Files"),
+    }
+    for pf in sorted(pf_dirs):
+        out.append(os.path.join(pf, "ffmpeg", "bin", f"{tool}.exe"))
+    return out
 
 
 # Candidate paths that exist but won't run (validated once per process).
@@ -57,9 +191,13 @@ def find_ffmpeg():
     """Locate an ffmpeg binary.
 
     Resolution order:
-      1. ``FFMPEG_PATH`` env var (set by Tauri when a sidecar is bundled).
+      1. ``FFMPEG_PATH`` env var (set by Tauri when a sidecar is bundled, or
+         by the user's Settings → Audio tools override via prefs).
       2. ``imageio-ffmpeg`` pip package (ships a static binary per platform).
-      3. Common system paths / ``PATH``.
+      3. OmniVoice-acquired static bundle (``services.media_tools``) — the
+         checksummed build the app downloads itself when nothing else
+         resolves; the only bundled tier that also ships ffprobe.
+      4. Common system paths / ``PATH``.
 
     Returns the path string, or ``None`` if nothing found.
     """
@@ -78,13 +216,17 @@ def find_ffmpeg():
         logger.debug("imageio_ffmpeg binary not usable at %s", candidate)
     except Exception as e:
         logger.debug("imageio_ffmpeg unavailable: %s", e)
-    # 3. Well-known system paths + PATH lookup
+    # 3. OmniVoice-acquired bundled static binary (never downloads here —
+    # acquisition is media_tools' background job; this only picks up an
+    # already-installed build).
+    candidate = _acquired_bundled("ffmpeg")
+    if candidate:
+        return candidate
+    # 4. Well-known system paths + PATH lookup
     common = [
         "/opt/homebrew/bin/ffmpeg",
         "/usr/local/bin/ffmpeg",
-        "C:\\ffmpeg\\bin\\ffmpeg.exe",
-        "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
-        "D:\\ffmpeg\\bin\\ffmpeg.exe",
+        *windows_tool_candidates("ffmpeg"),
         "ffmpeg",
     ]
     for path in common:
@@ -92,6 +234,22 @@ def find_ffmpeg():
         if resolved and _binary_runs(resolved):
             return resolved
     logger.warning("ffmpeg not found (or not runnable) in env, imageio, or system PATH")
+    return None
+
+
+def _acquired_bundled(tool: str) -> "str | None":
+    """Already-acquired media_tools static binary, validated — or None.
+
+    Lazy import: media_tools imports from this module at its top, so this
+    module must only reach back at call time (no cycle).
+    """
+    try:
+        from services.media_tools import bundled_tool_path
+        candidate = bundled_tool_path(tool)
+        if candidate and _binary_runs(candidate):
+            return candidate
+    except Exception as e:
+        logger.debug("media_tools bundled %s unavailable: %s", tool, e)
     return None
 
 
@@ -103,8 +261,12 @@ def resolve_ffprobe() -> str | None:
          injected by Tauri pointing at the bundled sidecar (e.g.
          ``/usr/lib/omnivoice-studio/bin/ffprobe`` on .deb installs).
       2. ``FFPROBE_PATH`` env var — legacy alias kept for backward
-         compatibility with older Tauri shells / dev environments.
-      3. ``shutil.which("ffprobe")`` — system ``PATH`` fallback.
+         compatibility with older Tauri shells / dev environments; also the
+         key Settings → Audio tools persists a user override under.
+      3. OmniVoice-acquired static bundle (``services.media_tools``) —
+         imageio-ffmpeg ships no ffprobe, so this is the bundled tier that
+         closes the source-install gap.
+      4. ``shutil.which("ffprobe")`` — system ``PATH`` fallback.
 
     Returns the resolved path string, or ``None`` if nothing found. Callers
     that need a hard failure should use :func:`find_ffprobe` instead.
@@ -120,6 +282,10 @@ def resolve_ffprobe() -> str | None:
         resolved = shutil.which(path)
         if resolved and _binary_runs(resolved):
             return resolved
+
+    bundled = _acquired_bundled("ffprobe")
+    if bundled:
+        return bundled
 
     system_probe = shutil.which("ffprobe")
     if system_probe and _binary_runs(system_probe):
@@ -184,6 +350,14 @@ async def _spawn_thread_fallback(cmd, **kwargs):
             self.stdout = popen.stdout
             self.stderr = popen.stderr
             self.pid = popen.pid
+            # These are plain SYNC pipes (io.BufferedReader), NOT asyncio
+            # StreamReaders — so callers must not `await proc.stderr.read()` on
+            # this wrapper. `communicate()`/`wait()` below are the only async
+            # entry points. run_proc_streaming_stderr checks this flag and
+            # degrades to communicate() on the fallback loop instead of awaiting
+            # the sync pipe (which raised "a coroutine or an awaitable is
+            # required" and crashed the demucs step under uvicorn --reload).
+            self.uses_sync_pipes = True
 
         async def communicate(self, input=None):
             out, err = await loop.run_in_executor(None, self._popen.communicate, input)
@@ -375,6 +549,76 @@ async def probe_frame_rates(path: str) -> "tuple[str, str] | None":
         return None
 
 
+# Windows CreateProcess rejects command lines over 32,767 chars with
+# `[WinError 206] The filename or extension is too long`. The dub-export mux
+# argv scales with track/segment count (per-track -i/-map/-metadata plus the
+# bed-mix/apad -filter_complex graph), so a big multi-language export can hit
+# it (#1152). Externalize below this threshold — comfortably under the hard
+# limit so the remaining argv always fits.
+_WIN_ARGV_SOFT_LIMIT = 30_000
+
+
+def externalize_long_filter_complex(cmd, limit=_WIN_ARGV_SOFT_LIMIT, tmp_dir=None):
+    """If ``cmd``'s total length exceeds ``limit`` and it carries a
+    -filter_complex graph, move the graph into a temp file and switch the
+    flag to -filter_complex_script (identical semantics, reads the graph
+    from a file). Returns ``(cmd, script_path)`` — script_path is None when
+    nothing changed; the caller deletes it after the run (#1152).
+    """
+    total = sum(len(str(a)) + 1 for a in cmd)
+    if total <= limit or "-filter_complex" not in cmd:
+        return cmd, None
+    idx = cmd.index("-filter_complex")
+    if idx + 1 >= len(cmd):
+        return cmd, None
+    import tempfile
+
+    fd, script_path = tempfile.mkstemp(
+        suffix=".ffgraph", prefix="omnivoice_filter_", dir=tmp_dir
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(str(cmd[idx + 1]))
+    out = list(cmd)
+    out[idx : idx + 2] = ["-filter_complex_script", script_path]
+    logger.info(
+        "ffmpeg argv was %d chars — moved the %d-char filter graph to %s "
+        "to stay under the Windows command-line limit (#1152)",
+        total, len(str(cmd[idx + 1])), script_path,
+    )
+    return out, script_path
+
+
+def explain_ffmpeg_failure(e, what, cmd=None):
+    """Turn an export-time ffmpeg failure into an honest, actionable message.
+
+    #1152: a spawn-time `[WinError 206]` used to be concatenated with
+    "Verify ffmpeg is installed…" — the user was told their (short) filename
+    was too long AND that a working ffmpeg might be missing. Distinguish the
+    three real failure modes; never give one mode another mode's advice.
+    """
+    if isinstance(e, OSError):
+        too_long = (
+            getattr(e, "winerror", None) == 206
+            or e.errno in (errno.ENAMETOOLONG, getattr(errno, "E2BIG", None))
+            or "too long" in str(e).lower()
+        )
+        if too_long:
+            size = f" ({sum(len(str(a)) + 1 for a in cmd)} chars)" if cmd else ""
+            return (
+                f"Couldn't {what}: the assembled ffmpeg command line{size} exceeded the "
+                "Windows 32,767-character limit — this happens on exports "
+                "with very many tracks/segments, not because of your file's name. "
+                "Try exporting fewer languages per file, and please report this with "
+                "the backend log so we can shrink the command further."
+            )
+        return (
+            f"Couldn't {what}: ffmpeg could not be launched ({e}). Verify ffmpeg is "
+            "installed and runnable (`ffmpeg -version`), or set FFMPEG_PATH to a "
+            "working binary."
+        )
+    return f"Couldn't {what}: ffmpeg reported an error: {e}"
+
+
 async def run_ffmpeg(cmd, timeout: float = 1800.0, capture: bool = True,
                      job_id: "str | None" = None):
     """Run an ffmpeg subprocess with concurrency cap, timeout, and proper cleanup.
@@ -393,44 +637,57 @@ async def run_ffmpeg(cmd, timeout: float = 1800.0, capture: bool = True,
     """
     stdout = asyncio.subprocess.PIPE if capture else asyncio.subprocess.DEVNULL
     stderr = asyncio.subprocess.PIPE
-    async with _get_semaphore():
-        proc = await _spawn_with_retry(cmd, stdout=stdout, stderr=stderr)
-        if job_id:
-            try:
-                register_proc(job_id, proc)
-            except Exception as e:
-                # Newline-strip the id inline — it can originate from a path
-                # param, and the log stream must stay one-event-per-line.
-                logger.debug("register_proc failed for %s: %s",
-                             job_id.replace("\n", " ").replace("\r", " "), e)
-        try:
-            try:
-                out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    pass
-                raise
-            return proc.returncode, out, err
-        finally:
+    # #1152: on Windows an oversized argv (multi-track mux filter graphs)
+    # fails CreateProcess with WinError 206 before ffmpeg even starts —
+    # move a long -filter_complex into a script file first.
+    script_path = None
+    if sys.platform == "win32":
+        cmd, script_path = externalize_long_filter_complex(cmd)
+    try:
+        async with _get_semaphore():
+            proc = await _spawn_with_retry(cmd, stdout=stdout, stderr=stderr)
             if job_id:
                 try:
-                    unregister_proc(job_id, proc)
+                    register_proc(job_id, proc)
                 except Exception as e:
-                    logger.debug("unregister_proc failed for %s: %s",
+                    # Newline-strip the id inline — it can originate from a path
+                    # param, and the log stream must stay one-event-per-line.
+                    logger.debug("register_proc failed for %s: %s",
                                  job_id.replace("\n", " ").replace("\r", " "), e)
-            # Guarantee reaping — prevents zombie pileup under timeouts or errors.
-            if proc.returncode is None:
+            try:
                 try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
                 except asyncio.TimeoutError:
-                    pass
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        pass
+                    raise
+                return proc.returncode, out, err
+            finally:
+                if job_id:
+                    try:
+                        unregister_proc(job_id, proc)
+                    except Exception as e:
+                        logger.debug("unregister_proc failed for %s: %s",
+                                     job_id.replace("\n", " ").replace("\r", " "), e)
+                # Guarantee reaping — prevents zombie pileup under timeouts or errors.
+                if proc.returncode is None:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        pass
+    finally:
+        if script_path:
+            try:
+                os.remove(script_path)
+            except OSError:
+                pass

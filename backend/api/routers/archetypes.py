@@ -18,7 +18,6 @@ Design notes
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import os
@@ -137,7 +136,7 @@ async def _render_archetype_wav(a: dict, out_path: Path) -> None:
     from api.routers.generation import (  # noqa: WPS433 — intentional lazy import
         get_model,
         _run_inference,
-        _gpu_pool,
+        run_on_gpu_pool_guarded,
         _safe_torchaudio_save,
     )
 
@@ -146,8 +145,6 @@ async def _render_archetype_wav(a: dict, out_path: Path) -> None:
     if language in (None, "", "Auto"):
         language = None
     text = (a.get("sample_script") or "").strip() or _FALLBACK_SCRIPT
-
-    loop = asyncio.get_running_loop()
 
     def _infer(seed: int):
         return _run_inference(
@@ -171,16 +168,47 @@ async def _render_archetype_wav(a: dict, out_path: Path) -> None:
             "broadcast",    # effect_preset
         )
 
-    audio_tensor = await loop.run_in_executor(_gpu_pool, _infer, _PREVIEW_SEED)
+    # Bounded + pool-reset on hang so a wedged preview render can't starve the
+    # GPU pool and brick the backend (#730 class). Budget comes from the shared
+    # length-scaled helper (#1190) instead of the flat 300s default.
+    from services.model_manager import generate_timeout_s
+    _budget = generate_timeout_s(text)
+    audio_tensor = await run_on_gpu_pool_guarded(
+        lambda: _infer(_PREVIEW_SEED), what="Archetype preview generate",
+        timeout=_budget)
     if _is_unusable_audio(audio_tensor):
         # Blank OR a degenerate tonal buzz — retry once on a different seed to
         # step off the bad diffusion trajectory. Static message only: the
         # archetype id is request-derived (CodeQL log-injection); the seed is a
         # module constant, safe to log.
         logger.warning("Archetype rendered unusable at seed %d — retrying once", _PREVIEW_SEED)
-        audio_tensor = await loop.run_in_executor(_gpu_pool, _infer, _PREVIEW_SEED + 1)
+        audio_tensor = await run_on_gpu_pool_guarded(
+            lambda: _infer(_PREVIEW_SEED + 1), what="Archetype preview generate",
+            timeout=_budget)
     if _is_unusable_audio(audio_tensor):
         raise RuntimeError("the voice engine returned no audible audio for this archetype")
+
+    # Invisible provenance mark (#1169), tensor stage, before the WAV is
+    # persisted: this one site covers BOTH archetype outputs — the served
+    # preview clip (GET /archetypes/{id}/preview) and the synthetic reference
+    # WAV a materialized profile keeps in VOICES_DIR (played back via the
+    # profile preview route). Runs in the GPU pool like generate's finalize;
+    # never raises (degrades to unmarked on failure). User-uploaded/recorded
+    # reference audio is human speech and is never marked — this only touches
+    # audio the engine synthesized.
+    # Runs on the dedicated watermark pool (#1190): AudioSeal embedding is CPU
+    # work that holds no VRAM, so it must not occupy a GPU worker ahead of the
+    # next generate on 1-worker hosts.
+    from services.watermark import mark_synthetic
+    from services.model_manager import get_watermark_pool
+    import functools
+    audio_tensor = await run_on_gpu_pool_guarded(
+        functools.partial(mark_synthetic, audio_tensor, model.sampling_rate,
+                          context="archetypes.render"),
+        what="Archetype watermark",
+        timeout=generate_timeout_s(""),
+        executor=get_watermark_pool(),
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     _safe_torchaudio_save(str(out_path), audio_tensor, model.sampling_rate)
@@ -197,6 +225,7 @@ def list_categories():
 
 @router.get("/archetypes")
 def list_archetypes_endpoint(
+    q: Optional[str] = None,
     use_case: Optional[str] = None,
     gender: Optional[str] = None,
     age: Optional[str] = None,
@@ -208,9 +237,15 @@ def list_archetypes_endpoint(
     limit: int = Query(60, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """Filtered, paginated view over the archetype catalog."""
+    """Filtered, paginated view over the archetype catalog.
+
+    ``q`` is a free-text substring match over the archetype name/instruct so a
+    voice picker can search the *entire* several-hundred-voice catalog by typing
+    (the facet filters alone can't reach a specific voice by name). Content-free
+    and local — it just narrows the in-memory catalog.
+    """
     items = archetypes.list_archetypes(
-        use_case=use_case, gender=gender, age=age, pitch=pitch,
+        q=q, use_case=use_case, gender=gender, age=age, pitch=pitch,
         accent=accent, whisper=whisper, lang=lang, featured=featured,
     )
     total = len(items)
@@ -273,6 +308,20 @@ async def use_archetype(archetype_id: str, name: Optional[str] = Query(None)):
     from core import event_bus
     from core.db import db_conn
 
+    # Idempotent (dedup): an archetype materializes to exactly ONE voice profile.
+    # Picking the same gallery voice again — from any picker (Gallery grid,
+    # VoiceSelector, …) — must reuse that one row instead of rendering + inserting
+    # a fresh duplicate every time. The `personality` column already carries the
+    # source archetype id (stamped by the INSERT below), so it's the natural
+    # dedup key; the expensive render + INSERT only run on first use.
+    with db_conn() as conn:
+        existing = conn.execute(
+            "SELECT id, name FROM voice_profiles WHERE personality = ? LIMIT 1",
+            (a["id"],),
+        ).fetchone()
+    if existing is not None:
+        return {"profile_id": existing["id"], "name": existing["name"]}
+
     profile_id = str(uuid.uuid4())[:8]
     audio_filename = f"{profile_id}.wav"
     audio_path = Path(VOICES_DIR) / audio_filename
@@ -292,6 +341,21 @@ async def use_archetype(archetype_id: str, name: Optional[str] = Query(None)):
     profile_name = (name or a["name"]).strip() or a["name"]
     try:
         with db_conn() as conn:
+            # Re-check under the write connection right before inserting: a
+            # concurrent /use for the same archetype may have inserted while we
+            # were rendering (the pre-render SELECT above raced). Reuse that row
+            # and drop our just-rendered sample instead of creating a duplicate.
+            # (personality is NOT globally unique — marketplace/persona imports
+            # reuse the column — so a UNIQUE index isn't an option; this closes
+            # the realistic window for the single-user desktop app.)
+            dup = conn.execute(
+                "SELECT id, name FROM voice_profiles WHERE personality = ? LIMIT 1",
+                (a["id"],),
+            ).fetchone()
+            if dup is not None:
+                with __import__("contextlib").suppress(OSError):
+                    os.remove(audio_path)
+                return {"profile_id": dup["id"], "name": dup["name"]}
             conn.execute(
                 "INSERT INTO voice_profiles "
                 "(id, name, ref_audio_path, ref_text, instruct, language, seed, personality, created_at) "

@@ -16,6 +16,8 @@ import asyncio
 import functools
 import logging
 import os
+
+from utils.fsops import safe_replace
 import time
 import uuid
 
@@ -60,6 +62,11 @@ async def export_persona(
     profile = dict(row)
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    # #693: if OMNIVOICE_MODEL is set, record the *resolved* checkpoint in the
+    # exported bundle so a leaked engine id (e.g. "omnivoice") can't be baked in;
+    # keep "" when unset (the bundle's "engine unspecified" marker).
+    from services.model_manager import resolve_omnivoice_checkpoint
+    engine_id = resolve_omnivoice_checkpoint() if os.environ.get("OMNIVOICE_MODEL", "").strip() else ""
     try:
         loop = asyncio.get_running_loop()
         content = await loop.run_in_executor(
@@ -70,7 +77,7 @@ async def export_persona(
                 license_spdx=license_spdx,
                 tags=tag_list,
                 include_reference=include_reference,
-                engine_id=os.environ.get("OMNIVOICE_MODEL", ""),
+                engine_id=engine_id,
                 omnivoice_version=APP_VERSION,
             ),
         )
@@ -271,7 +278,7 @@ def _rename_for_new_id(written: list[str], new_id: str) -> list[str]:
         new_base = new_id + base[8:]
         new_path = os.path.join(d, new_base)
         try:
-            os.replace(p, new_path)
+            safe_replace(p, new_path)
             out.append(new_path)
         except OSError:
             out.append(p)

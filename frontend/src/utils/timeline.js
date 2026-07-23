@@ -1,7 +1,9 @@
 /**
  * timeline.js — pure math/state helpers for the dub timeline segment editor
- * (#280, item 3). Everything here is DOM-free and unit-tested; SegmentTrack
- * only does rendering + pointer/keyboard plumbing on top of these.
+ * (#280, item 3). Everything here is DOM-free and unit-tested — except the
+ * region palette below, which reads `--chrome-bg` off the document root (with
+ * a non-DOM fallback) so the box colors can be pre-blended in JS (#963).
+ * SegmentTrack only does rendering + pointer/keyboard plumbing on top.
  *
  * All times are seconds (float), all pixels are CSS px.
  */
@@ -15,22 +17,115 @@ export const MAX_OVERLAP = 0.2;
 // Snap radius in *pixels* — converted to seconds via pxPerSec at call sites.
 export const SNAP_PX = 8;
 // Below this zoom the integer-second grid joins the snap candidates.
-export const GRID_SNAP_MAX_PX_PER_SEC = 40;
+const GRID_SNAP_MAX_PX_PER_SEC = 40;
 
 // Segment box palette — was WaveformTimeline's region palette; lives here so
 // both the track and any legend can share it without circular imports.
-export const REGION_COLORS = [
-  'rgba(211,134,155,0.45)',
-  'rgba(131,165,152,0.45)',
-  'rgba(184,187,38,0.45)',
-  'rgba(250,189,47,0.45)',
-  'rgba(142,192,124,0.45)',
-  'rgba(254,128,25,0.45)',
-  'rgba(104,157,106,0.45)',
+//
+// FULLY OPAQUE by design (#373): these used to be `rgba(…, 0.45)` and relied
+// on alpha compositing over the panel behind the track — and on some Windows
+// GPU/WebView2 drivers, semi-transparent paints on the (formerly
+// transform-animated) lane flashed invisible during playback. Each entry
+// pre-blends the same 45% tint against the surface behind the lane
+// (`--chrome-bg`, the .studio-panel background), computing the identical
+// pixels (0.45·tint + 0.55·bg) with zero alpha.
+//
+// PRE-BLENDED IN JS by design (#963): #951 did the blend with
+// `color-mix(in srgb, …)` inside the inline style — but WebView2/Chromium
+// < 111 has no color-mix, the CSSOM rejects the whole `background`
+// assignment, and .seg-track__box declares no background of its own, so the
+// boxes rendered fully transparent on pinned/enterprise WebView2 runtimes.
+// The blend now happens here in JS and the inline style receives a literal
+// `rgb(r, g, b)` every engine can parse. Theme-awareness is preserved by
+// re-reading `--chrome-bg` when [data-theme] changes on the document root
+// (the seam App.jsx uses to switch themes). Do NOT reintroduce alpha OR any
+// engine-dependent CSS function here; guarded by timeline.test.js +
+// SegmentTrack.test.jsx.
+const REGION_TINTS = [
+  [211, 134, 155],
+  [131, 165, 152],
+  [184, 187, 38],
+  [250, 189, 47],
+  [142, 192, 124],
+  [254, 128, 25],
+  [104, 157, 106],
 ];
 
-export const timeToPx = (t, pxPerSec) => t * pxPerSec;
-export const pxToTime = (px, pxPerSec) => (pxPerSec > 0 ? px / pxPerSec : 0);
+// Gruvbox Dark `--chrome-bg` (#0f1011) — the :root default in index.css.
+// Used when the variable is unreadable (non-DOM test runner, CSS not loaded).
+const FALLBACK_CHROME_BG = [15, 16, 17];
+
+/** Parse a CSS color literal (#rgb, #rrggbb, rgb()/rgba()) → [r,g,b] | null. */
+function parseCssColor(raw) {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  let m = /^#([0-9a-f]{3})$/i.exec(s);
+  if (m) return [...m[1]].map((c) => parseInt(c + c, 16));
+  m = /^#([0-9a-f]{6})$/i.exec(s);
+  if (m) return [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+  m = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\s*(?:[,/][^)]*)?\)$/i.exec(s);
+  if (m) return [+m[1], +m[2], +m[3]];
+  return null;
+}
+
+/** Blend a 45% tint over an opaque background — same math as
+ *  `color-mix(in srgb, tint 45%, bg)`, emitted as a literal rgb() string. */
+export function blendRegionColor(tint, bg) {
+  const [r, g, b] = tint.map((c, i) => Math.round(0.45 * c + 0.55 * bg[i]));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function readChromeBg() {
+  try {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--chrome-bg');
+    return parseCssColor(raw) ?? FALLBACK_CHROME_BG;
+  } catch {
+    return FALLBACK_CHROME_BG; // SSR / non-DOM test runner
+  }
+}
+
+function blendPalette() {
+  const bg = readChromeBg();
+  return REGION_TINTS.map((tint) => blendRegionColor(tint, bg));
+}
+
+/**
+ * REGION_COLORS — the current palette as literal `rgb(r, g, b)` strings.
+ * Live ESM binding: re-assigned (never mutated in place) when the theme
+ * changes, so `getRegionColors()` is a stable-reference snapshot fit for
+ * useSyncExternalStore, while plain `REGION_COLORS[i]` reads stay correct.
+ */
+export let REGION_COLORS = blendPalette();
+
+const regionColorListeners = new Set();
+
+/** Snapshot accessor for useSyncExternalStore — new array identity per re-blend. */
+export function getRegionColors() {
+  return REGION_COLORS;
+}
+
+/** Subscribe to palette re-blends (theme changes). Returns unsubscribe. */
+export function subscribeRegionColors(cb) {
+  regionColorListeners.add(cb);
+  return () => regionColorListeners.delete(cb);
+}
+
+function refreshRegionColors() {
+  const next = blendPalette();
+  if (next.every((c, i) => c === REGION_COLORS[i])) return;
+  REGION_COLORS = next;
+  for (const cb of regionColorListeners) cb();
+}
+
+// Theme seam: App.jsx switches themes by setting/removing [data-theme] on
+// <html> (index.css scopes every theme's --chrome-bg to that attribute), so
+// observing it is exactly "re-read on theme change".
+if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
+  new MutationObserver(refreshRegionColors).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme'],
+  });
+}
 
 /**
  * visibleSegmentRange — windowing for the virtualized track.
@@ -49,19 +144,23 @@ export function visibleSegmentRange(segments, viewStart, viewEnd, bufferS = 2) {
 
   // lo: first segment whose end could reach t0 — lower_bound on start >= t0,
   // then step back over any segments that start earlier but end inside view.
-  let a = 0, b = n;
+  let a = 0,
+    b = n;
   while (a < b) {
     const mid = (a + b) >> 1;
-    if (segments[mid].start < t0) a = mid + 1; else b = mid;
+    if (segments[mid].start < t0) a = mid + 1;
+    else b = mid;
   }
   let lo = a;
   while (lo > 0 && segments[lo - 1].end > t0) lo -= 1;
 
   // hi: first segment that starts after t1 (upper_bound on start > t1).
-  a = lo; b = n;
+  a = lo;
+  b = n;
   while (a < b) {
     const mid = (a + b) >> 1;
-    if (segments[mid].start <= t1) a = mid + 1; else b = mid;
+    if (segments[mid].start <= t1) a = mid + 1;
+    else b = mid;
   }
   return [lo, a];
 }
@@ -200,7 +299,10 @@ export function nearestOnset(t, onsets) {
   let bestDist = Infinity;
   for (const o of onsets) {
     const d = Math.abs(o - t);
-    if (d < bestDist) { best = o; bestDist = d; }
+    if (d < bestDist) {
+      best = o;
+      bestDist = d;
+    }
   }
   return best;
 }

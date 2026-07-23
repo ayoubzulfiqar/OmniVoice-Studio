@@ -2,6 +2,14 @@
  * Donation prompt slice — the "Fund Claude Max" kawaii postcard state machine
  * (spec 007, Phase 2/3).
  *
+ * NOTE (footer donation moments): the postcard UI and its call sites were
+ * superseded by `utils/donationMoments.js` + the LogsFooter popover — the
+ * single donation-prompt surface now. This slice stays because its persisted
+ * `optedOut` flag is a promise made to existing users ("Don't ask again" is
+ * terminal): donationMoments honors it via the persisted `omnivoice.app`
+ * blob, and the popover's opt-out mirrors into it. Do not re-wire prompts
+ * through `recordDonationSuccess` without consolidating with donationMoments.
+ *
  * Design goals (anti-dark-pattern):
  *   - NEVER on error / in-progress / setup / first-run.
  *   - Success-only: only ever evaluated right after a *successful* completion.
@@ -26,7 +34,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const GRACE_SUCCESSES = 3;
 
 /** Milestone identifiers — each fires at most once ever. */
-export type MilestoneId = 'first-clone' | 'tenth-dub' | 'sustained-30d';
+type MilestoneId = 'first-clone' | 'tenth-dub' | 'sustained-30d';
 
 export interface DonationState {
   /** Total successful "value" events seen (clone saved, dub done, longform done…). */
@@ -47,7 +55,7 @@ export interface DonationState {
   shownThisSession: boolean;
 }
 
-export interface DonationDecision {
+interface DonationDecision {
   show: boolean;
   /** Why we decided to show (milestone id) or not (reason string). */
   reason: string;
@@ -65,10 +73,7 @@ export interface DonationSlice extends DonationState {
    * @param kind  which success happened (affects milestones)
    * @param now   injectable clock (defaults to Date.now)
    */
-  recordDonationSuccess: (
-    kind: DonationSuccessKind,
-    now?: number,
-  ) => DonationDecision;
+  recordDonationSuccess: (kind: DonationSuccessKind, now?: number) => DonationDecision;
   /** Commit that a postcard was shown now (sets cooldown anchor + session flag). */
   markDonationShown: (milestone?: MilestoneId | null, now?: number) => void;
   /** "Maybe later" — soft dismiss. Counts as shown (already handled), no extra state. */
@@ -78,7 +83,7 @@ export interface DonationSlice extends DonationState {
   resetDonationSession: () => void;
 }
 
-export type DonationSuccessKind = 'clone' | 'dub' | 'longform' | 'generic';
+type DonationSuccessKind = 'clone' | 'dub' | 'longform' | 'generic';
 
 export const INITIAL_DONATION: DonationState = {
   successCount: 0,
@@ -121,7 +126,11 @@ export function donationBlockReason(s: DonationState, now: number): string | nul
  * Decide which (if any) milestone fires for this success, given the *updated*
  * counters. A milestone only fires once ever (not already in firedMilestones).
  */
-function pickMilestone(s: DonationState, kind: DonationSuccessKind, now: number): MilestoneId | null {
+function pickMilestone(
+  s: DonationState,
+  kind: DonationSuccessKind,
+  now: number,
+): MilestoneId | null {
   const fired = new Set(s.firedMilestones);
   if (kind === 'clone' && !fired.has('first-clone')) return 'first-clone';
   if (kind === 'dub' && s.dubCount >= 10 && !fired.has('tenth-dub')) return 'tenth-dub';
@@ -135,7 +144,10 @@ function pickMilestone(s: DonationState, kind: DonationSuccessKind, now: number)
   return null;
 }
 
-export const createDonationSlice: StateCreator<DonationSlice, [], [], DonationSlice> = (set, get) => ({
+export const createDonationSlice: StateCreator<DonationSlice, [], [], DonationSlice> = (
+  set,
+  get,
+) => ({
   ...INITIAL_DONATION,
 
   recordDonationSuccess: (kind, now = Date.now()) => {
@@ -160,14 +172,16 @@ export const createDonationSlice: StateCreator<DonationSlice, [], [], DonationSl
     return { show: true, reason: milestone ? `milestone:${milestone}` : 'success', milestone };
   },
 
-  markDonationShown: (milestone = null, now = Date.now()) => set((s) => ({
-    lastShownAt: now,
-    shownCount: s.shownCount + 1,
-    shownThisSession: true,
-    firedMilestones: milestone && !s.firedMilestones.includes(milestone)
-      ? [...s.firedMilestones, milestone]
-      : s.firedMilestones,
-  })),
+  markDonationShown: (milestone = null, now = Date.now()) =>
+    set((s) => ({
+      lastShownAt: now,
+      shownCount: s.shownCount + 1,
+      shownThisSession: true,
+      firedMilestones:
+        milestone && !s.firedMilestones.includes(milestone)
+          ? [...s.firedMilestones, milestone]
+          : s.firedMilestones,
+    })),
 
   optOutOfDonation: () => set({ optedOut: true }),
 

@@ -19,10 +19,39 @@ const localStorageMock = (function () {
     },
     removeItem(key) {
       delete store[key];
-    }
+    },
+    key(i) {
+      return Object.keys(store)[i] ?? null;
+    },
+    get length() {
+      return Object.keys(store).length;
+    },
   };
 })();
 
 Object.defineProperty(window, 'localStorage', {
-  value: localStorageMock
+  value: localStorageMock,
 });
+
+// jsdom doesn't implement navigation, so window.location.reload() throws
+// ("Not implemented"). Components legitimately schedule a reload on a timer
+// (e.g. ResetPanel after a reset: setTimeout(reload, 400)); when that timer
+// fires after its test has moved on, the throw surfaces as an *unhandled*
+// error and fails the whole run even though every test passed — an
+// intermittent, order-dependent flake. No-op the navigation methods so a
+// lingering reload timer can never redden CI.
+try {
+  window.location.reload = () => {};
+  window.location.assign = () => {};
+  window.location.replace = () => {};
+} catch {
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: {
+      ...window.location,
+      reload: () => {},
+      assign: () => {},
+      replace: () => {},
+    },
+  });
+}
