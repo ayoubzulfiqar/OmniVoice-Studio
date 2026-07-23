@@ -135,6 +135,19 @@ def find_cached_job(content_hash: str, exclude_job_id: str) -> Optional[dict]:
         vocals = job.get("vocals_path") or os.path.join(cached_dir, "vocals.wav")
         if not os.path.isfile(vocals):
             continue
+        # Separation-quality gate: stems produced before the HQ-extraction
+        # change were separated from the 16 kHz MONO ASR file — a mono,
+        # 8 kHz-ceiling music bed. audio_hq.wav in the cached job dir is the
+        # marker that its stems came from the full-quality stereo extraction;
+        # without it, reusing the cache would silently keep serving the
+        # narrow-band mono bed forever for that video. Re-separating once is
+        # the better deal.
+        if not os.path.isfile(os.path.join(cached_dir, "audio_hq.wav")):
+            logger.info(
+                "cache candidate %s has pre-HQ (mono/16k-derived) stems — "
+                "skipping reuse so separation reruns at full quality", row["id"],
+            )
+            continue
         return {
             "job_dir": cached_dir,
             "job_id": row["id"],
@@ -170,11 +183,11 @@ def get_job(job_id: str) -> Optional[dict]:
             with _dub_jobs_lock:
                 _dub_jobs[job_id] = job
             return job
-        except json.JSONDecodeError as e:
+        except json.JSONDecodeError:
             # job_id arrives from request paths — strip newlines so a crafted
             # id can't forge extra log lines (py/log-injection).
             safe_id = str(job_id).replace("\r", "").replace("\n", "")
-            logger.error("Failed to decode dub_history.job_data for %s: %s", safe_id, e)
+            logger.exception("Failed to decode dub_history.job_data for %s", safe_id)
     return None
 
 
@@ -187,6 +200,14 @@ def put_job(job_id: str, job: dict) -> None:
 def save_job(job_id: str, job: dict, filename: str = "", duration: float = 0.0, content_hash: str = "") -> None:
     """Persist dub job state to SQLite so it survives restarts. Uses UPSERT
     on `id` so repeated saves in a session keep the latest snapshot.
+
+    language / language_code / content_hash only update when the incoming
+    value is non-empty: the ingest-time insert runs before the target
+    language is known (both columns ""), generation sets them on the job
+    dict, and a later save from a job that lost them (e.g. hydrated from an
+    old row) must not clobber the healed columns back to "". The frontend
+    keys history restore off language_code, so a frozen "" hid finished
+    tracks until the user re-picked a language.
     """
     try:
         segments = job.get("segments") or []
@@ -200,6 +221,8 @@ def save_job(job_id: str, job: dict, filename: str = "", duration: float = 0.0, 
                      filename=excluded.filename,
                      duration=excluded.duration,
                      segments_count=excluded.segments_count,
+                     language=CASE WHEN excluded.language != '' THEN excluded.language ELSE dub_history.language END,
+                     language_code=CASE WHEN excluded.language_code != '' THEN excluded.language_code ELSE dub_history.language_code END,
                      tracks=excluded.tracks,
                      job_data=excluded.job_data,
                      content_hash=CASE WHEN excluded.content_hash != '' THEN excluded.content_hash ELSE dub_history.content_hash END""",
@@ -208,8 +231,8 @@ def save_job(job_id: str, job: dict, filename: str = "", duration: float = 0.0, 
                  len(segments), job.get("language", ""), job.get("language_code", ""),
                  json.dumps(tracks), json.dumps(job, default=str), content_hash or "", time.time()),
             )
-    except Exception as e:
-        logger.error("Failed to persist dub job %s: %s", job_id, e)
+    except Exception:
+        logger.exception("Failed to persist dub job %s", job_id)
         return
     event_bus.emit("dub_history", {"action": "saved", "id": job_id})
 
@@ -286,10 +309,24 @@ async def run_proc_streaming_stderr(
         stderr_parts: list[bytes] = []
         rc: int = -1
         try:
-            buf = b""
-            start = time.monotonic()
-            while True:
-                if time.monotonic() - start > timeout:
+            if getattr(p, "uses_sync_pipes", False):
+                # Fallback loops (the Windows SelectorEventLoop uvicorn forces
+                # under --reload) hand back a thread-backed proc whose .stderr is
+                # a plain SYNC pipe, not an asyncio StreamReader — `await
+                # p.stderr.read()` there raises "a coroutine or an awaitable is
+                # required" and crashed the demucs step. We can't stream that
+                # pipe incrementally without leaking blocked executor threads on
+                # every 1s poll, so run to completion via the wrapper's async
+                # communicate() and replay stderr as the same line events. No
+                # live progress on that degraded loop, but the subprocess still
+                # runs and the emitted event sequence is identical. The native
+                # async path (Proactor/posix — every release build) is the
+                # unchanged `else` below.
+                try:
+                    _out, err_bytes = await asyncio.wait_for(
+                        p.communicate(), timeout=timeout
+                    )
+                except asyncio.TimeoutError:
                     try:
                         p.kill()
                     except ProcessLookupError:
@@ -298,31 +335,50 @@ async def run_proc_streaming_stderr(
                         status_code=504,
                         detail=f"subprocess timed out after {timeout}s",
                     )
-                try:
-                    chunk = await asyncio.wait_for(p.stderr.read(256), timeout=1.0)
-                except asyncio.TimeoutError:
-                    if p.returncode is not None:
-                        break
-                    continue
-                if not chunk:
-                    break
-                stderr_parts.append(chunk)
-                buf += chunk
+                err_bytes = err_bytes or b""
+                stderr_parts.append(err_bytes)
+                for _line in re.split(rb"[\r\n]", err_bytes):
+                    _text = _line.decode(errors="replace")
+                    if _text.strip():
+                        yield ("stderr", _text)
+            else:
+                buf = b""
+                start = time.monotonic()
                 while True:
-                    idx_r = buf.find(b"\r")
-                    idx_n = buf.find(b"\n")
-                    if idx_r < 0 and idx_n < 0:
+                    if time.monotonic() - start > timeout:
+                        try:
+                            p.kill()
+                        except ProcessLookupError:
+                            pass
+                        raise HTTPException(
+                            status_code=504,
+                            detail=f"subprocess timed out after {timeout}s",
+                        )
+                    try:
+                        chunk = await asyncio.wait_for(p.stderr.read(256), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        if p.returncode is not None:
+                            break
+                        continue
+                    if not chunk:
                         break
-                    if idx_r < 0:
-                        idx = idx_n
-                    elif idx_n < 0:
-                        idx = idx_r
-                    else:
-                        idx = min(idx_r, idx_n)
-                    line = buf[:idx].decode(errors="replace")
-                    buf = buf[idx + 1:]
-                    if line.strip():
-                        yield ("stderr", line)
+                    stderr_parts.append(chunk)
+                    buf += chunk
+                    while True:
+                        idx_r = buf.find(b"\r")
+                        idx_n = buf.find(b"\n")
+                        if idx_r < 0 and idx_n < 0:
+                            break
+                        if idx_r < 0:
+                            idx = idx_n
+                        elif idx_n < 0:
+                            idx = idx_r
+                        else:
+                            idx = min(idx_r, idx_n)
+                        line = buf[:idx].decode(errors="replace")
+                        buf = buf[idx + 1:]
+                        if line.strip():
+                            yield ("stderr", line)
             rc = await p.wait()
         finally:
             unregister_proc(job_id, p)
@@ -446,6 +502,38 @@ def _ensure_browser_playable_mp4(video_path: str) -> str:
 _YT_DOWNLOAD_RETRIES = 2  # total attempts = 1 + retries = 3
 
 
+def _with_target_facts(exc: BaseException, job_dir: str) -> BaseException:
+    """``exc`` with the download destination described, when the failure looks
+    like the OS refusing a file operation (#1225).
+
+    Returns ``exc`` untouched for network/format failures — their message is
+    already about the remote side, and appending disk facts would just be
+    noise. Never raises."""
+    try:
+        # Shared with failure.classify() so the "is this a disk problem?"
+        # answer can't differ between the class we assign and whether we
+        # bother naming the folder (#1225 review).
+        if not failure.is_os_write_refusal(str(exc)):
+            return exc
+        facts = failure.describe_path_target(os.path.join(job_dir, "original.mp4"))
+        if not facts:
+            return exc
+        msg = (
+            f"{exc} — saving to {job_dir} ({facts}). The OS refused the write, "
+            f"so retrying the same link won't help: check the drive isn't full, "
+            f"the folder is writable, and antivirus or a cloud-sync client "
+            f"(OneDrive, Dropbox) isn't locking it."
+        )
+        try:
+            return type(exc)(msg)
+        except Exception:
+            # Not every exception class takes a plain message (soundfile's
+            # LibsndfileError wants an int code). Keep the text, drop the type.
+            return RuntimeError(msg)
+    except Exception:
+        return exc
+
+
 def _is_transient_download_error(exc: BaseException) -> bool:
     """True when a download failure is worth retrying (broken pipe / net drop).
 
@@ -512,6 +600,22 @@ def yt_download_sync(
     import glob
     import yt_dlp
     outtmpl = os.path.join(job_dir, "original.%(ext)s")
+    # #1225: yt-dlp surfaces an OS write rejection as a bare
+    # "Unable to download video: [Errno 22] Invalid argument" — no path, no
+    # reason, and three manual retries all fail identically because nothing
+    # about it is transient. Fail here instead, naming the directory, when we
+    # can already see it won't work.
+    _target_facts = failure.describe_path_target(outtmpl)
+    if "not writable" in _target_facts or "does not exist" in _target_facts:
+        # Worded so classify() places it in the download path: it must carry
+        # both an OS-refusal signature and download context, or the user gets
+        # no hint at all — the failure this PR exists to fix (#1225 review).
+        raise OSError(
+            f"Unable to download video: unable to open for writing in "
+            f"{job_dir} ({_target_facts}). The video downloads into this job "
+            f"folder under your OmniVoice data directory — check it exists, is "
+            f"writable, and isn't locked by antivirus or a cloud-sync client."
+        )
     ydl_opts: dict = {
         "outtmpl": outtmpl,
         # Prefer h264+aac streams so the merged mp4 is natively decodable
@@ -551,6 +655,15 @@ def yt_download_sync(
         "extractor_retries": 5,
         "skip_unavailable_fragments": True,
     }
+    # #712: the format selector above pulls separate video+audio streams, so
+    # yt-dlp muxes them via ffmpeg (merge_output_format=mp4). yt-dlp only looks
+    # for ffmpeg on PATH and aborts with "you have requested merging of multiple
+    # formats but ffmpeg is not installed" — but OmniVoice's ffmpeg is often a
+    # bundled Tauri sidecar / imageio-ffmpeg binary that isn't on PATH (common on
+    # Windows). Point yt-dlp at the exact ffmpeg we resolve so the merge works.
+    _ffmpeg_bin = find_ffmpeg()
+    if _ffmpeg_bin:
+        ydl_opts["ffmpeg_location"] = _ffmpeg_bin
     if progress_hook is not None:
         ydl_opts["progress_hooks"] = [progress_hook]
 
@@ -593,7 +706,15 @@ def yt_download_sync(
                 )
                 time.sleep(2 * transient_used)  # brief, increasing backoff
                 continue
-            raise
+            # #1225: an OS-level rejection (errno 22 / EACCES / ENOSPC) tells
+            # the user nothing on its own. Attach what we can observe about
+            # the destination so the message identifies a full drive, a
+            # removed folder, or an antivirus/cloud-sync lock. Wording keeps
+            # the yt-dlp text so classify() still sees the download context.
+            described = _with_target_facts(exc, job_dir)
+            if described is exc:
+                raise
+            raise described from exc
     root, _ = os.path.splitext(path)
     mp4 = root + ".mp4"
     if os.path.exists(mp4):
@@ -808,6 +929,31 @@ async def ingest_pipeline(
             if p.returncode != 0:
                 msg = (stderr.decode(errors="replace") or f"ffmpeg returned exit code {p.returncode}").strip()[:500]
                 raise Exception(msg)
+            # Second, FULL-QUALITY extraction for source separation. audio.wav
+            # is deliberately 16 kHz mono — that's what ASR wants — but Demucs
+            # used to separate that same file, so the music bed inherited mono
+            # (stereo image destroyed: L/R correlation 1.000 vs the original's
+            # 0.754, measured) and an 8 kHz ceiling (nothing real above half
+            # the ASR rate — the bed's "muffled" sound at its source). Demucs
+            # resamples to 44.1 kHz internally either way, so separating the
+            # stereo original costs about the same and returns a true-stereo,
+            # full-band bed. Best-effort: on failure Demucs falls back to the
+            # ASR file, which is exactly the old behavior.
+            audio_hq_path = os.path.join(job_dir, "audio_hq.wav")
+            try:
+                p_hq, _, stderr_hq = await run_proc([
+                    ffmpeg, "-i", video_path, "-vn", "-acodec", "pcm_s16le",
+                    "-ar", "44100", "-ac", "2", audio_hq_path, "-y",
+                ])
+                if p_hq.returncode != 0 or not os.path.exists(audio_hq_path):
+                    logger.warning(
+                        "HQ audio extraction failed (rc=%s) — separation falls "
+                        "back to the 16k mono ASR file", p_hq.returncode,
+                    )
+                    audio_hq_path = None
+            except Exception as e_hq:  # noqa: BLE001 — quality upgrade, never fatal
+                logger.warning("HQ audio extraction errored (%s) — falling back", e_hq)
+                audio_hq_path = None
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -895,7 +1041,7 @@ async def ingest_pipeline(
             try:
                 demucs_cmd = [sys.executable, "-m", "demucs.separate",
                               "--two-stems", "vocals", "-n", "htdemucs", "-d", get_best_device(),
-                              audio_path, "-o", job_dir]
+                              audio_hq_path or audio_path, "-o", job_dir]
                 rc = -1
                 stderr_full = b""
                 last_pct = -1
@@ -915,7 +1061,12 @@ async def ingest_pipeline(
                         rc, stderr_full = evt[1], evt[2]
                 if rc != 0:
                     raise Exception(stderr_full.decode(errors="replace")[:500])
-                demucs_out = os.path.join(job_dir, "htdemucs", "audio")
+                # Stems land under the INPUT's basename ("audio_hq" when the
+                # full-quality extraction succeeded, "audio" on its fallback).
+                demucs_out = os.path.join(
+                    job_dir, "htdemucs",
+                    os.path.splitext(os.path.basename(audio_hq_path or audio_path))[0],
+                )
                 if os.path.exists(os.path.join(demucs_out, "vocals.wav")):
                     shutil.move(os.path.join(demucs_out, "vocals.wav"), vocals_path)
                     shutil.move(os.path.join(demucs_out, "no_vocals.wav"), no_vocals_path)

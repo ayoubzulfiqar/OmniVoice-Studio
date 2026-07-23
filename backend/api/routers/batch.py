@@ -76,8 +76,16 @@ async def _worker():
                     job_id, job["finished_at"] - job["started_at"],
                 )
         except asyncio.CancelledError:
+            # Task cancellation always means SHUTDOWN: the job-level cancel
+            # endpoint only flips job["status"] — nothing ever cancels this
+            # task to abort a single job. Swallowing the CancelledError here
+            # made the worker unkillable (the while-loop re-entered
+            # _queue.get() and event-loop teardown hung forever in
+            # _cancel_all_tasks waiting on a task that never finishes). Mark
+            # the in-flight job, then let the cancellation propagate.
             job["status"] = "cancelled"
             job["finished_at"] = time.time()
+            raise
         except Exception as e:
             job["status"] = "failed"
             # plan-04 (#131): guaranteed non-empty, structured reason.
@@ -107,7 +115,7 @@ async def _run_batch_pipeline(job_id: str, job: dict):
     _set_progress(job, "extract", 0)
     audio_path = os.path.join(batch_dir, "audio.wav")
 
-    from services.ffmpeg_utils import find_ffmpeg
+    from services.ffmpeg_utils import bed_mix_filter, find_ffmpeg
     ffmpeg = find_ffmpeg()
 
     def _extract():
@@ -142,7 +150,7 @@ async def _run_batch_pipeline(job_id: str, job: dict):
     _set_progress(job, "transcribe", 0)
 
     from services.asr_backend import get_active_asr_backend
-    from services.model_manager import _gpu_pool, _cpu_pool
+    from services.model_manager import _gpu_pool, _cpu_pool, run_on_gpu_pool_guarded
     from services.segmentation import (
         segment_transcript, assign_speakers_heuristic,
     )
@@ -162,7 +170,12 @@ async def _run_batch_pipeline(job_id: str, job: dict):
             pass
         return segments, detected_lang
 
-    segments, source_lang = await loop.run_in_executor(_gpu_pool, _transcribe)
+    # Bound the batch transcribe (#730) so a wedged whisperx/CTranslate2 call
+    # can't hold its GPU-pool worker forever and starve the rest of the backend
+    # ("can't reach backend"); run_transcribe_guarded also resets the pool on
+    # timeout to restore capacity.
+    from services.asr_backend import run_transcribe_guarded
+    segments, source_lang = await run_transcribe_guarded(_gpu_pool, _transcribe, what="Batch")
     source_lang = (source_lang or "en").split("_")[0][:2].lower()
     job["segments"] = segments
     job["source_lang"] = source_lang
@@ -173,6 +186,21 @@ async def _run_batch_pipeline(job_id: str, job: dict):
             job["error"] = "Transcription produced no segments"
             job["status"] = "failed"
         return
+
+    # ── Engine resolution (issue #312 class) ────────────────────────────
+    # Batch used to hardcode OmniVoice via get_model() regardless of the
+    # engine selected in Settings → Engines. require_cloning only when a
+    # specific voice is pinned (job["voice_id"]) — an unpinned job is fine on
+    # any active engine. Resolved ONCE for the whole job (every language
+    # below shares the same active engine); an uncaught ValueError here
+    # propagates to _worker()'s existing except-Exception handling, which
+    # already records a structured job failure via core.failure.build_failure.
+    from services.tts_backend import resolve_generation_backend
+    backend = await resolve_generation_backend(
+        require_cloning=bool(job.get("voice_id")),
+        cloning_purpose="this batch job's pinned voice",
+    )
+    sr = backend.sample_rate
 
     # ── 3. Translate + Generate per language ───────────────────────────
     total_langs = len(langs)
@@ -238,13 +266,10 @@ async def _run_batch_pipeline(job_id: str, job: dict):
             total_segments=len(translated_segments),
         )
 
-        from services.model_manager import get_model
         from services.audio_dsp import apply_mastering, normalize_audio
         from services.audio_io import atomic_save_wav
         import torch
 
-        _model = await get_model()
-        sr = _model.sampling_rate
         total_samples = int(duration * sr)
         full_audio = torch.zeros(1, total_samples)
         total_segs = len(translated_segments)
@@ -270,6 +295,13 @@ async def _run_batch_pipeline(job_id: str, job: dict):
                 continue
 
             def _gen(text=seg_text, lang=target_lang, dur=seg_duration):
+                # Normalize once at the segment's text→engine choke point —
+                # the same pre-pass as /generate and dub_generate's _gen.
+                # `lang` is the job's target language code. Pref-gated,
+                # idempotent, never raises.
+                from services.text_normalization import normalize_for_tts
+                text = normalize_for_tts(text, lang)
+
                 ref_audio = None
                 ref_text = None
 
@@ -290,28 +322,39 @@ async def _run_batch_pipeline(job_id: str, job: dict):
                         ref_text = row.get("ref_text")
 
                 try:
-                    audios = _model.generate(
+                    audio_out = backend.generate(
                         text=text, language=lang,
                         ref_audio=ref_audio, ref_text=ref_text,
                         duration=dur, num_step=16,
                         guidance_scale=2.0, speed=1.0,
                         denoise=True, postprocess_output=True,
                     )
-                    audio_out = audios[0]
-                    # TODO(#312): this route runs the OmniVoice model directly (not the active
-                    # backend), so VoxCPM2 never reaches it. When these routes become
-                    # engine-aware, guard with `if not getattr(backend, "applies_own_mastering", False)`.
-                    mastered = apply_mastering(
-                        audio_out,
-                        sample_rate=sr,
-                    )
-                    return normalize_audio(mastered, target_dBFS=-2.0)
+                    if not getattr(backend, "applies_own_mastering", False):
+                        audio_out = apply_mastering(audio_out, sample_rate=sr)
+                    return normalize_audio(audio_out, target_dBFS=-2.0)
                 except Exception as e:
                     logger.warning("TTS failed for seg %d (lang=%s): %s", i, lang, e)
+                    # #1190: the silence still stands in for the segment (one
+                    # bad line shouldn't bin an otherwise good dub), but it is
+                    # no longer INVISIBLE — the job carries a warning the UI /
+                    # API consumer can see instead of shipping a
+                    # finished-looking track with unexplained silence.
+                    job.setdefault("warnings", []).append(
+                        f"Segment {i + 1} of the {lang} track failed to "
+                        f"synthesize and was left silent: {e}"
+                    )
                     return torch.zeros(1, int(dur * sr))
 
             try:
-                audio_tensor = await loop.run_in_executor(_gpu_pool, _gen)
+                # Bounded + pool-reset on hang so a wedged batch segment can't
+                # starve the GPU pool and brick the backend (#730 class).
+                # Budget is the shared length-scaled one (#1190): a long segment
+                # on CPU-class hardware no longer dies on the flat 300s.
+                from services.model_manager import generate_timeout_s
+                audio_tensor = await run_on_gpu_pool_guarded(
+                    _gen, what="Batch generate",
+                    timeout=generate_timeout_s(seg_text),
+                )
 
                 # Fit to slot
                 target_samples_seg = int(seg_duration * sr)
@@ -336,10 +379,50 @@ async def _run_batch_pipeline(job_id: str, job: dict):
                 e_idx = min(s_idx + wl, total_samples)
                 full_audio[:, s_idx:e_idx] += audio_tensor[:, :e_idx - s_idx]
 
+            except TimeoutError as e:
+                # #1190/#1202: a GPU timeout (or a saturated pool) used to be
+                # swallowed into a silent gap in the dubbed track — the user got
+                # a finished-looking video with missing speech and no warning,
+                # and on a 1-worker host the abandoned job made every later
+                # segment likelier to time out too (the "22-chunk batch dies at
+                # chunk 3" cascade). Fail the job loudly instead: _worker()'s
+                # except-Exception handler records a structured failure the UI
+                # surfaces. Non-timeout per-segment errors keep the old
+                # degrade-to-gap behaviour, but are now recorded on the job.
+                logger.error("Batch TTS seg %d timed out — failing the job: %s", i, e)
+                raise RuntimeError(
+                    f"Segment {i + 1} of the {target_lang} track did not "
+                    f"render, so the dubbed track would have shipped with a "
+                    f"silent gap. {e}"
+                ) from e
             except Exception as e:
                 logger.warning("Batch TTS seg %d failed: %s", i, e)
+                job.setdefault("warnings", []).append(
+                    f"Segment {i + 1} of the {target_lang} track failed and was "
+                    f"left silent: {e}"
+                )
 
         # ── 3c. Save dubbed audio track ───────────────────────────────
+        # Invisible provenance mark on the assembled track (#1169), tensor
+        # stage, before the WAV write / aac mux — batch dubs used to ship
+        # unmarked while the interactive dub pipeline marked every segment.
+        # One whole-track embed (chunked internally, #1045) is equivalent to
+        # dub_generate's per-segment marks: the 16-bit message repeats
+        # throughout. Runs in the GPU pool like generate's finalize; never
+        # raises (degrades to unmarked on failure, same as every producer).
+        # Dispatched to the dedicated watermark pool, not the GPU pool (#1190):
+        # AudioSeal embedding is CPU work that holds no VRAM, and a whole-track
+        # embed is long enough that occupying a GPU worker with it stalled the
+        # next language's segments on 1-worker hosts.
+        from services.watermark import mark_synthetic
+        from services.model_manager import get_watermark_pool
+        import functools
+        full_audio = await loop.run_in_executor(
+            get_watermark_pool(),
+            functools.partial(mark_synthetic, full_audio, sr,
+                              context="batch.dub_track"),
+        )
+
         # Same assembly pattern as dub_generate.py:390 — `full_audio` is a
         # zero-init tensor that gets +='d from torch.cat-style slices, so
         # it can land non-contiguous + out-of-range. Go through the
@@ -365,7 +448,7 @@ async def _run_batch_pipeline(job_id: str, job: dict):
                      "-i", video_path,
                      "-i", track_path,
                      "-filter_complex",
-                     "[0:a]volume=0.15[bg];[1:a]volume=1.0[dub];[bg][dub]amix=inputs=2:duration=first[out]",
+                     bed_mix_filter("0:a", "1:a", out="out", duration="first"),
                      "-map", "0:v", "-map", "[out]",
                      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
                      "-shortest", output_path],
@@ -412,6 +495,14 @@ async def enqueue_batch_job(
     lang_list = [l.strip() for l in langs.split(",") if l.strip()]
     if not lang_list:
         raise HTTPException(400, "At least one target language is required")
+
+    # TTS-only install: no ASR model on disk → typed 409 with a download CTA
+    # now, instead of accepting the job and having the transcribe stage
+    # silently auto-download multi-GB whisper weights (or fail) in the worker.
+    from services.asr_backend import asr_model_missing_detail, asr_model_missing_error
+    missing = await asyncio.to_thread(asr_model_missing_error)
+    if missing is not None:
+        raise HTTPException(409, {**missing, "message": asr_model_missing_detail(missing)})
 
     # Save the uploaded video
     batch_dir = os.path.join(DATA_DIR, "batch")

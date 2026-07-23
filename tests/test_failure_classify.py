@@ -34,6 +34,49 @@ def test_classify_transformers_import():
     assert evt["hint"], "transformers-import failure must carry an actionable hint"
 
 
+def test_classify_corrupted_transformers_file():
+    # A missing transformers module file (interrupted uv sync / AV / partial
+    # update) surfaces as FileNotFoundError, not ImportError — it must still
+    # classify as TRANSFORMERS_IMPORT so the user gets "reinstall", not "restart".
+    posix = (
+        "[Errno 2] No such file or directory: "
+        "'/Users/u/Library/Application Support/com.x/project/.venv/lib/python3.11/"
+        "site-packages/transformers/models/qwen3/modeling_qwen3.py'"
+    )
+    win = (
+        "[Errno 2] No such file or directory: "
+        r"'C:\Users\u\AppData\Local\com.x\project\.venv\Lib\site-packages\transformers"
+        r"\models\qwen3\modeling_qwen3.py'"
+    )
+    assert failure.classify(posix) == "TRANSFORMERS_IMPORT"
+    assert failure.classify(win) == "TRANSFORMERS_IMPORT"
+    f = failure.build_failure(FileNotFoundError(posix), stage="model-load", include_diagnostic=False)
+    assert "reinstall" in f["hint"].lower()
+    # A missing file from an UNRELATED package must NOT be mislabelled as transformers.
+    assert failure.classify("[Errno 2] No such file or directory: '/x/site-packages/numpy/core/foo.py'") == ""
+
+
+def test_classify_os_invalid_argument_einval():
+    # #763: a per-chunk temp-WAV write failing with EINVAL surfaced as the
+    # dead-end "produced no segments. [Errno 22] Invalid argument" toast. It must
+    # now classify so build_failure attaches a temp-dir/disk/AV hint. This is the
+    # exact string the streaming dub path aggregates and feeds build_failure.
+    reason = "[Errno 22] Invalid argument"
+    assert failure.classify(reason) == "OS_INVALID_ARGUMENT"
+    evt = failure.build_failure(reason, stage="transcribe", include_diagnostic=False)
+    assert evt["docs_topic"] == "OS_INVALID_ARGUMENT"
+    assert evt["hint"], "an EINVAL transcribe failure must carry an actionable hint"
+    assert "temp" in evt["hint"].lower()
+    # The errno-22 rule must NOT swallow the errno-2 transformers class (its
+    # markers still win) or fire on an unrelated errno.
+    tf = (
+        "[Errno 2] No such file or directory: "
+        "'/x/site-packages/transformers/models/qwen3/modeling_qwen3.py'"
+    )
+    assert failure.classify(tf) == "TRANSFORMERS_IMPORT"
+    assert failure.classify("[Errno 13] Permission denied") == ""
+
+
 def test_classify_video_download_classes():
     # #554: a non-downloadable link shape → actionable "paste a direct video URL".
     assert failure.classify("Unsupported URL: https://www.douyin.com/discover") == (
@@ -73,6 +116,62 @@ def test_classify_broken_venv_missing_own_package():
     # ...but a legitimately-named 'omnivoice_*' helper package must NOT match
     # (the trailing quote in the matcher is the guard).
     assert failure.classify("No module named 'omnivoice_helper'") == ""
+
+
+def test_classify_socks_proxy_support_missing():
+    # #959: the exact httpx message at client CONSTRUCTION under a socks5://
+    # proxy env without socksio — it surfaced as a bare 500 from /generate
+    # (huggingface_hub's get_session() builds the client inside model load).
+    reason = (
+        "Using SOCKS proxy, but the 'socksio' package is not installed. "
+        "Make sure to install httpx using `pip install httpx[socks]`."
+    )
+    assert failure.classify(reason) == "SOCKS_PROXY_SUPPORT_MISSING"
+    evt = failure.build_failure(
+        ImportError(reason), stage="model-load", include_diagnostic=False
+    )
+    assert evt["docs_topic"] == "SOCKS_PROXY_SUPPORT_MISSING"
+    assert evt["hint"], "the SOCKS-proxy class must carry an actionable hint"
+    assert "ALL_PROXY" in evt["hint"]
+    # append_hint is the raw-string surface (main.py's global 500 handler,
+    # the model-install SSE) — the detail keeps the real error AND gains the
+    # hint, and stays a pass-through for unknown reasons.
+    out = failure.append_hint(reason)
+    assert out.startswith(reason) and "ALL_PROXY" in out
+    assert failure.append_hint("some unrelated failure") == "some unrelated failure"
+    # A generic proxy connectivity error must NOT be mislabelled.
+    assert failure.classify("ProxyError: connection refused by 10.0.0.1:8080") == ""
+
+
+def test_classify_ssl_handshake_failure():
+    # #976: the exact error a Windows user behind a corporate/antivirus
+    # TLS-inspecting proxy sees on every model install — the TCP connection
+    # succeeds, but the handshake fails because the OS trusts the proxy's
+    # re-signed CA and Python's bundled certifi list doesn't. A different
+    # failure mode from #984's TCP-level "host unreachable" fix.
+    reason = (
+        "Install failed: Got: ConnectError: [SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] "
+        "ssl/tls alert handshake failure (_ssl.c:1016)"
+    )
+    assert failure.classify(reason) == "SSL_HANDSHAKE_FAILURE"
+    evt = failure.build_failure(reason, stage="install", include_diagnostic=False)
+    assert evt["docs_topic"] == "SSL_HANDSHAKE_FAILURE"
+    assert evt["hint"], "the SSL-handshake class must carry an actionable hint"
+    # A CERTIFICATE_VERIFY_FAILED-style message (the other common corporate-MITM
+    # shape) must classify the same way.
+    cert_reason = (
+        "requests.exceptions.SSLError: HTTPSConnectionPool(host='huggingface.co', "
+        "port=443): Max retries exceeded with url: / (Caused by SSLError("
+        "SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate "
+        "verify failed: unable to get local issuer certificate')))"
+    )
+    assert failure.classify(cert_reason) == "SSL_HANDSHAKE_FAILURE"
+    # append_hint is the raw-string surface (setup/download.py's install SSE) —
+    # the detail keeps the real error AND gains the hint.
+    out = failure.append_hint(reason)
+    assert out.startswith(reason) and "truststore" in out
+    # A plain, unrelated connection error must NOT be mislabelled as SSL.
+    assert failure.classify("ConnectionError: connection refused") == ""
 
 
 def test_classify_generic_still_empty():

@@ -247,6 +247,213 @@ def test_select_llm_never_routing_gated(fresh_app, monkeypatch):
     assert r.status_code == 200, r.text
 
 
+# ── ASR selection via /engines/select (Settings → Engines ASR picker) ──────
+#
+# The ASR family was always wired in _FAMILIES on paper, but no UI called it
+# and nothing exercised it — the Settings picker now does. Lock the contract:
+# a pick persists to prefs["asr_backend"], `OMNIVOICE_ASR_BACKEND` still wins
+# over the pick, and unknown / not-ready ids are 400s.
+
+
+def _register_fake_asr(asr_mod, engine_id, *, available=True):
+    """Register a light in-process ASR stub (CPU-only so a forced-CPU host
+    routes it `cpu_only`, never `unavailable`). Returns (cls, restore_fn)."""
+    _avail = available
+
+    class _FakeASR(asr_mod.ASRBackend):
+        id = engine_id
+        display_name = f"Fake {engine_id}"
+        gpu_compat = ("cpu",)
+
+        @classmethod
+        def is_available(cls):
+            return (True, "ready") if _avail else (False, "deps missing (test)")
+
+        def transcribe(self, audio_path, *, word_timestamps=True):
+            raise NotImplementedError
+
+    saved = dict(asr_mod._REGISTRY)
+    asr_mod._REGISTRY[engine_id] = _FakeASR
+
+    def restore():
+        asr_mod._REGISTRY.clear()
+        asr_mod._REGISTRY.update(saved)
+
+    return _FakeASR, restore
+
+
+def test_select_asr_persists_pref_and_echoes_active(fresh_app, monkeypatch):
+    from core import prefs as _prefs
+    from services import asr_backend as asr_mod
+
+    _force_cpu_host(monkeypatch)
+    monkeypatch.delenv("OMNIVOICE_ASR_BACKEND", raising=False)
+    _, restore = _register_fake_asr(asr_mod, "fake-asr")
+    try:
+        r = _client(fresh_app).post(
+            "/engines/select", json={"family": "asr", "backend_id": "fake-asr"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["family"] == "asr"
+        assert body["active"] == "fake-asr"
+        assert body["env_override"] is False
+        assert _prefs.get("asr_backend") == "fake-asr"
+    finally:
+        restore()
+
+
+def test_select_asr_env_var_still_wins(fresh_app, monkeypatch):
+    """CRITICAL backward-compat: an existing `OMNIVOICE_ASR_BACKEND` pin keeps
+    winning over a Settings pick — the pick persists to prefs (for when the
+    pin is lifted) but the active id stays the env value, and the response
+    says so via env_override."""
+    from core import prefs as _prefs
+    from services import asr_backend as asr_mod
+
+    _force_cpu_host(monkeypatch)
+    monkeypatch.setenv("OMNIVOICE_ASR_BACKEND", "pytorch-whisper")
+    _, restore = _register_fake_asr(asr_mod, "fake-asr-pinned")
+    try:
+        r = _client(fresh_app).post(
+            "/engines/select", json={"family": "asr", "backend_id": "fake-asr-pinned"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["env_override"] is True
+        assert body["active"] == "pytorch-whisper"          # env wins
+        assert _prefs.get("asr_backend") == "fake-asr-pinned"
+    finally:
+        restore()
+
+
+def test_select_asr_unknown_backend_is_400(fresh_app):
+    r = _client(fresh_app).post(
+        "/engines/select", json={"family": "asr", "backend_id": "nope-not-real"})
+    assert r.status_code == 400
+    assert "Unknown asr backend" in r.json()["detail"]
+
+
+def test_select_asr_unavailable_backend_is_400(fresh_app, monkeypatch):
+    from services import asr_backend as asr_mod
+
+    _force_cpu_host(monkeypatch)
+    _, restore = _register_fake_asr(asr_mod, "fake-asr-down", available=False)
+    try:
+        r = _client(fresh_app).post(
+            "/engines/select", json={"family": "asr", "backend_id": "fake-asr-down"})
+        assert r.status_code == 400
+        assert "not ready" in r.json()["detail"]
+    finally:
+        restore()
+
+
+def test_get_engines_asr_family_shape(fresh_app):
+    """GET /engines/asr — the ASR picker's data source: active id + one row
+    per registered backend with availability, reasons and install hints."""
+    r = _client(fresh_app).get("/engines/asr")
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body["active"], str) and body["active"]
+    by_id = {b["id"]: b for b in body["backends"]}
+    assert {"whisperx", "faster-whisper", "openai-compat-asr"}.issubset(by_id)
+    # Install hints power the picker's tooltips (parity with TTS).
+    assert by_id["openai-compat-asr"]["install_hint"]
+    for entry in by_id.values():
+        missing = _REQUIRED_KEYS - entry.keys()
+        assert not missing, f"asr entry {entry['id']!r} missing: {missing}"
+
+
+# ── #981 — mlx-audio curated-model selection via /engines/select ───────────
+#
+# mlx-audio multiplexes 7+ curated models behind one backend id. Before this
+# fix there was NO way anywhere in the UI/API to pick which curated model
+# actually loads — it always defaulted to Kokoro even if the user had
+# downloaded e.g. Llama-OuteTTS via Settings → Models.
+
+
+def _make_mlx_audio_available(monkeypatch):
+    """mlx-audio is Apple-Silicon-gated; force is_available()=True + a
+    CPU-friendly host so the routing gate doesn't block these tests on
+    non-mac CI runners."""
+    from services import tts_backend as tts_mod
+    monkeypatch.setattr(
+        tts_mod.MLXAudioBackend, "is_available",
+        classmethod(lambda cls: (True, "ready")),
+    )
+    _force_cpu_host(monkeypatch)
+
+
+def test_select_mlx_audio_unknown_model_id_is_400(fresh_app, monkeypatch):
+    _make_mlx_audio_available(monkeypatch)
+    r = _client(fresh_app).post(
+        "/engines/select",
+        json={"family": "tts", "backend_id": "mlx-audio", "model_id": "not-a-real-model"},
+    )
+    assert r.status_code == 400
+    assert "Unknown mlx-audio model" in r.json()["detail"]
+
+
+def test_select_mlx_audio_curated_key_persists(fresh_app, monkeypatch):
+    from core import prefs as _prefs
+    _make_mlx_audio_available(monkeypatch)
+    r = _client(fresh_app).post(
+        "/engines/select",
+        json={"family": "tts", "backend_id": "mlx-audio", "model_id": "outetts"},
+    )
+    assert r.status_code == 200, r.text
+    assert _prefs.get("mlx_audio_model_id") == "outetts"
+    assert _prefs.get("tts_backend") == "mlx-audio"
+
+
+def test_select_mlx_audio_raw_repo_id_accepted(fresh_app, monkeypatch):
+    """MLXAudioBackend already tolerates a raw HF repo id, not just a
+    curated key (tts_backend.py ~733) — the API must too."""
+    from core import prefs as _prefs
+    _make_mlx_audio_available(monkeypatch)
+    r = _client(fresh_app).post(
+        "/engines/select",
+        json={
+            "family": "tts", "backend_id": "mlx-audio",
+            "model_id": "mlx-community/Some-Other-Model-4bit",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert _prefs.get("mlx_audio_model_id") == "mlx-community/Some-Other-Model-4bit"
+
+
+def test_select_mlx_audio_without_model_id_does_not_touch_pref(fresh_app, monkeypatch):
+    """Selecting mlx-audio without a model_id (e.g. an older frontend) must
+    leave any existing mlx_audio_model_id pref untouched."""
+    from core import prefs as _prefs
+    _prefs.set_("mlx_audio_model_id", "csm")
+    _make_mlx_audio_available(monkeypatch)
+    r = _client(fresh_app).post(
+        "/engines/select", json={"family": "tts", "backend_id": "mlx-audio"})
+    assert r.status_code == 200, r.text
+    assert _prefs.get("mlx_audio_model_id") == "csm"
+
+
+def test_select_model_id_ignored_for_non_mlx_audio_backend(fresh_app):
+    """model_id is only meaningful for mlx-audio; picking a different TTS
+    backend with a model_id set must not persist a stray pref."""
+    from core import prefs as _prefs
+    r = _client(fresh_app).post(
+        "/engines/select",
+        json={"family": "tts", "backend_id": "omnivoice", "model_id": "kokoro"},
+    )
+    assert r.status_code == 200, r.text
+    assert _prefs.get("mlx_audio_model_id") is None
+
+
+def test_engines_response_curated_models_only_on_mlx_audio(fresh_app):
+    client = _client(fresh_app)
+    body = client.get("/engines").json()
+    by_id = {b["id"]: b for b in body["tts"]["backends"]}
+    assert "curated_models" in by_id["mlx-audio"]
+    assert "active_model_id" in by_id["mlx-audio"]
+    assert "curated_models" not in by_id["omnivoice"]
+    assert "active_model_id" not in by_id["omnivoice"]
+
+
 # ── /engines/{id}/health round-trip ────────────────────────────────────────
 
 
@@ -327,6 +534,201 @@ def test_engine_health_caches_instance_across_calls(fresh_app, monkeypatch):
         f"expected exactly one IndexTTS2Backend() construction across "
         f"two health checks, got {call_count['n']}"
     )
+
+
+# ── /engines/{id}/selftest — real tiny synthesis (in-process TTS) ──────────
+
+
+def _register_fake_tts(tts_mod, engine_id, *, available=True, samples=100,
+                       raises=None, subprocess=False):
+    """Register a fresh in-process (or subprocess-marked) TTS stub whose
+    generate() returns a `samples`-long list — torch-free so the shape test
+    stays light. Returns (cls, restore_fn)."""
+    _samples, _avail, _raises = samples, available, raises
+
+    class _Fake(tts_mod.TTSBackend):
+        id = engine_id
+        display_name = f"Fake {engine_id}"
+        _is_subprocess_isolated = subprocess
+
+        @property
+        def sample_rate(self) -> int:
+            return 24000
+
+        @property
+        def supported_languages(self):
+            return ["en"]
+
+        @classmethod
+        def is_available(cls):
+            return (True, "ready") if _avail else (False, "deps missing (test)")
+
+        def generate(self, text, **kw):
+            if _raises is not None:
+                raise _raises
+            return [0.0] * _samples
+
+    saved = dict(tts_mod._REGISTRY)
+    tts_mod._REGISTRY[engine_id] = _Fake
+
+    def restore():
+        tts_mod._REGISTRY.clear()
+        tts_mod._REGISTRY.update(saved)
+
+    return _Fake, restore
+
+
+def test_selftest_in_process_success(fresh_app):
+    from services import tts_backend as tts_mod
+
+    _, restore = _register_fake_tts(tts_mod, "fake-inproc", samples=1200)
+    try:
+        r = _client(fresh_app).post("/engines/fake-inproc/selftest")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["id"] == "fake-inproc"
+        assert body["ok"] is True
+        assert body["num_samples"] == 1200
+        assert body["sample_rate"] == 24000
+        # 1200 / 24000 = 0.05 s of audio.
+        assert body["audio_seconds"] == 0.05
+        assert isinstance(body["duration_ms"], (int, float))
+        assert body["timed_out"] is False
+    finally:
+        restore()
+
+
+def test_selftest_rejects_subprocess_engine(fresh_app):
+    from services import tts_backend as tts_mod
+
+    _, restore = _register_fake_tts(tts_mod, "fake-sub", subprocess=True)
+    try:
+        r = _client(fresh_app).post("/engines/fake-sub/selftest")
+        assert r.status_code == 400
+        assert "subprocess-isolated" in r.json()["detail"]
+    finally:
+        restore()
+
+
+def test_selftest_unavailable_engine_is_400(fresh_app):
+    from services import tts_backend as tts_mod
+
+    _, restore = _register_fake_tts(tts_mod, "fake-down", available=False)
+    try:
+        r = _client(fresh_app).post("/engines/fake-down/selftest")
+        assert r.status_code == 400
+        assert "not available" in r.json()["detail"]
+    finally:
+        restore()
+
+
+def test_selftest_unknown_id_is_404(fresh_app):
+    r = _client(fresh_app).post("/engines/nope-not-real/selftest")
+    assert r.status_code == 404
+    assert "unknown TTS engine id" in r.json()["detail"]
+
+
+def test_selftest_loopback_only(fresh_app):
+    r = _client(fresh_app, host="10.0.0.9").post("/engines/omnivoice/selftest")
+    assert r.status_code == 403
+    assert r.json()["detail"] == "loopback origin required"
+
+
+def test_selftest_captures_synth_exception_without_500(fresh_app):
+    from services import tts_backend as tts_mod
+
+    _, restore = _register_fake_tts(
+        tts_mod, "fake-boom", raises=RuntimeError("model exploded"))
+    try:
+        r = _client(fresh_app).post("/engines/fake-boom/selftest")
+        assert r.status_code == 200, r.text  # never 500s on a synth failure
+        body = r.json()
+        assert body["ok"] is False
+        assert "model exploded" in body["message"]
+        assert body["num_samples"] is None
+    finally:
+        restore()
+
+
+def test_no_hf_token_leak_in_selftest_response(fresh_app):
+    """A synth exception carrying an HF token must be redacted in the body."""
+    from services import tts_backend as tts_mod
+
+    _, restore = _register_fake_tts(
+        tts_mod, "fake-tainted",
+        raises=RuntimeError(f"401 for {SAMPLE_HF_TOKEN}"))
+    try:
+        r = _client(fresh_app).post("/engines/fake-tainted/selftest")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is False
+        assert not HF_TOKEN_RE.search(body["message"])
+        assert "hf_***REDACTED***" in body["message"]
+    finally:
+        restore()
+
+
+def test_selftest_timeout_returns_timed_out(fresh_app, monkeypatch):
+    """A synth that outruns the bounded timeout returns ok=False/timed_out —
+    the panel never hangs. Pin the timeout tiny and block generate briefly."""
+    import threading as _threading
+
+    from api.routers import engines as engines_router
+    from services import tts_backend as tts_mod
+
+    monkeypatch.setattr(engines_router, "_selftest_timeout_s", lambda: 0.05)
+    gate = _threading.Event()
+
+    class _Slow(tts_mod.TTSBackend):
+        id = "fake-slow"
+        display_name = "Fake slow"
+
+        @property
+        def sample_rate(self):
+            return 24000
+
+        @property
+        def supported_languages(self):
+            return ["en"]
+
+        @classmethod
+        def is_available(cls):
+            return True, "ready"
+
+        def generate(self, text, **kw):
+            gate.wait(2.0)  # outruns the 50 ms timeout; released in finally
+            return [0.0] * 10
+
+    saved = dict(tts_mod._REGISTRY)
+    tts_mod._REGISTRY["fake-slow"] = _Slow
+    try:
+        r = _client(fresh_app).post("/engines/fake-slow/selftest")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ok"] is False
+        assert body["timed_out"] is True
+        assert "timed out" in body["message"]
+    finally:
+        gate.set()  # let the orphaned worker finish and exit
+        tts_mod._REGISTRY.clear()
+        tts_mod._REGISTRY.update(saved)
+
+
+# ── setup_snippet — copy-paste-ready env-var line for opt-in engines ────────
+
+
+def test_setup_snippet_present_for_path_gated_engines(fresh_app):
+    client = _client(fresh_app)
+    by_id = {b["id"]: b for b in client.get("/engines").json()["tts"]["backends"]}
+    # Every entry carries the key (None for engines with no path gate).
+    for entry in by_id.values():
+        assert "setup_snippet" in entry
+    # IndexTTS-2 is path-gated → exact export line, single-sourced in the backend.
+    assert by_id["indextts2"]["setup_snippet"] == (
+        "export OMNIVOICE_INDEXTTS_DIR=/path/to/index-tts"
+    )
+    # A bundled engine has no path gate → null.
+    assert by_id["omnivoice"]["setup_snippet"] is None
 
 
 # ── HF-token leak prevention (T-02-12) ─────────────────────────────────────

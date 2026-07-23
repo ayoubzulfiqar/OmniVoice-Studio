@@ -76,6 +76,12 @@ _CLASS_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "connection refused",
         "connection reset",
         "connection aborted",
+        # transformers' download-failure wording ("We couldn't connect to
+        # '<endpoint>' to load the files") — the #874 mirror-down class was
+        # journaled as UNKNOWN without these.
+        "couldn't connect to",
+        "could not connect to",
+        "max retries exceeded",
         "timed out",
         "timeout",
         "name or service not known",
@@ -86,6 +92,22 @@ _CLASS_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 _AUTH_MARKERS = ("401", "403", "gated", "access", "token")
+
+
+def _coarse_stage(route: str) -> str:
+    """Reduce a route to its fixed HEAD segment ("/api/dub/start?x=1" → "dub").
+
+    This is what the opt-in analytics event carries as `stage`: route heads are
+    a closed set defined by the routers — path params (ids, filenames, names)
+    live in LATER segments and never ride along."""
+    try:
+        path = (route or "").split("?", 1)[0].strip("/")
+        parts = [p for p in path.split("/") if p]
+        if parts and parts[0] == "api":
+            parts = parts[1:]
+        return (parts[0] if parts else "")[:40]
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def classify_exception(exc: BaseException, trace: str = "") -> str:
@@ -186,6 +208,17 @@ def record(exc: BaseException, route: str = "", trace: str = "") -> dict:
                 while len(_entries) > _MAX_ENTRIES:
                     _entries.popitem(last=False)
             _persist_locked()
+        # Opt-in analytics (core/analytics.py): a no-op unless the user opted
+        # in AND the build ships a token. Carries the error CLASS and the
+        # coarse route head ONLY — never the message, trace, or any path —
+        # deduped by fingerprint and hard-capped per session there. Lazy
+        # import + never raises: telemetry must not shadow the real error.
+        try:
+            from core import analytics
+
+            analytics.record_error_event(error_class, fp, stage=_coarse_stage(route))
+        except Exception:
+            pass
         return entry
     except Exception:
         return {"error_class": "UNKNOWN", "type": type(exc).__name__, "count": 1}

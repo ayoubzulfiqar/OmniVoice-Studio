@@ -9,7 +9,7 @@ export async function dubUpload(
   const fd = new FormData();
   fd.append('video', file);
   fd.append('job_id', jobId);
-  fd.append('input_type', inputType);  // #119: audio-only dubbing
+  fd.append('input_type', inputType); // #119: audio-only dubbing
   return apiPost('/dub/upload', fd, { signal });
 }
 
@@ -50,7 +50,11 @@ export function transcribeStreamUrl(jobId: string, numSpeakers?: number | null):
 }
 
 export async function dubAbort(jobId: string): Promise<void> {
-  try { await apiFetch(`/dub/abort/${jobId}`, { method: 'POST' }); } catch { /* best-effort */ }
+  try {
+    await apiFetch(`/dub/abort/${jobId}`, { method: 'POST' });
+  } catch {
+    /* best-effort */
+  }
 }
 
 export async function dubCleanupSegments(jobId: string): Promise<unknown> {
@@ -74,10 +78,36 @@ export interface DubImportSrtResponse {
   };
 }
 
-export async function dubImportSrt(jobId: string, file: File | Blob): Promise<DubImportSrtResponse> {
+export async function dubImportSrt(
+  jobId: string,
+  file: File | Blob,
+): Promise<DubImportSrtResponse> {
   const fd = new FormData();
   fd.append('file', file);
   return apiPost<DubImportSrtResponse>(`/dub/import-srt/${jobId}`, fd);
+}
+
+export interface ParsedSubtitleCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface ParseSubtitleTextResponse {
+  segments: ParsedSubtitleCue[];
+  skipped_cues: number;
+  dropped_overlaps: number;
+}
+
+/**
+ * Parse pasted subtitle text (SRT/VTT-ish) into timed cues.
+ *
+ * Stateless: unlike `dubImportSrt` this touches no job and replaces no
+ * segments — it exists so the "paste a translation" flow reuses the
+ * backend's lenient cue parser instead of reimplementing it in JS.
+ */
+export async function dubParseSubtitleText(text: string): Promise<ParseSubtitleTextResponse> {
+  return apiPost<ParseSubtitleTextResponse>('/dub/parse-subtitle-text', { text });
 }
 
 export async function dubTranslate(body: Record<string, unknown>): Promise<DubTranslateResponse> {
@@ -104,20 +134,56 @@ export async function clearDubHistory(): Promise<Response> {
   return apiFetch('/dub/history', { method: 'DELETE' });
 }
 
+export interface DubTrackInfo {
+  path?: string;
+  language?: string;
+  language_code?: string;
+  duration?: number;
+  timing_strategy?: string;
+}
+
+/** Per-track metadata (duration, timing strategy, …) keyed by language code.
+ *  Backs the track-pill tooltips; the store only carries the track codes. */
+/** Per-segment texts for one generated track ({segKey: text}, may be empty). */
+export async function dubSegmentsText(
+  jobId: string,
+  lang: string,
+): Promise<Record<string, string>> {
+  const res = await apiJson<{ texts?: Record<string, string> }>(
+    `/dub/segments-text/${encodeURIComponent(jobId)}?lang=${encodeURIComponent(lang)}`,
+  );
+  return res?.texts || {};
+}
+
+export async function dubListTracks(jobId: string): Promise<Record<string, DubTrackInfo>> {
+  const res = await apiJson<{ tracks?: Record<string, DubTrackInfo> }>(
+    `/dub/tracks/${encodeURIComponent(jobId)}`,
+  );
+  return res?.tracks || {};
+}
+
 export interface DubQCResponse {
   engine: string;
   total: number;
   flagged_count: number;
   drift_threshold: number;
   segments: {
-    seg_id: string; drift: number; flagged: boolean;
-    recognized_text: string; measured_start: number | null; measured_end: number | null;
+    seg_id: string;
+    drift: number;
+    flagged: boolean;
+    recognized_text: string;
+    measured_start: number | null;
+    measured_end: number | null;
   }[];
 }
 
 /** Wave 3.3: second-pass ASR QC — re-recognize the dubbed audio and flag
  *  lines whose recognized text drifts from the target. Non-destructive. */
-export async function dubQc(jobId: string, lang?: string, driftThreshold?: number): Promise<DubQCResponse> {
+export async function dubQc(
+  jobId: string,
+  lang?: string,
+  driftThreshold?: number,
+): Promise<DubQCResponse> {
   const qs = new URLSearchParams();
   if (lang) qs.set('lang', lang);
   if (driftThreshold != null) qs.set('drift_threshold', String(driftThreshold));

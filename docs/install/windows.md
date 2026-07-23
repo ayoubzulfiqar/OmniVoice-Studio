@@ -5,7 +5,24 @@ working OmniVoice Studio install on Windows 10 / 11 (x64).
 
 ## Prerequisites
 
+### Using the MSI installer
+
 - **Windows 10 (21H2 or newer) or Windows 11**, x64.
+- **~10 GB free disk** for the app, its Python environment, and model weights.
+- Optional: an **NVIDIA GPU + driver** for CUDA acceleration — see
+  [GPU support on Windows](#gpu-support). AMD GPUs run CPU-only on Windows.
+
+That's it — Python, FFmpeg, and the model weights are bundled or bootstrapped
+by the app itself on first launch. No toolchain needed.
+
+### Building from source
+
+Everything above, plus the toolchain:
+
+- **Git for Windows** — `winget install --id Git.Git -e`. Needed for
+  `git clone`, and it includes **Git Bash**, which `bun run desktop-prod`
+  uses to run its build-and-launch script. Without it, `desktop-prod` stops
+  with an error telling you to install it.
 - **Python 3.11+** — `winget install Python.Python.3.11` (or download from
   [python.org](https://www.python.org/downloads/windows/)).
 - **Microsoft C++ Build Tools** — required by some PyPI source distributions
@@ -14,10 +31,23 @@ working OmniVoice Studio install on Windows 10 / 11 (x64).
   with the **"Desktop development with C++"** workload checked.
 - **Bun** — `powershell -c "irm bun.sh/install.ps1 | iex"`.
 - **FFmpeg** — `winget install Gyan.FFmpeg`.
-- **Git for Windows** (from-source installs only) — `winget install --id Git.Git -e`.
-  You need it for `git clone` anyway, and it includes **Git Bash**, which
-  `bun run desktop-prod` uses to run its build-and-launch script. Without it,
-  `desktop-prod` stops with an error telling you to install it.
+- **Rust / Cargo** — `winget install Rust.Rustup` or download `rustup-init.exe` from [rustup.rs](https://rustup.rs/).
+  After installing Rustup, close and reopen PowerShell before running `bun run desktop-prod`.
+
+## GPU support on Windows
+
+<a id="gpu-support"></a>
+
+**GPU acceleration on Windows is NVIDIA/CUDA-only.** The Windows install
+ships the CUDA build of PyTorch; with an NVIDIA GPU and a regular NVIDIA
+driver it's picked up automatically (no CUDA Toolkit install needed).
+
+**AMD GPUs — including Ryzen / Ryzen AI integrated Radeon graphics — run
+CPU-only on Windows.** ROCm is not supported on Windows: PyTorch publishes no
+Windows ROCm wheels, and OmniVoice's ROCm option is Linux-only. (The Ryzen AI
+NPU is likewise not used.) Everything still works on CPU, just slower. If you
+have an AMD GPU and want GPU acceleration, run OmniVoice on Linux instead —
+see [linux.md — AMD GPU (ROCm)](linux.md#amd-gpu-rocm).
 
 ## Install (from source)
 
@@ -46,6 +76,79 @@ Download the latest MSI from the
 [Releases page](https://github.com/debpalash/OmniVoice-Studio/releases/latest),
 run it, follow the wizard. The shortcut lands in the Start menu as
 **OmniVoice Studio**.
+
+### Installing to a different drive
+
+<a id="install-other-drive"></a>
+
+The wizard's **directory picker** lets you install the app to any **local**
+drive (D:, E:, …). Two caveats:
+
+- **Mapped network drives (Z: → a share) are not supported** — this is a
+  Windows Installer limitation, not an OmniVoice bug: MSI custom actions run
+  as a service account that doesn't see per-user drive mappings, so the
+  install fails or rolls back. Install to a local drive instead.
+- The install location only moves the ~200 MB app itself. The big data
+  (models, voices, projects — tens of GB) lives in the **data directory**,
+  which you move independently: **Settings → Storage → Models directory**
+  in-app, or `OMNIVOICE_DATA_DIR` / [Portable mode](#portable-install) for
+  the whole data tree.
+
+When the Python **environment folder** (first-run setup → Advanced, or
+portable mode) is on a different drive than Windows, the installer keeps
+uv's package cache and managed Python **inside the environment folder**
+(`uv-cache/`, `uv-python/`) instead of `%LOCALAPPDATA%\uv`. Without that,
+every wheel (PyTorch alone is several GB) would be staged on `C:` and then
+copied across drives — filling the system drive you were trying to spare.
+The same applies to engine sidecar installs when the data directory is on
+another drive (`engines\.uv-cache`). An explicit `UV_CACHE_DIR` /
+`UV_PYTHON_INSTALL_DIR` you set yourself always wins.
+
+If an install to a local non-C: drive fails anyway, capture a log with
+`msiexec /i OmniVoice*.msi /L*V install.log` and
+[open an issue](https://github.com/debpalash/OmniVoice-Studio/issues) with it
+— that log shows exactly which step rolled back.
+
+## Portable install (Windows)
+
+<a id="portable-install"></a>
+
+OmniVoice Studio has a **Portable** mode: instead of scattering data across
+`%APPDATA%` and `%LOCALAPPDATA%`, the whole install — Python env, model
+weights, voices, projects, settings — lives in a single
+`OmniVoiceStudio-Data` folder created **next to the executable**. Moving or
+copying the app folder (exe + that data folder together) relocates the entire
+install, USB-stick style.
+
+The first-run setup screen offers Portable whenever the folder next to
+`OmniVoice Studio.exe` is writable. A default MSI install goes to
+`C:\Program Files`, which is *not* user-writable — that's why Portable shows
+as greyed out after a default install
+([#766](https://github.com/debpalash/OmniVoice-Studio/issues/766)). To enable
+it, install to a user-writable folder instead:
+
+- Re-run the MSI and choose a custom destination folder in the setup wizard
+  (e.g. `D:\Apps\OmniVoice`), or
+- From a terminal:
+  `msiexec /i OmniVoice.Studio_<version>_x64_en-US.msi INSTALLDIR="D:\Apps\OmniVoice"`
+
+On the next launch, pick **Portable** on the first-run setup screen. What
+lives next to the exe afterwards:
+
+<!-- validate: skip -->
+```
+D:\Apps\OmniVoice\
+├── OmniVoice Studio.exe        ← the app
+└── OmniVoiceStudio-Data\       ← the whole install, self-contained
+    ├── config.json             ← install-mode + app settings
+    ├── env\                    ← Python venv + backend code
+    └── data\                   ← voices, projects, settings DB
+        └── models\             ← model weights (HF cache)
+```
+
+Prefer the default Program Files install? **Installed** mode is the same app —
+data just lives in `%APPDATA%\OmniVoice` and the model cache in
+`%LOCALAPPDATA%\OmniVoice\hf_cache`.
 
 ## HF_TOKEN persistence
 

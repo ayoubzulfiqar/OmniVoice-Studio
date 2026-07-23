@@ -13,7 +13,11 @@ pub mod bootstrap;
 pub mod tools;
 pub mod backend;
 pub mod commands;
+pub mod crash;
+pub mod reset;
+pub mod uninstall;
 pub mod updater_channel;
+pub mod blank_guard;
 
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,6 +27,7 @@ use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
+use tauri_plugin_positioner::{Position, WindowExt};
 
 use crate::bootstrap::{BootstrapStage, BootstrapState, set_stage};
 use crate::config::{default_dictation_shortcut, load_config};
@@ -40,6 +45,9 @@ pub fn backend_port() -> u16 {
 
 pub struct BackendState {
     pub process: Mutex<Option<Child>>,
+    /// When the tracked child was spawned — feeds the crash marker's
+    /// `uptime_s` (#941). Set alongside `process` in bootstrap.rs.
+    pub spawned_at: Mutex<Option<std::time::Instant>>,
 }
 
 pub struct AppFlags {
@@ -74,9 +82,18 @@ pub const TRAY_ICON_RECORDING: &[u8] = include_bytes!("../icons/tray-recording.p
 //   applies on top.
 // - Linux (WebKitGTK): media-stream must be enabled per-WebView and the
 //   permission request answered programmatically.
-// - macOS (WKWebView): nothing to do here — wry grants media-capture to the
-//   app origin and the user-visible consent is the system TCC prompt driven
-//   by NSMicrophoneUsageDescription in src-tauri/Info.plist.
+// - macOS (WKWebView): nothing to do here in code — wry's own WKUIDelegate
+//   (WryWebViewUIDelegate::request_media_capture_permission) already grants
+//   every media-capture request unconditionally at the WebKit/JS layer. But
+//   that alone isn't sufficient (#1013): Tauri's macOS bundle defaults
+//   `hardenedRuntime` to true, and Hardened Runtime blocks camera/microphone
+//   hardware access unless the matching entitlement is present — without it,
+//   TCC never even registers a request, so the app never appears in System
+//   Settings → Privacy & Security → Microphone for the user to enable. See
+//   src-tauri/entitlements.plist (wired in via tauri.conf.json's
+//   bundle.macOS.entitlements) for the actual grant; NSMicrophoneUsageDescription
+//   in Info.plist only supplies the *prompt text* TCC shows, it doesn't
+//   substitute for the entitlement.
 
 /// True for origins the app itself serves: the Tauri custom-protocol origin
 /// in production and the Vite dev server / loopback in `tauri dev`.
@@ -200,10 +217,129 @@ mod media_permission_tests {
     }
 }
 
+// ── Windows: dictation pill must never take foreground focus (#982) ────────
+//
+// Windows counterpart of #287 (macOS auto-paste — don't steal focus). The
+// pill is `.always_on_top(true).skip_taskbar(true)` and is documented above
+// (see `grant_webview_media_permissions`) as "deliberately unfocused so the
+// auto-paste lands in the target app" — true on macOS, but on Windows,
+// showing an always-on-top top-level window gives it Win32 foreground
+// activation by default (ordinary Windows window-manager behavior; macOS
+// doesn't force-activate a shown window the same way). Nothing marked the
+// pill non-activating, so on Windows it stole foreground on every show —
+// the synthesized Ctrl+V from `simulate_paste` landed back in the pill
+// instead of the app the user was dictating into, and because the pill
+// wrongly held focus for the whole session the target app never got it back
+// until the pill's auto-dismiss timer eventually hid it.
+//
+// Two pieces, both required (verified by reading how `.show()` is used at
+// the call sites below — several are followed by an explicit `set_focus()`
+// that would fight the style bit on its own):
+//   1. WS_EX_NOACTIVATE on the HWND, applied once right after creation, so
+//      the OS never grants this window foreground activation implicitly.
+//   2. `ShowWindow(SW_SHOWNOACTIVATE)` in place of `WebviewWindow::show()` at
+//      the pill's dictation-trigger call sites, and the explicit
+//      `set_focus()` calls at those same sites are skipped on Windows (the
+//      same way they already are on macOS below).
+//
+// The flag math (`with_noactivate_style`) is a plain function so it's
+// unit-testable on every platform — the actual Win32 syscalls that use it
+// are Windows-only and can't run under `cargo test` on a non-Windows runner.
+
+/// `WS_EX_NOACTIVATE` (winuser.h: `#define WS_EX_NOACTIVATE 0x08000000L`).
+/// Hardcoded rather than imported from the `windows` crate so `with_noactivate_style`
+/// below stays free of the Windows-only dependency and is testable everywhere.
+/// Only consumed by Windows-only code (or the platform-agnostic test module
+/// below) — `#[allow(dead_code)]` elsewhere, same as `is_app_origin` above.
+#[cfg_attr(not(windows), allow(dead_code))]
+const WS_EX_NOACTIVATE_BIT: isize = 0x0800_0000;
+
+/// OR `WS_EX_NOACTIVATE` into an existing extended window style, preserving
+/// every other bit already set (topmost, layered, etc. — the pill's
+/// `always_on_top(true)` sets one of these). Pure so it's unit-testable
+/// without a real HWND. See module comment above for why this exists.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn with_noactivate_style(current_ex_style: isize) -> isize {
+    current_ex_style | WS_EX_NOACTIVATE_BIT
+}
+
+/// Mark the pill's HWND `WS_EX_NOACTIVATE`, once, right after creation — this
+/// holds for every later `.show()` regardless of call site (belt-and-braces
+/// alongside `show_pill_noactivate` below, which some call sites also need
+/// because they pair `.show()` with an explicit `set_focus()`).
+#[cfg(target_os = "windows")]
+fn mark_pill_noactivate(win: &tauri::WebviewWindow) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE,
+    };
+    let Ok(hwnd) = win.hwnd() else {
+        log::warn!("pill: could not resolve HWND to apply WS_EX_NOACTIVATE (#982)");
+        return;
+    };
+    unsafe {
+        let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, with_noactivate_style(current));
+    }
+}
+
+/// Show the pill without granting it foreground activation. Used instead of
+/// `WebviewWindow::show()` at the pill's dictation-trigger call sites on
+/// Windows — `.show()` maps to plain `ShowWindow(SW_SHOW)`, which relies on
+/// the NOACTIVATE style alone to suppress activation; `SW_SHOWNOACTIVATE` is
+/// the explicit, documented way to show a window without activating it and
+/// costs nothing extra now that the style bit is also set (#982).
+#[cfg(target_os = "windows")]
+fn show_pill_noactivate(win: &tauri::WebviewWindow) {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+    let Ok(hwnd) = win.hwnd() else {
+        log::warn!("pill: could not resolve HWND for non-activating show (#982)");
+        return;
+    };
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    }
+}
+
+#[cfg(test)]
+mod pill_noactivate_tests {
+    use super::{with_noactivate_style, WS_EX_NOACTIVATE_BIT};
+
+    #[test]
+    fn adds_noactivate_bit_without_clobbering_existing_style() {
+        // Stand-in for whatever bits the pill's always_on_top/skip_taskbar
+        // window already carries (e.g. WS_EX_TOPMOST = 0x00000008) —
+        // NOACTIVATE must be added on top, never replace them.
+        let topmost = 0x0000_0008isize;
+        let updated = with_noactivate_style(topmost);
+        assert_eq!(
+            updated & WS_EX_NOACTIVATE_BIT,
+            WS_EX_NOACTIVATE_BIT,
+            "NOACTIVATE bit must be set"
+        );
+        assert_eq!(updated & topmost, topmost, "pre-existing style bits must survive");
+    }
+
+    #[test]
+    fn idempotent_if_already_noactivate() {
+        assert_eq!(with_noactivate_style(WS_EX_NOACTIVATE_BIT), WS_EX_NOACTIVATE_BIT);
+    }
+
+    #[test]
+    fn matches_documented_win32_value() {
+        // winuser.h: #define WS_EX_NOACTIVATE 0x08000000L
+        assert_eq!(WS_EX_NOACTIVATE_BIT, 0x0800_0000);
+    }
+}
+
 // ── Tauri entry ───────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // #879: if the previous run requested a WebView cache repair (splash
+    // recovery panel → clear_webview_cache_and_relaunch), perform it now —
+    // before any webview exists, so WebView2 holds no locks on the profile.
+    commands::clear_webview_cache_if_marked();
+
     // ── Detect pill mode from CLI args OR persisted config ────────────────
     // CLI flag takes precedence. If not passed, fall back to the
     // `launch_as_widget` config field (set via tray "Switch to Pill Mode" or
@@ -233,9 +369,29 @@ pub fn run() {
                 let _ = win.unminimize();
                 let _ = win.set_focus();
             }
+            // #1156: when the backend died at startup, relaunching the app
+            // used to just refocus the dead window — the user was stuck
+            // unless they found the Retry button (or Task Manager). A
+            // second-instance attempt IS the user asking for a restart, so
+            // in the Failed stage run the same recovery as the Retry button.
+            // (respawn_backend attaches to an already-healthy backend rather
+            // than double-spawning, so a stray double-click stays harmless.)
+            let state = app.state::<bootstrap::BootstrapState>();
+            if bootstrap::already_diagnosed(&state.stage) {
+                log::info!(
+                    "Second instance while bootstrap is Failed — retrying backend spawn (#1156)"
+                );
+                bootstrap::respawn_backend(
+                    app.clone(),
+                    state.stage.clone(),
+                    state.logs.clone(),
+                );
+            }
         }))
+        .plugin(tauri_plugin_positioner::init())
         .invoke_handler(tauri::generate_handler![
             bootstrap::bootstrap_status,
+            bootstrap::last_bootstrap_failure,
             bootstrap::get_bootstrap_logs,
             bootstrap::retry_bootstrap,
             bootstrap::clean_and_retry_bootstrap,
@@ -253,6 +409,12 @@ pub fn run() {
             commands::read_log_tail,
             commands::hf_cache_scan,
             commands::simulate_paste,
+            commands::simulate_type,
+            commands::check_accessibility,
+            commands::open_accessibility_settings,
+            commands::check_microphone,
+            commands::open_microphone_settings,
+            commands::open_input_monitoring_settings,
             commands::set_tray_recording,
             commands::quit_app,
             commands::save_text_file,
@@ -260,11 +422,22 @@ pub fn run() {
             commands::set_dictation_shortcut,
             commands::get_launch_as_widget,
             commands::set_launch_as_widget,
-            commands::enable_pill_autostart,
-            commands::disable_pill_autostart,
-            commands::is_pill_autostart_enabled,
+            commands::clear_webview_cache_and_relaunch,
+            crash::get_last_backend_crash,
+            crash::acknowledge_backend_crash,
+            uninstall::uninstall_scan,
+            uninstall::uninstall_purge,
+            reset::reset_scan,
+            reset::reset_purge,
+            blank_guard::report_render_state,
+            blank_guard::recover_main_window,
         ])
         .setup(move |app| {
+            // Blank-window guard: watch the main window and, if nothing ever
+            // renders, reload and finally paint a built-in explanation rather
+            // than leaving the user with a dark rectangle (#1178 class).
+            blank_guard::arm(app.handle());
+
             app.handle().plugin(tauri_plugin_dialog::init())?;
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             app.handle().plugin(tauri_plugin_process::init())?;
@@ -274,10 +447,14 @@ pub fn run() {
             // launch if the user happened to be dictating when they quit,
             // overriding the WebviewWindowBuilder `.visible(false)` below.
             // Symptom: pill appears on app load with no shortcut press.
-            // The main window is fine to persist (size/position are useful).
+            // "main" is denylisted too (owner decision, 2026-07-02): the app
+            // must ALWAYS open maximized — not fullscreen — per
+            // tauri.conf.json (`maximized: true`, `fullscreen: false`).
+            // Persisting geometry meant one manual resize made every later
+            // launch reopen at that smaller size, overriding the config.
             app.handle().plugin(
                 tauri_plugin_window_state::Builder::default()
-                    .with_denylist(&["widget"])
+                    .with_denylist(&["widget", "main"])
                     .build(),
             )?;
             app.handle().plugin(
@@ -316,8 +493,14 @@ pub fn run() {
                 .skip_taskbar(true)
                 .center()
                 .build();
-                if let Err(e) = result {
+                if let Err(e) = &result {
                     log::error!("Failed to create widget window: {e:?}");
+                }
+                // Windows: mark the pill non-activating right away so it holds
+                // for every later `.show()` regardless of call site (#982).
+                #[cfg(target_os = "windows")]
+                if let Ok(win) = &result {
+                    mark_pill_noactivate(win);
                 }
             }
 
@@ -347,27 +530,22 @@ pub fn run() {
                                     // Show the widget window (works in both pill + studio mode)
                                     if let Some(win) = app_handle.get_webview_window("widget") {
                                         // Position pill at bottom-center — WhisperFlow / Ghost-Pepper
-                                        // style. 80px margin from bottom clears macOS dock + Windows
-                                        // taskbar + most Linux panels. Same math on all platforms.
-                                        if let Ok(Some(monitor)) = win.primary_monitor() {
-                                            let size = monitor.size();
-                                            let scale = monitor.scale_factor();
-                                            let logical_w = size.width as f64 / scale;
-                                            let logical_h = size.height as f64 / scale;
-                                            let x = (logical_w / 2.0 - 150.0) as i32;
-                                            let y = (logical_h - 64.0 - 80.0) as i32;
-                                            let _ = win.set_position(tauri::Position::Logical(
-                                                tauri::LogicalPosition::new(x as f64, y as f64),
-                                            ));
-                                        } else {
+                                        // style — via tauri-plugin-positioner. Falls back to center()
+                                        // if the plugin can't resolve the monitor geometry.
+                                        if win.move_window(Position::BottomCenter).is_err() {
                                             let _ = win.center();
                                         }
+                                        // Windows: show without granting foreground activation
+                                        // (#982) — `.show()` on other platforms is unaffected.
+                                        #[cfg(target_os = "windows")]
+                                        show_pill_noactivate(&win);
+                                        #[cfg(not(target_os = "windows"))]
                                         let _ = win.show();
-                                        // Don't steal focus on macOS: the simulated ⌘V from
-                                        // simulate_paste() must land in the app the user is
-                                        // dictating into — focusing the widget would swallow
-                                        // it (#287).
-                                        #[cfg(not(target_os = "macos"))]
+                                        // Don't steal focus on macOS or Windows: the simulated
+                                        // ⌘V/Ctrl+V from simulate_paste() must land in the app
+                                        // the user is dictating into — focusing the widget would
+                                        // swallow it (#287 macOS, #982 Windows).
+                                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                                         let _ = win.set_focus();
                                     }
                                     let _ = app_handle.emit("tray-dictate", ());
@@ -518,26 +696,23 @@ pub fn run() {
                             // + focus the widget BEFORE emitting tray-dictate so
                             // the user sees the pill instead of silent recording.
                             // Positioning mirrors the global-shortcut handler:
-                            // bottom-center (WhisperFlow style).
+                            // bottom-center (WhisperFlow style). Windows skips the
+                            // focus (and uses a non-activating show) for the same
+                            // reason the global-shortcut handler does — see #982.
                             if let Some(win) = app.get_webview_window("widget") {
                                 if win.is_visible().unwrap_or(false) {
                                     let _ = app.emit("tray-dictate-stop", ());
                                 } else {
-                                    if let Ok(Some(monitor)) = win.primary_monitor() {
-                                        let size = monitor.size();
-                                        let scale = monitor.scale_factor();
-                                        let logical_w = size.width as f64 / scale;
-                                        let logical_h = size.height as f64 / scale;
-                                        let x = (logical_w / 2.0 - 150.0) as i32;
-                                        let y = (logical_h - 64.0 - 80.0) as i32;
-                                        let _ = win.set_position(tauri::Position::Logical(
-                                            tauri::LogicalPosition::new(x as f64, y as f64),
-                                        ));
-                                    } else {
+                                    if win.move_window(Position::BottomCenter).is_err() {
                                         let _ = win.center();
                                     }
-                                    let _ = win.show();
-                                    let _ = win.set_focus();
+                                    #[cfg(target_os = "windows")]
+                                    show_pill_noactivate(&win);
+                                    #[cfg(not(target_os = "windows"))]
+                                    {
+                                        let _ = win.show();
+                                        let _ = win.set_focus();
+                                    }
                                     let _ = app.emit("tray-dictate", ());
                                 }
                             } else {
@@ -595,17 +770,7 @@ pub fn run() {
                         // regardless of what window-state restored. The denylist
                         // above should handle it, but belt-and-braces.
                         let _ = win.hide();
-                        if let Ok(Some(monitor)) = win.primary_monitor() {
-                            let size = monitor.size();
-                            let scale = monitor.scale_factor();
-                            let logical_w = size.width as f64 / scale;
-                            let logical_h = size.height as f64 / scale;
-                            let x = (logical_w / 2.0 - 150.0) as i32;
-                            let y = (logical_h - 64.0 - 80.0) as i32;
-                            let _ = win.set_position(tauri::Position::Logical(
-                                tauri::LogicalPosition::new(x as f64, y as f64),
-                            ));
-                        } else {
+                        if win.move_window(Position::BottomCenter).is_err() {
                             let _ = win.center();
                         }
                         log::info!("Pill mode: widget window pre-positioned at bottom-center (hidden until activated)");
@@ -621,6 +786,17 @@ pub fn run() {
                 // or stale state would otherwise show it on startup.
                 if let Some(win) = app.get_webview_window("widget") {
                     let _ = win.hide();
+                }
+                // Enforce the always-open-maximized contract (#881) at
+                // runtime: macOS can ignore `maximized: true` from
+                // tauri.conf.json at window creation when combined with the
+                // Overlay title-bar style, so the config flag alone isn't
+                // reliable. maximize() zooms the window — it never enters a
+                // fullscreen Space. Guarded by tests/test_window_launch_state.py.
+                if let Some(main_win) = app.get_webview_window("main") {
+                    if !main_win.is_maximized().unwrap_or(false) {
+                        let _ = main_win.maximize();
+                    }
                 }
             }
 
@@ -646,6 +822,7 @@ pub fn run() {
             app.manage(bootstrap_state);
             app.manage(BackendState {
                 process: Mutex::new(None),
+                spawned_at: Mutex::new(None),
             });
 
             let app_handle = app.handle().clone();
@@ -664,13 +841,41 @@ pub fn run() {
                     set_stage(&stage_handle, BootstrapStage::AwaitingSetup);
                     return;
                 }
-                if backend::backend_healthy(backend_port()) {
-                    log::info!(
-                        "Port {} already serving OmniVoice backend — attaching",
-                        backend_port()
-                    );
-                    set_stage(&stage_handle, BootstrapStage::Ready);
-                    return;
+                match backend::running_backend_version(backend_port()) {
+                    Some(v) if backend::same_app_version(&v) => {
+                        if backend::backend_deep_healthy(backend_port()) {
+                            log::info!(
+                                "Port {} already serving OmniVoice backend v{} — attaching",
+                                backend_port(), v
+                            );
+                            set_stage(&stage_handle, BootstrapStage::Ready);
+                            return;
+                        }
+                        // Same version but a DB-touching probe fails: a backend whose
+                        // install was wiped/corrupted while it kept running. Attaching
+                        // would look alive and 500 on everything — replace it.
+                        log::warn!(
+                            "Port {} serves OmniVoice v{} but failed the deep health probe — replacing it",
+                            backend_port(), v
+                        );
+                        backend::kill_orphan_on_port(backend_port());
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
+                    Some(v) => {
+                        // Healthy-but-stale backend from a previous version —
+                        // the post-update orphan that made new installs run
+                        // old backend code. Replace it (see backend.rs
+                        // same_app_version for the full story).
+                        log::warn!(
+                            "Port {} serves a stale OmniVoice backend (v{} != app v{}) — replacing it",
+                            backend_port(),
+                            if v.is_empty() { "<unknown>" } else { v.as_str() },
+                            env!("CARGO_PKG_VERSION"),
+                        );
+                        backend::kill_orphan_on_port(backend_port());
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
+                    None => {}
                 }
                 if backend::port_in_use(backend_port()) {
                     log::warn!(
@@ -727,6 +932,14 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
+            // Raise the quitting flag FIRST: exits that don't pass through the
+            // tray Quit item (macOS ⌘Q, OS session end) would otherwise let a
+            // death watcher observe our own SIGTERM below and record a false
+            // "backend crashed" marker (#941).
+            app_handle
+                .state::<AppFlags>()
+                .quitting
+                .store(true, Ordering::SeqCst);
             if let Ok(mut lock) = app_handle.state::<BackendState>().process.lock() {
                 if let Some(ref mut child) = *lock {
                     let pid = child.id();

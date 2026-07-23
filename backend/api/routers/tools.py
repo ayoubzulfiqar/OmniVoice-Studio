@@ -77,6 +77,15 @@ async def probe(req: ProbeReq):
 class IncrementalReq(BaseModel):
     segments: list[dict]
     stored_hashes: Optional[dict[str, str]] = None
+    # P1.3 — the ACTIVE track's language code. When set, fingerprints are
+    # scoped to that language (pass that language's stored hashes alongside);
+    # omitted → legacy language-agnostic hashing, kept for old callers.
+    lang: Optional[str] = None
+    # Voice-identity mode the client will generate with (DubRequest.voice_match).
+    # Only "consistent" changes the hash (per_line/omitted == legacy), so
+    # flipping the Voice-match toggle marks every segment stale — the audio
+    # really would come out with a different reference (#281 class).
+    voice_match: Optional[str] = None
 
 
 @router.post("/tools/incremental")
@@ -84,6 +93,8 @@ def plan_incremental(req: IncrementalReq):
     return incremental.plan_incremental(
         req.segments,
         stored_hashes=req.stored_hashes or {},
+        track_lang=req.lang,
+        voice_match=req.voice_match,
     )
 
 

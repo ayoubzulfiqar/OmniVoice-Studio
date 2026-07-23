@@ -46,7 +46,6 @@ from transformers import (
     AutoFeatureExtractor,
     AutoModel,
     AutoTokenizer,
-    HiggsAudioV2TokenizerModel,
     PretrainedConfig,
     PreTrainedModel,
 )
@@ -57,8 +56,9 @@ from omnivoice.utils.audio import (
     cross_fade_chunks,
     fade_and_pad_audio,
     load_audio,
-    remove_silence,
+    remove_silence_safe,
     trim_long_audio,
+    validate_clone_reference,
 )
 from omnivoice.utils.duration import RuleDurationEstimator
 from omnivoice.utils.lang_map import LANG_IDS, LANG_NAMES
@@ -182,6 +182,63 @@ class OmniVoiceConfig(PretrainedConfig):
         self.audio_codebook_weights = audio_codebook_weights
 
 
+def _audio_tokenizer_cls():
+    """Resolve ``transformers.HiggsAudioV2TokenizerModel`` at the point of use.
+
+    transformers exposes this class through its lazy module and gates it on the
+    ``torchaudio`` backend, so the *attribute access* — not the `transformers`
+    import — is what raises when torchaudio is missing, ABI-mismatched with
+    torch, or installed without discoverable distribution metadata (Colab's
+    system Python, an interrupted `uv pip install`). Resolving it at module
+    scope made that a fatal import error for the WHOLE backend: `backend/main.py`
+    imports the profiles router → `omnivoice` → this module, so one optional
+    audio tokenizer took down TTS, dubbing, ASR and Settings alike, before
+    FastAPI existed to classify it. The user saw only uvicorn's traceback and a
+    "Backend did not become healthy within 5 minutes" timeout (#1229).
+
+    Deferred here, the failure lands inside a request instead, where
+    ``core.failure.classify()`` maps it to ``TRANSFORMERS_IMPORT`` and attaches
+    a repair hint — and every feature that doesn't need this tokenizer keeps
+    working.
+    """
+    try:
+        from transformers import HiggsAudioV2TokenizerModel
+    except Exception as e:
+        raise ImportError(
+            "Could not import module 'HiggsAudioV2TokenizerModel' — OmniVoice's "
+            "audio tokenizer. transformers gates it on torchaudio, so this is "
+            "almost always a torchaudio that is missing, broken, or mismatched "
+            "with the installed torch/transformers. Reinstall them together "
+            "(`uv pip install --reinstall torch torchaudio transformers`; add "
+            "--system on Colab), then restart the backend. Underlying error: "
+            f"{type(e).__name__}: {e}"
+        ) from e
+    return HiggsAudioV2TokenizerModel
+
+
+def _resolve_snapshot_dir(checkpoint) -> str:
+    """Local snapshot directory for ``checkpoint`` (a local dir or a HF repo id).
+
+    Cache-first (#959): a COMPLETE local cache is resolved with
+    ``snapshot_download(..., local_files_only=True)``, which never constructs
+    an HTTP session — so no session-construction failure (e.g. httpx's
+    ImportError under ``ALL_PROXY``/``HTTPS_PROXY=socks5://`` without socksio,
+    a malformed proxy URL, a broken cert bundle) can break synthesis of an
+    already-installed model. Only a cache miss / incomplete cache falls
+    through to the original network ``snapshot_download``, whose errors
+    (auth, connectivity, proxy) surface exactly as before.
+    """
+    if os.path.isdir(checkpoint):
+        return checkpoint
+    from huggingface_hub import snapshot_download
+
+    try:
+        return snapshot_download(checkpoint, local_files_only=True)
+    except Exception:
+        # Miss/incomplete (LocalEntryNotFoundError et al.) → network path.
+        return snapshot_download(checkpoint)
+
+
 class OmniVoice(PreTrainedModel):
     _supports_flex_attn = True
     _supports_flash_attn_2 = True
@@ -249,9 +306,19 @@ class OmniVoice(PreTrainedModel):
         load_asr = kwargs.pop("load_asr", False)
         asr_model_name = kwargs.pop("asr_model_name", "openai/whisper-large-v3-turbo")
 
-        # Suppress noisy INFO logs from transformers/huggingface_hub during loading
-        _prev_disable = logging.root.manager.disable
-        logging.disable(logging.INFO)
+        # Suppress noisy INFO logs from transformers/huggingface_hub during
+        # loading. Scoped to those two logger trees — NOT logging.disable(),
+        # which is process-global and only restored when this call returns: a
+        # SIGTERM mid-load ran the entire app shutdown with INFO logging still
+        # disabled, blacking out every "Shutting down"/"Shutdown: done." line
+        # and making a clean quit look like a silent crash (#1174).
+        _quiet_loggers = [
+            logging.getLogger("transformers"),
+            logging.getLogger("huggingface_hub"),
+        ]
+        _prev_levels = [(lg, lg.level) for lg in _quiet_loggers]
+        for _lg in _quiet_loggers:
+            _lg.setLevel(logging.WARNING)
 
         # Disable tqdm on non-TTY (e.g., Tauri backend) to prevent OSError on Windows
         _prev_tqdm = os.environ.get("TQDM_DISABLE")
@@ -264,13 +331,10 @@ class OmniVoice(PreTrainedModel):
             )
 
             if not train_mode:
-                # Resolve local path for audio tokenizer subdirectory
-                if os.path.isdir(pretrained_model_name_or_path):
-                    resolved_path = pretrained_model_name_or_path
-                else:
-                    from huggingface_hub import snapshot_download
-
-                    resolved_path = snapshot_download(pretrained_model_name_or_path)
+                # Resolve local path for audio tokenizer subdirectory —
+                # cache-first so a proxy-broken HTTP session can't fail an
+                # installed model (#959; see _resolve_snapshot_dir).
+                resolved_path = _resolve_snapshot_dir(pretrained_model_name_or_path)
 
                 model.text_tokenizer = AutoTokenizer.from_pretrained(
                     pretrained_model_name_or_path
@@ -287,7 +351,7 @@ class OmniVoice(PreTrainedModel):
                 tokenizer_device = (
                     "cpu" if str(model.device).startswith("mps") else model.device
                 )
-                model.audio_tokenizer = HiggsAudioV2TokenizerModel.from_pretrained(
+                model.audio_tokenizer = _audio_tokenizer_cls().from_pretrained(
                     audio_tokenizer_path, device_map=tokenizer_device
                 )
                 model.feature_extractor = AutoFeatureExtractor.from_pretrained(
@@ -301,7 +365,8 @@ class OmniVoice(PreTrainedModel):
                 if load_asr:
                     model.load_asr_model(model_name=asr_model_name)
         finally:
-            logging.disable(_prev_disable)
+            for _lg, _lvl in _prev_levels:
+                _lg.setLevel(_lvl)
             # Restore TQDM_DISABLE state
             if _prev_tqdm is None:
                 os.environ.pop("TQDM_DISABLE", None)
@@ -649,6 +714,11 @@ class OmniVoice(PreTrainedModel):
             ref_wav = waveform
 
         ref_rms = torch.sqrt(torch.mean(torch.square(ref_wav))).item()
+        # #1188: fail fast — and actionably — when the clip has no audio at
+        # all (empty / digitally silent / NaN samples). Everything quieter
+        # than the trim thresholds but real is recovered below, so this is
+        # the only remaining hard failure for a reference clip.
+        validate_clone_reference(ref_wav, ref_rms)
         if 0 < ref_rms < 0.1:
             ref_wav = ref_wav * 0.1 / ref_rms
 
@@ -660,18 +730,18 @@ class OmniVoice(PreTrainedModel):
                 ref_wav = trim_long_audio(
                     ref_wav, self.sampling_rate, trim_threshold=20.0
                 )
-            ref_wav = remove_silence(
+            # #1188: the fixed -50 dBFS silence threshold used to consume a
+            # quiet-but-real recording wholesale and dead-end with
+            # "Reference audio is empty after silence removal". The safe
+            # variant retries with gentler thresholds and, as a last resort,
+            # skips trimming — a quiet real clip must clone, not 400.
+            ref_wav = remove_silence_safe(
                 ref_wav,
                 self.sampling_rate,
                 mid_sil=200,
                 lead_sil=100,
                 trail_sil=200,
             )
-            if ref_wav.size(-1) == 0:
-                raise ValueError(
-                    "Reference audio is empty after silence removal. "
-                    "Try setting preprocess_prompt=False."
-                )
 
         ref_duration = ref_wav.size(-1) / self.sampling_rate
         if ref_duration > 20.0:
@@ -761,7 +831,12 @@ class OmniVoice(PreTrainedModel):
             Processed audio tensor of shape (1, T).
         """
         if postprocess_output:
-            generated_audio = remove_silence(
+            # #1188 (same class as the reference-clip bug): quiet generated
+            # audio below the -50 dBFS silence threshold would be removed
+            # wholesale here, producing an empty/near-empty WAV that fails
+            # downstream decoding. The safe variant degrades to no trimming
+            # instead of destroying the take.
+            generated_audio = remove_silence_safe(
                 generated_audio,
                 self.sampling_rate,
                 mid_sil=500,

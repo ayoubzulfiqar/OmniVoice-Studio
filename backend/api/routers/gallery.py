@@ -161,13 +161,18 @@ async def search_youtube(
     list. Users are responsible for the licensing of whatever they import.
     """
     try:
+        # yt-dlp is an importable module, never a PATH requirement — run it
+        # via the interpreter (honors the Settings → Audio tools overlay).
+        from services.media_tools import ytdlp_invocation
+        ytdlp_argv, ytdlp_env = ytdlp_invocation()
         result = await spawn_subprocess(
-            "yt-dlp",
+            *ytdlp_argv,
             "--dump-json",
             "--remote-components", "ejs:github",
             f"ytsearch{max_results}:{query}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=ytdlp_env,
         )
         stdout, stderr = await result.communicate()
 
@@ -199,7 +204,7 @@ async def search_youtube(
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="yt-dlp not installed")
     except Exception as e:
-        logger.error(f"YouTube search error: {e}")
+        logger.exception("YouTube search error")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -218,8 +223,10 @@ async def download_youtube_clip(
     temp_path = str(VOICE_GALLERY_DIR / f"{voice_id}.%(ext)s")
 
     try:
+        from services.media_tools import ytdlp_invocation
+        ytdlp_argv, ytdlp_env = ytdlp_invocation()
         cmd = [
-            "yt-dlp",
+            *ytdlp_argv,
             "--remote-components", "ejs:github",
             "-f",
             "bestaudio",
@@ -239,6 +246,7 @@ async def download_youtube_clip(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=ytdlp_env,
         )
         stdout, stderr = await result.communicate()
 
@@ -290,7 +298,7 @@ async def download_youtube_clip(
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="yt-dlp not installed")
     except Exception as e:
-        logger.error(f"Download error: {e}")
+        logger.exception("Download error")
         raise HTTPException(status_code=500, detail=str(e))
 
 
