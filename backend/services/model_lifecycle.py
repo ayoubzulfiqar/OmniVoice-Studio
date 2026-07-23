@@ -45,11 +45,33 @@ def _asr_device() -> str:
     return "cpu"
 
 
+def _active_tts_id() -> Optional[str]:
+    """Configured TTS engine id, or None if it can't be resolved. Attribution
+    is advisory — a prefs/import hiccup must never break /model/loaded."""
+    try:
+        from services.tts_backend import active_backend_id
+        return active_backend_id()
+    except Exception:
+        return None
+
+
+def _tts_attribution(engine_id: str, active: Optional[str]) -> dict:
+    """Per-entry engine attribution for TTS-family models. A model can stay
+    resident in VRAM after the user switches engines (freed only by unload/
+    idle-evict), so the panel needs to know which entry synthesis actually
+    routes to. ``is_active_engine`` is None when the active id is unknown."""
+    return {
+        "engine_id": engine_id,
+        "is_active_engine": (engine_id == active) if active is not None else None,
+    }
+
+
 def list_loaded() -> dict:
     """Enumerate every currently-loaded model. Shape: ``{"models": [...],
     "count": n}`` with per-model id/name/checkpoint/device/vram_mb/unloadable
     (+ optional ``note``)."""
     models: list[dict] = []
+    active_tts = _active_tts_id()
 
     # 1. In-process TTS model (OmniVoice)
     if mm.model is not None:
@@ -60,10 +82,11 @@ def list_loaded() -> dict:
         models.append({
             "id": "tts",
             "name": "OmniVoice TTS",
-            "checkpoint": os.environ.get("OMNIVOICE_MODEL", "k2-fsa/OmniVoice"),
+            "checkpoint": mm.resolve_omnivoice_checkpoint(),  # #693: effective checkpoint, not a leaked raw value
             "device": device,
             "vram_mb": round(_tts_vram_mb(), 1),
             "unloadable": True,
+            **_tts_attribution("omnivoice", active_tts),
         })
 
     # 2. ASR (WhisperX) — co-loaded with and released alongside the TTS model.
@@ -105,11 +128,75 @@ def list_loaded() -> dict:
                 "device": get_best_device(),
                 "vram_mb": round(float(s.get("vram_mb") or 0), 1),
                 "unloadable": True,
+                **_tts_attribution(s["id"], active_tts),
             })
     except Exception:
         pass
 
-    return {"models": models, "count": len(models)}
+    # 5. In-process engine instances that hold a model (mlx-audio, cosyvoice,
+    #    voxcpm2, kittentts, …). These live in the generate path's instance
+    #    cache, separate from the OmniVoice core above — and were INVISIBLE here
+    #    until now, so a resident non-OmniVoice engine (up to a few GB) didn't
+    #    show in the panel at all. Report each that currently holds a model.
+    #    VRAM isn't self-reported by these engines → 0 (unmeasured), same
+    #    convention as a CPU/uninstrumented sidecar. Enumeration is best-effort.
+    try:
+        from api.routers.engines import _ENGINE_INSTANCES
+        from services.tts_backend import OmniVoiceBackend
+
+        for cls, inst in list(_ENGINE_INSTANCES.items()):
+            if cls is OmniVoiceBackend:
+                continue  # the shared core is already section 1 (mm.model)
+            if not any(getattr(inst, a, None) is not None
+                       for a in getattr(inst, "_MODEL_ATTRS", ("_model", "_tts"))):
+                continue  # instance exists but hasn't loaded its weights
+            eid = getattr(cls, "id", cls.__name__)
+            models.append({
+                "id": f"engine:{eid}",
+                "name": getattr(inst, "display_name", None) or f"{eid} (engine)",
+                "checkpoint": eid,
+                "device": get_best_device(),
+                "vram_mb": 0,  # not self-reported by in-process engines
+                "unloadable": True,
+                **_tts_attribution(eid, active_tts),
+            })
+    except Exception:
+        pass
+
+    # 6. The warm capture/dictation ASR singleton — resident until idle-released
+    #    (#1101 class). Held separately from the co-loaded WhisperX ASR above.
+    try:
+        import services.asr_backend as ab
+
+        cap = getattr(ab, "_capture_backend", None)
+        if cap is not None:
+            models.append({
+                "id": "capture-asr",
+                "name": f"{type(cap).__name__} (dictation)",
+                "checkpoint": getattr(ab, "_capture_backend_key", None) or type(cap).__name__,
+                "device": get_best_device(),
+                "vram_mb": 0,
+                "unloadable": True,
+                "note": "released after the idle timeout",
+            })
+    except Exception:
+        pass
+
+    # System memory snapshot — free/total RAM (and VRAM on a dedicated GPU) plus
+    # a low-memory advisory, so the panel can show pressure instead of leaving
+    # the 16 GB-Mac OOM class invisible until the backend dies.
+    system: dict = {}
+    try:
+        from services.memory_budget import available_memory, low_memory_warning
+
+        system = available_memory()
+        warn = low_memory_warning()
+        if warn:
+            system["warning"] = warn
+    except Exception:
+        pass
+
+    return {"models": models, "count": len(models), "system": system}
 
 
 async def unload(model_id: str) -> dict:

@@ -47,15 +47,22 @@ def test_render_chapter_cache_hit_skips_synth(tmp_path):
     resolve = lambda _vid: {"ref_audio": None, "instruct": None, "seed": None}  # noqa: E731
 
     # Pre-seed the cache at the exact key this chapter will hash to. The voice
-    # signature is ref_audio|ref_text|instruct|seed (all None here).
+    # signature is ref_audio|ref_text|instruct|seed (all None here). Since
+    # #1169 the key also carries a watermark tag whenever marking is active
+    # (pref on + AudioSeal importable), so a pre-#1169 unmarked cache entry
+    # can never satisfy a marked-on render; mirror that derivation here.
+    from services.watermark import will_mark
     sig = {"": "None|None|None|None"}
+    if will_mark():
+        sig["\x00watermark"] = "1"
     key = chapter_cache_key([(None, "hi", 0, None)], sample_rate=sr, engine_id="eng", voice_sig=sig)
     _write_wav(tmp_path / f"{key}.wav", sr=sr, frames=sr // 2)  # 0.5 s
 
     def boom(*_a, **_k):
         raise AssertionError("synth must not be called on a cache hit")
 
-    wav_path, dur, cached = _render_chapter_cached(chapter, boom, sr, "eng", resolve, str(tmp_path))
+    wav_path, dur, cached, seg_stats = _render_chapter_cached(chapter, boom, sr, "eng", resolve, str(tmp_path))
     assert cached is True
+    assert seg_stats is None  # chapter-level hit — the segment layer untouched
     assert wav_path.endswith(f"{key}.wav")
     assert abs(dur - 0.5) < 0.01

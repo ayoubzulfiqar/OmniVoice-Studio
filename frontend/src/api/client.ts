@@ -8,6 +8,24 @@
 //     and the API, so a remote device on http://<host>:<share-port> must hit
 //     that same origin — NOT a hardcoded :3900, which is cross-origin (CORS)
 //     and loopback-only/unreachable from another machine.
+// Explicit .ts extension: tests/frontend/apiClient.test.mjs loads this module
+// under `node --experimental-strip-types`, whose ESM resolver requires real
+// file extensions (tsconfig has allowImportingTsExtensions for tsc).
+import {
+  getUnacknowledgedBackendCrash,
+  describeCrashExit,
+  crashAge,
+  type BackendCrashMarker,
+} from '../utils/backendCrash.ts';
+import { backendLifecycleStage, type BackendLifecycle } from '../utils/backendLifecycle.ts';
+import { scrubText } from '../utils/scrub.js';
+import { deploymentMode } from '../utils/deploymentMode.ts';
+import {
+  lastBackendContact,
+  recordBackendContact,
+  unreachableBackendMessage,
+} from '../utils/backendContact.ts';
+
 const viteEnv = import.meta.env ?? {};
 // Remote-backend settings (Wave 2.3): user-configured in Settings → Sharing.
 // localStorage so the choice survives restarts; read once at module load —
@@ -31,8 +49,11 @@ export function _resolveApiBase(env: any, win: any): string {
   let stored = '';
   try {
     stored = (win && win.localStorage && win.localStorage.getItem(LS_BACKEND_URL)) || '';
-  } catch { /* storage unavailable (privacy mode) */ }
-  const runtime = win && typeof win.__OMNIVOICE_API_BASE__ === 'string' ? win.__OMNIVOICE_API_BASE__ : '';
+  } catch {
+    /* storage unavailable (privacy mode) */
+  }
+  const runtime =
+    win && typeof win.__OMNIVOICE_API_BASE__ === 'string' ? win.__OMNIVOICE_API_BASE__ : '';
   const override = stored || runtime || env?.VITE_OMNIVOICE_API || env?.VITE_API_URL;
   if (override) return String(override).replace(/\/+$/, '');
   if (!win) return `http://127.0.0.1:${port}`;
@@ -50,6 +71,21 @@ function _apiKey(): string | null {
   }
 }
 
+/** Persist the durable remote API key (trimmed). localStorage so it survives
+ * reloads; read back by `_apiKey()` on every request. Returns false (without
+ * writing) when the value is empty-after-trim or storage is unavailable, so the
+ * caller can avoid reloading into a loop. */
+export function saveApiKey(v: string): boolean {
+  const t = v.trim();
+  if (!t) return false;
+  try {
+    localStorage.setItem(LS_API_KEY, t);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Build a ws:// or wss:// URL for a backend WebSocket endpoint.
  *
  * Scheme derives from the API base itself (NOT window.location — a Tauri
@@ -63,14 +99,61 @@ export function wsUrl(path: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}api_key=${encodeURIComponent(key)}`;
 }
 
-// Capture a QR-supplied PIN once on load. When LAN sharing is on, the host's
-// QR code links to `http://<lan-ip>:<port>/?pin=<pin>`; stash it in
-// sessionStorage so apiFetch attaches it to every request automatically.
+/**
+ * Pull deep-link credentials out of a URL and return them plus a scrubbed URL.
+ * Pure (no side effects) so it's unit-testable; the on-load block below applies
+ * the effects.
+ *   • ?pin=<pin>     (query)    — LAN-share QR. Returned as `pin` (session).
+ *   • #api_key=<key> (fragment) — remote-backend deep link. Returned as `apiKey`
+ *     (durable). Read from the FRAGMENT because fragments aren't sent to the
+ *     server, so the durable secret stays out of request logs; the PIN stays in
+ *     the query since the QR flow needs the server to see it.
+ * A stray legacy ?api_key= in the query is scrubbed from `cleanUrl` but NOT
+ * returned — reading it would resend the secret to the server on reload, the
+ * very leak the fragment avoids. `scrubbed` is true when any credential param
+ * was present, so the caller knows to rewrite the address bar.
+ *
+ * Caveat: the fragment is parsed with URLSearchParams, so a key containing `+`
+ * decodes as a space — URL-encode such keys (`#api_key=a%2Bb`). Keys from the
+ * documented `secrets.token_urlsafe` / hex generators don't contain `+`.
+ */
+export function _parseDeepLinkCredentials(href: string): {
+  pin: string | null;
+  apiKey: string | null;
+  cleanUrl: string;
+  scrubbed: boolean;
+} {
+  const url = new URL(href);
+  const pin = url.searchParams.get('pin');
+  const legacyQueryKey = url.searchParams.get('api_key');
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
+  const apiKey = hashParams.get('api_key');
+  if (pin) url.searchParams.delete('pin');
+  if (legacyQueryKey) url.searchParams.delete('api_key');
+  if (apiKey) {
+    hashParams.delete('api_key');
+    url.hash = hashParams.toString();
+  }
+  return {
+    pin,
+    apiKey,
+    cleanUrl: url.pathname + url.search + url.hash,
+    scrubbed: Boolean(pin || apiKey || legacyQueryKey),
+  };
+}
+
+// On load, capture deep-link credentials (?pin= from the QR query, #api_key=
+// from a remote-backend fragment) so apiFetch attaches them automatically, then
+// scrub them from the address bar (one-shot — see _parseDeepLinkCredentials).
 if (typeof window !== 'undefined') {
   try {
-    const p = new URL(window.location.href).searchParams.get('pin');
-    if (p) sessionStorage.setItem('ov_pin', p);
-  } catch { /* noop */ }
+    const { pin, apiKey, cleanUrl, scrubbed } = _parseDeepLinkCredentials(window.location.href);
+    if (pin) sessionStorage.setItem('ov_pin', pin);
+    if (apiKey) saveApiKey(apiKey);
+    if (scrubbed) window.history.replaceState(null, '', cleanUrl);
+  } catch {
+    /* noop */
+  }
 }
 
 export class ApiError extends Error {
@@ -101,9 +184,39 @@ async function readError(res: Response): Promise<string> {
 
 // Backoff (ms) for retrying a *transport-level* failure — the backend briefly
 // down while the auto-restart supervisor brings it back (#567/#570/#571). One
-// short cascade (~2.9 s total) so a restart window becomes invisible, yet a
+// short cascade (~2.9 s total) so a blip becomes invisible, yet a
 // genuinely-down backend still surfaces the actionable error promptly.
 const TRANSPORT_RETRY_BACKOFF_MS = [400, 900, 1600];
+
+// A REAL backend start/restart is 10–20+ s (venv python spawn + torch
+// import), not 2.9 s — measured on a 16 GB M-series Mac; slower disks take
+// longer. When the desktop shell says the backend is starting/restarting
+// (bootstrap_status ≠ ready/failed), keep retrying at this interval instead
+// of dead-ending every request mid-restart with "Can't reach the local
+// OmniVoice backend". Bounded by STARTUP_GRACE_MS (matches the supervisor's
+// own 120 s respawn-health wait in src-tauri/src/bootstrap.rs); the shell
+// flipping to `failed` — or being absent (browser/Docker) — exits the wait
+// immediately, so a truly dead backend still errors promptly.
+const RESTART_WAIT_INTERVAL_MS = 1500;
+const STARTUP_GRACE_MS = 120_000;
+
+// #1101: the shell's stage is a 2-second POLL, not a live probe. When the
+// backend dies mid-generate, `supervise_backend` needs up to ~2 s to notice the
+// exit, record the crash marker, and flip the stage to "starting" — so a single
+// check at the end of the ~2.9 s cascade very often still sees `ready` and we
+// dead-ended on the generic "Can't reach the backend" anyway. That was the hole
+// in the #1094 fix, reported against 0.3.19.
+//
+// A transport failure CONTRADICTS `ready`: if the shell believed the backend
+// were reachable, the fetch would have succeeded. So `ready` is treated as a
+// STALE belief, not an authority — we keep retrying across this reconciliation
+// window, re-asking each time, which lets a death the supervisor hasn't noticed
+// yet turn into "starting" (→ the long wait + banner) and gives the crash marker
+// time to be written so the error can tell the honest story instead of guessing.
+// Only `failed` (the shell gave up) or `unknown` (no shell — browser/Docker)
+// still errors immediately.
+const RECONCILE_MS = 12_000;
+const RECONCILE_INTERVAL_MS = 1000;
 
 export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
   const pin = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('ov_pin') : null;
@@ -115,15 +228,29 @@ export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Re
   if (pin) extra['X-OmniVoice-Pin'] = pin;
   if (key) extra['Authorization'] = `Bearer ${key}`;
   const finalOpts: RequestInit = Object.keys(extra).length
-    ? { ...opts, headers: { ...(opts.headers as Record<string, string> || {}), ...extra } }
+    ? { ...opts, headers: { ...(opts.headers as Record<string, string>), ...extra } }
     : opts;
   const signal = finalOpts.signal as AbortSignal | null | undefined;
   let lastDetail = '';
+  // The shell's last word on the backend. When it still says `ready` after we've
+  // exhausted the reconcile window, the process is demonstrably ALIVE and simply
+  // not answering — a different failure from "it stopped", and it deserves a
+  // different sentence (#1113).
+  // #1177: `.message` carries the shell's full diagnosis for a `failed` stage
+  // (exit code + stderr tail, or the venv-bootstrap reason) — the evidence the
+  // generic "can't reach" message used to throw away.
+  let lastStage: BackendLifecycle = { stage: 'unknown', message: null };
+  const startedAt = Date.now();
   for (let attempt = 0; ; attempt++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     let res: Response;
     try {
       res = await fetch(apiUrl(path), finalOpts);
+      // Any response — success or HTTP error alike — proves the backend
+      // process is alive and answering. Recording it lets a LATER transport
+      // failure say "it was answering Xs ago and stopped" instead of the
+      // one-size "can't reach" (#1164).
+      recordBackendContact();
     } catch (e) {
       // A thrown fetch (TypeError "Failed to fetch" / "NetworkError") means the
       // request never reached the backend — it's still starting up, crashed, or
@@ -138,20 +265,158 @@ export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Re
         await new Promise((r) => setTimeout(r, TRANSPORT_RETRY_BACKOFF_MS[attempt]));
         continue;
       }
+      // The short cascade is exhausted, but the desktop shell may KNOW the
+      // backend is mid-start/restart (a real one takes 10–20+ s — torch
+      // import — not 2.9 s). Keep waiting exactly as long as the shell says
+      // "starting", bounded by STARTUP_GRACE_MS.
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < STARTUP_GRACE_MS) {
+        try {
+          lastStage = await backendLifecycleStage();
+        } catch {
+          /* never let the lifecycle probe mask the real transport error */
+        }
+        const stage = lastStage.stage;
+        if (stage === 'starting') {
+          await new Promise((r) => setTimeout(r, RESTART_WAIT_INTERVAL_MS));
+          continue;
+        }
+        // `ready` while the transport is failing is a contradiction — the
+        // shell's 2 s poll simply hasn't caught up with a backend that just
+        // died (#1101). Don't believe it yet: keep retrying briefly so the
+        // supervisor can notice, flip to "starting", and write the crash
+        // marker. 'failed'/'unknown' fall through and error now, so a shell
+        // that gave up — or no shell at all — still surfaces promptly.
+        if (stage === 'ready' && elapsed < RECONCILE_MS) {
+          await new Promise((r) => setTimeout(r, RECONCILE_INTERVAL_MS));
+          continue;
+        }
+      }
+      // Diagnostics that ride on every give-up ApiError (#1164): the bug
+      // report builder reads these to say WHICH deployment failed, whether
+      // the backend ever answered this session, and how long we retried.
+      const mode = deploymentMode();
+      const failureDetail = {
+        transport: lastDetail,
+        mode,
+        lastContactMs: lastBackendContact(),
+        firstFailureTs: startedAt,
+        attempts: attempt + 1,
+      };
+      // #941: if a backend crash was recorded — by the desktop shell's death
+      // watcher, or (browser/dev/Docker) by the backend's own run sentinel —
+      // tell the honest story instead of the vague "can't reach" and let
+      // BackendCrashNotice raise its "View crash details" affordance.
+      let crash: BackendCrashMarker | null = null;
+      try {
+        crash = await getUnacknowledgedBackendCrash();
+      } catch {
+        /* forensics unavailable — fall through to the generic message */
+      }
+      if (crash) {
+        try {
+          window.dispatchEvent(new CustomEvent('ov:backend-crashed', { detail: crash }));
+        } catch {
+          /* no window (tests) — the ApiError below still tells the story */
+        }
+        throw new ApiError(
+          `The local OmniVoice backend crashed (${describeCrashExit(crash)}) ${crashAge(crash)} ago ` +
+            'and is being restarted — this request could not reach it. ' +
+            'Open the crash notice for the error output, or check Settings → Logs → Backend.',
+          { status: 0, detail: failureDetail },
+        );
+      }
+      // #1113: no crash was recorded AND the shell still reports the backend as
+      // running — so it did NOT stop; it is alive and has stopped answering.
+      // Telling this user "it may still be starting up, or it stopped" is simply
+      // false, and it sends them to restart the app when the real cause is a
+      // wedged job holding the worker (a heavy generate/transcribe on a small
+      // GPU). Name what actually happened and point at the thing that fixes it.
+      if (lastStage.stage === 'ready') {
+        throw new ApiError(
+          'The local OmniVoice backend is running but stopped responding. This usually means a ' +
+            'job (a generation or a transcription) is stuck holding the engine — often a model ' +
+            'too heavy for the available memory on this machine. Check Settings → Logs → Backend ' +
+            'for the last thing it was doing; a smaller model or engine (Settings → Models) is ' +
+            'the usual fix. Restarting the app clears it for now.',
+          { status: 0, detail: failureDetail },
+        );
+      }
+      // #1177: the shell says the backend START FAILED — and it knows exactly
+      // why. `BootstrapStage::Failed { message }` carries the exit code plus a
+      // ~30-line stderr tail, or the precise reason `ensure_venv_ready`
+      // refused (Intel Mac unsupported, a failed `uv sync`, a blocked GitHub).
+      // That diagnosis used to die inside the shell: the lifecycle probe
+      // returned only the stage tag, so EVERY start-failure mode collapsed
+      // into the evidence-free "may still be starting up, or it stopped" —
+      // which is also simply wrong (it is not starting, and it will not come
+      // back on its own). Surface the real reason, and raise the notice so the
+      // full output is one click from the "report" affordance.
+      //
+      // Scrubbed here rather than at the report boundary: this string is the
+      // Error message, and it flows into breadcrumbs, logs and any future
+      // telemetry — the home path must be gone before it is anywhere but the
+      // shell (buildBugReportUrl scrubs again; belt and braces).
+      if (lastStage.stage === 'failed' && lastStage.message) {
+        const diagnosis = scrubText(lastStage.message).trim();
+        try {
+          window.dispatchEvent(
+            new CustomEvent('ov:backend-start-failed', { detail: { message: diagnosis } }),
+          );
+        } catch {
+          /* no window (tests) — the ApiError below still carries the diagnosis */
+        }
+        throw new ApiError(
+          'The local OmniVoice backend could not start, so this request had nowhere to go. ' +
+            `The app reported:\n\n${diagnosis}\n\n` +
+            'Open the details for the full output, or use Retry / Clean & Retry in Settings → Logs → Backend.',
+          { status: 0, detail: { ...failureDetail, startFailure: diagnosis } },
+        );
+      }
+      // #1164: outside the desktop shell there is no supervisor and no
+      // "restart the app" — the old desktop-shaped copy sent dev/Docker
+      // users chasing advice that doesn't exist in their deployment. Say
+      // where THEIR forensics live, and whether the backend ever answered
+      // this session (crashed mid-session vs never started).
+      if (mode !== 'desktop') {
+        throw new ApiError(unreachableBackendMessage(mode), {
+          status: 0,
+          detail: failureDetail,
+        });
+      }
       throw new ApiError(
         "Can't reach the local OmniVoice backend — it may still be starting up, or it stopped. " +
-        "Wait a few seconds and try again; if it persists, restart the app (or check Settings → Logs → Backend).",
-        { status: 0, detail: lastDetail },
+          'Wait a few seconds and try again; if it persists, restart the app (or check Settings → Logs → Backend).',
+        { status: 0, detail: failureDetail },
       );
     }
     if (!res.ok) {
-      // 401 from the LAN PIN middleware on a remote device → surface the gate.
       // An HTTP error means the backend *did* respond — never retry it.
-      if (res.status === 401 && typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('ov:pin-required'));
-      }
       const detail = await readError(res);
-      throw new ApiError(`${res.status} ${res.statusText}: ${detail}`, { status: res.status, detail });
+      // 401 on a remote device: route to the right gate by reading the detail.
+      // "API key required" (BearerKeyMiddleware, OMNIVOICE_API_KEY) vs anything
+      // else, i.e. "PIN required" (NetworkAccessMiddleware). Both are 401; the
+      // detail is the only discriminator (only two 401 sites exist backend-side).
+      if (res.status === 401 && typeof window !== 'undefined') {
+        // readError's declared `string` return isn't guaranteed at runtime —
+        // `j.detail` can be a structured object/array on a future 401. Match only
+        // real strings (avoids both a `.toLowerCase()` crash and `String()` itself
+        // throwing on a malformed object); anything else falls back to PIN.
+        const mode =
+          typeof detail === 'string' && detail.toLowerCase().includes('api key') ? 'apikey' : 'pin';
+        window.dispatchEvent(new CustomEvent('ov:auth-required', { detail: { mode } }));
+      }
+      // Structured details (e.g. the typed asr_model_missing 409) carry a
+      // human-readable `message` — use it for the Error message instead of
+      // letting the object stringify to "[object Object]".
+      const msg =
+        typeof detail === 'string'
+          ? detail
+          : ((detail as { message?: string })?.message ?? JSON.stringify(detail));
+      throw new ApiError(`${res.status} ${res.statusText}: ${msg}`, {
+        status: res.status,
+        detail,
+      });
     }
     return res;
   }
@@ -171,7 +436,10 @@ export async function apiPost<T = unknown>(
   if (body instanceof FormData) {
     init.body = body;
   } else if (body !== undefined) {
-    init.headers = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string> || {}) };
+    init.headers = {
+      'Content-Type': 'application/json',
+      ...(opts.headers as Record<string, string>),
+    };
     init.body = JSON.stringify(body);
   }
   return apiJson<T>(path, init);

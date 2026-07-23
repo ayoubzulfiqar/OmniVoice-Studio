@@ -1,8 +1,18 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
-  MIN_SEG_DUR, MAX_OVERLAP,
-  visibleSegmentRange, snapTime, snapCandidates,
-  clampSegmentEdit, commitMoveResize, detectOverlaps, nearestOnset,
+  MIN_SEG_DUR,
+  MAX_OVERLAP,
+  REGION_COLORS,
+  blendRegionColor,
+  getRegionColors,
+  subscribeRegionColors,
+  visibleSegmentRange,
+  snapTime,
+  snapCandidates,
+  clampSegmentEdit,
+  commitMoveResize,
+  detectOverlaps,
+  nearestOnset,
 } from './timeline';
 import { segmentGenInputs } from './segments';
 
@@ -13,12 +23,12 @@ describe('visibleSegmentRange', () => {
 
   it('returns the window covering the view', () => {
     const [lo, hi] = visibleSegmentRange(segs, 4.5, 5.5, 0);
-    expect(segs.slice(lo, hi).map(s => s.id)).toEqual([3]);
+    expect(segs.slice(lo, hi).map((s) => s.id)).toEqual([3]);
   });
 
   it('includes buffer on both sides', () => {
     const [lo, hi] = visibleSegmentRange(segs, 4.5, 5.5, 2);
-    expect(segs.slice(lo, hi).map(s => s.id)).toEqual([2, 3, 4]);
+    expect(segs.slice(lo, hi).map((s) => s.id)).toEqual([2, 3, 4]);
   });
 
   it('empty list → [0,0]', () => {
@@ -44,14 +54,14 @@ describe('visibleSegmentRange', () => {
   it('walks lo back over an earlier segment that overlaps into view', () => {
     const overlapping = [seg(1, 0, 5.2), seg(2, 5, 7), seg(3, 7, 9)];
     const [lo, hi] = visibleSegmentRange(overlapping, 5.05, 6, 0);
-    expect(overlapping.slice(lo, hi).map(s => s.id)).toEqual([1, 2]);
+    expect(overlapping.slice(lo, hi).map((s) => s.id)).toEqual([1, 2]);
   });
 
   it('boundary exactly on a segment edge', () => {
     const [lo, hi] = visibleSegmentRange(segs, 2, 4, 0);
     // seg 1 ends exactly at 2 (end > t0 is false), segs 2 and 3 qualify.
-    expect(segs.slice(lo, hi).map(s => s.id)).toContain(2);
-    expect(segs.slice(lo, hi).map(s => s.id)).toContain(3);
+    expect(segs.slice(lo, hi).map((s) => s.id)).toContain(2);
+    expect(segs.slice(lo, hi).map((s) => s.id)).toContain(3);
   });
 });
 
@@ -80,7 +90,14 @@ describe('snapTime', () => {
 
 describe('snapCandidates', () => {
   it('includes onsets, neighbour edges and playhead', () => {
-    const c = snapCandidates({ onsets: [1.1, 2.2], prevEnd: 0.5, nextStart: 3.3, playhead: 2.0, pxPerSec: 100, t: 1.5 });
+    const c = snapCandidates({
+      onsets: [1.1, 2.2],
+      prevEnd: 0.5,
+      nextStart: 3.3,
+      playhead: 2.0,
+      pxPerSec: 100,
+      t: 1.5,
+    });
     expect(c).toEqual(expect.arrayContaining([1.1, 2.2, 0.5, 3.3, 2.0]));
     // High zoom → no integer grid.
     expect(c).not.toContain(1);
@@ -154,16 +171,16 @@ describe('commitMoveResize — fingerprint parity (#281 invariants)', () => {
     const after = commitMoveResize(before, { start: 2, end: 3 });
     const gi0 = segmentGenInputs(before);
     const gi1 = segmentGenInputs(after);
-    expect(gi1.speed).toBe(2);                 // 2s original / 1s slot
+    expect(gi1.speed).toBe(2); // 2s original / 1s slot
     expect({ ...gi1, speed: undefined }).toEqual({ ...gi0, speed: undefined });
     expect(after.original_duration).toBe(2);
   });
 
   it('successive resizes compound against the FIRST original_duration', () => {
     const s0 = seg(1, 0, 4);
-    const s1 = commitMoveResize(s0, { start: 0, end: 2 });   // speed 2
+    const s1 = commitMoveResize(s0, { start: 0, end: 2 }); // speed 2
     expect(s1.speed).toBe(2);
-    const s2 = commitMoveResize(s1, { start: 0, end: 8 });   // back from 4s original → 0.5
+    const s2 = commitMoveResize(s1, { start: 0, end: 8 }); // back from 4s original → 0.5
     expect(s2.speed).toBe(0.5);
     expect(s2.original_duration).toBe(4);
   });
@@ -171,7 +188,7 @@ describe('commitMoveResize — fingerprint parity (#281 invariants)', () => {
   it('resize landing at speed 1.0 DELETES the key (missing hashes as "")', () => {
     const s0 = seg(1, 0, 4);
     const s1 = commitMoveResize(s0, { start: 0, end: 2 });
-    const s2 = commitMoveResize(s1, { start: 0, end: 4 });   // back to original duration
+    const s2 = commitMoveResize(s1, { start: 0, end: 4 }); // back to original duration
     expect('speed' in s2).toBe(false);
     expect(segmentGenInputs(s2).speed).toBeUndefined();
   });
@@ -210,5 +227,94 @@ describe('nearestOnset', () => {
   });
   it('empty → null', () => {
     expect(nearestOnset(1, [])).toBeNull();
+  });
+});
+
+describe('REGION_COLORS — opaque JS-pre-blended paint guard (#373, #963)', () => {
+  // Two invariants, one per historical regression:
+  //  #373 — semi-transparent box fills flash on some Windows GPU/WebView2
+  //         drivers when the lane gets composited → every entry must be
+  //         fully opaque (no alpha channel anywhere).
+  //  #963 — engine-dependent CSS (color-mix, var()) in an inline style is
+  //         REJECTED wholesale by the CSSOM on WebView2/Chromium < 111, and
+  //         .seg-track__box has no background of its own → boxes invisible.
+  //         Every entry must therefore be a literal rgb() any engine parses,
+  //         with the 45%-tint-over---chrome-bg blend done in JS.
+  const root = document.documentElement;
+  const flushThemeObserver = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  afterEach(async () => {
+    root.style.removeProperty('--chrome-bg');
+    root.removeAttribute('data-theme');
+    await flushThemeObserver(); // let the palette settle back to the default
+  });
+
+  it('every entry is a literal fully-opaque rgb() — no engine-dependent CSS, no alpha', () => {
+    expect(REGION_COLORS.length).toBeGreaterThan(0);
+    for (const color of REGION_COLORS) {
+      expect(color).toMatch(/^rgb\(\d{1,3}, \d{1,3}, \d{1,3}\)$/);
+      // The class of the #963 bug: anything the target engines' CSSOM may
+      // reject as an inline-style value.
+      expect(color).not.toMatch(/color-mix|var\(|calc\(/i);
+      expect(color).not.toMatch(/rgba\(|hsla\(|transparent|\/|%/i); // #373: no alpha syntax
+    }
+  });
+
+  it('default theme: blends exactly 45% tint over Gruvbox --chrome-bg #0f1011', () => {
+    // Literal expected values (independently computed: round(0.45·tint + 0.55·bg)),
+    // pixel-identical to what `color-mix(in srgb, tint 45%, #0f1011)` painted.
+    expect([...REGION_COLORS]).toEqual([
+      'rgb(103, 69, 79)',
+      'rgb(67, 83, 78)',
+      'rgb(91, 93, 26)',
+      'rgb(121, 94, 31)',
+      'rgb(72, 95, 65)',
+      'rgb(123, 66, 21)',
+      'rgb(55, 79, 57)',
+    ]);
+  });
+
+  it('re-blends against the new --chrome-bg when [data-theme] changes, and notifies', async () => {
+    const before = getRegionColors();
+    let notified = 0;
+    const unsubscribe = subscribeRegionColors(() => {
+      notified += 1;
+    });
+    try {
+      root.style.setProperty('--chrome-bg', '#1e293b'); // Slate theme surface
+      root.setAttribute('data-theme', 'slate');
+      await flushThemeObserver();
+      expect(notified).toBe(1);
+      expect(getRegionColors()).not.toBe(before); // fresh snapshot identity
+      // round(0.45·[211,134,155] + 0.55·[30,41,59])
+      expect(REGION_COLORS[0]).toBe('rgb(111, 83, 102)');
+
+      // Back to the default theme (attribute removed, like App.jsx does).
+      root.style.removeProperty('--chrome-bg');
+      root.removeAttribute('data-theme');
+      await flushThemeObserver();
+      expect(notified).toBe(2);
+      expect(REGION_COLORS[0]).toBe('rgb(103, 69, 79)');
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('parses rgb()-form --chrome-bg too, and falls back to #0f1011 on garbage', async () => {
+    root.style.setProperty('--chrome-bg', 'rgb(30, 41, 59)');
+    root.setAttribute('data-theme', 'rgb-form');
+    await flushThemeObserver();
+    expect(REGION_COLORS[0]).toBe('rgb(111, 83, 102)'); // same blend as #1e293b
+
+    root.style.setProperty('--chrome-bg', 'oklch(0.2 0.1 250)'); // unsupported form
+    root.setAttribute('data-theme', 'garbage-form');
+    await flushThemeObserver();
+    expect(REGION_COLORS[0]).toBe('rgb(103, 69, 79)'); // fallback = default blend
+  });
+
+  it('blendRegionColor math: 0.45·tint + 0.55·bg, rounded per channel', () => {
+    expect(blendRegionColor([211, 134, 155], [15, 16, 17])).toBe('rgb(103, 69, 79)');
+    expect(blendRegionColor([0, 0, 0], [255, 255, 255])).toBe('rgb(140, 140, 140)'); // 0.55·255 = 140.25
+    expect(blendRegionColor([255, 255, 255], [0, 0, 0])).toBe('rgb(115, 115, 115)'); // 0.45·255 = 114.75
   });
 });

@@ -54,9 +54,12 @@ class LLMBackend(ABC):
     def model_name(self) -> str: ...
 
     @abstractmethod
-    def chat(self, *, system: str, user: str, timeout: Optional[float] = None) -> str:
+    def chat(self, *, system: str, user: str, timeout: Optional[float] = None,
+             temperature: Optional[float] = None) -> str:
         """One-shot chat completion. Returns the assistant content string.
         Raises on failure — callers decide whether to fallback gracefully.
+        ``temperature`` is only sent to the provider when set — callers that
+        leave it None keep the provider default (existing behavior).
         """
 
 
@@ -67,8 +70,18 @@ class OpenAICompatBackend(LLMBackend):
     id = "openai-compat"
     display_name = "OpenAI-compatible (real OpenAI, Ollama, LM Studio, …)"
 
-    def __init__(self):
+    def __init__(self, provider=None):
+        """``provider``: optional ``llm_providers.Provider`` to bind this
+        instance to (LLM Skills per-skill routing). None keeps the historical
+        behavior — resolve the ACTIVE provider at call time."""
         self._client = None
+        self._provider = provider
+
+    def _resolve_provider(self):
+        if self._provider is not None:
+            return self._provider
+        from services import llm_providers
+        return llm_providers.active_provider()
 
     @classmethod
     def is_available(cls) -> tuple[bool, str]:
@@ -76,67 +89,89 @@ class OpenAICompatBackend(LLMBackend):
             import openai  # noqa: F401
         except ImportError:
             return False, "openai package missing (install with `pip install openai`)."
-        base_url = os.environ.get("TRANSLATE_BASE_URL")
-        api_key = (
-            os.environ.get("TRANSLATE_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or ("local" if base_url else None)
-        )
-        if not api_key:
+        # Resolve through the provider registry — the active provider carries
+        # its own base_url/key/model. Legacy single-endpoint setups (a lone
+        # TRANSLATE_BASE_URL) resolve to the "custom" provider, so this stays
+        # backward-compatible with pre-registry configs.
+        from services import llm_providers
+        p = llm_providers.active_provider()
+        if p is None:
             return False, (
-                "No LLM configured. Set TRANSLATE_BASE_URL (+ TRANSLATE_API_KEY) to "
-                "point at OpenAI, Ollama (http://localhost:11434/v1), or any compatible host."
+                "No LLM configured. Add a provider key in Settings → LLM Providers "
+                "(OpenAI/OpenRouter/Groq/… or a local Ollama), or set "
+                "TRANSLATE_BASE_URL (+ TRANSLATE_API_KEY)."
             )
-        return True, "ready"
+        if not llm_providers.resolve_base_url(p):
+            return False, f"{p.display_name}: set a Base URL in Settings → LLM Providers."
+        if not llm_providers.has_key(p):
+            return False, f"{p.display_name}: add an API key in Settings → LLM Providers."
+        return True, f"ready ({p.display_name})"
 
     @property
     def model_name(self) -> str:
+        from services import llm_providers
+        p = self._resolve_provider()
+        if p is not None:
+            return llm_providers.resolve_model(p)
         return os.environ.get("TRANSLATE_MODEL", "gpt-4o-mini")
 
     def _get_client(self):
         if self._client is not None:
             return self._client
         from openai import OpenAI
-        base_url = os.environ.get("TRANSLATE_BASE_URL")
-        api_key = (
-            os.environ.get("TRANSLATE_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or ("local" if base_url else None)
-        )
+        from services import llm_providers
+        p = self._resolve_provider()
+        if p is None:
+            raise RuntimeError("LLM not configured. See `is_available()` for the hint.")
+        base_url = llm_providers.resolve_base_url(p)
+        api_key = llm_providers.resolve_api_key(p)
         if not api_key:
             raise RuntimeError("LLM not configured. See `is_available()` for the hint.")
         kw = {"api_key": api_key}
         if base_url:
             kw["base_url"] = base_url
-        self._client = OpenAI(**kw)
+        # max_retries=0 so a 429 + Retry-After can't make one chat() sleep
+        # through the Autofit fit-pass wall-clock budget (speech_rate).
+        self._client = OpenAI(max_retries=0, **kw)
         return self._client
 
-    def chat(self, *, system: str, user: str, timeout: Optional[float] = None) -> str:
+    def chat(self, *, system: str, user: str, timeout: Optional[float] = None,
+             temperature: Optional[float] = None) -> str:
         return self.chat_messages(
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
             timeout=timeout,
+            temperature=temperature,
         )
 
-    def chat_messages(self, *, messages: list[dict], timeout: Optional[float] = None) -> str:
+    def chat_messages(self, *, messages: list[dict], timeout: Optional[float] = None,
+                      temperature: Optional[float] = None) -> str:
         """One-shot completion over a full message list.
 
         Additive surface for callers that need structured few-shot turns
         (dictation refinement, Wave 2.1) — small local models pattern-match
         and echo inline examples, so examples must arrive as prior chat
         turns, not inside the system prompt.
+
+        ``temperature`` is only forwarded when set (Cinematic/Autofit pin 0.2
+        — the provider default of 1.0 makes local models drift and invent);
+        every other caller leaves it None and keeps the provider default.
         """
         if timeout is None:
             try:
                 timeout = float(os.environ.get("OMNIVOICE_LLM_TIMEOUT", "45"))
             except ValueError:
                 timeout = 45.0
+        kw = {}
+        if temperature is not None:
+            kw["temperature"] = temperature
         res = self._get_client().chat.completions.create(
             model=self.model_name,
             timeout=timeout,
             messages=messages,
+            **kw,
         )
         return (res.choices[0].message.content or "").strip()
 

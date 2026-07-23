@@ -11,6 +11,8 @@ The ASR backends are mocked — we're testing protocol, not transcription
 quality.
 """
 import os
+import time
+
 import pytest
 
 os.environ.setdefault("OMNIVOICE_MODEL", "test")
@@ -19,6 +21,13 @@ os.environ.setdefault("OMNIVOICE_DISABLE_FILE_LOG", "1")
 # silence path.
 os.environ["OMNIVOICE_STREAM_INTERVAL"] = "0.1"
 os.environ["OMNIVOICE_STREAM_SILENCE"] = "0.2"
+
+# These tests exercise the WS protocol with stubbed transcription and assume
+# ASR weights are installed — neutralize the no-ASR preflight (which otherwise
+# closes the socket with a typed asr_model_missing error frame in the hermetic
+# no-HF-cache test env; the preflight has its own suite:
+# tests/test_asr_model_missing.py).
+pytestmark = pytest.mark.usefixtures("asr_model_installed")
 
 
 @pytest.fixture
@@ -72,7 +81,9 @@ def test_eof_text_frame_triggers_final_without_disconnect(client):
                 final = msg
                 break
         assert final is not None, "server never delivered final after EOF"
-        assert final["text"] == "hello world"
+        # Finals are polished (dictation v2): leading capital + terminal
+        # punctuation. The stub returns "hello world" raw.
+        assert final["text"] == "Hello world."
         assert final["engine"] == "stub"
 
 
@@ -100,3 +111,88 @@ def test_empty_binary_frame_acts_as_eof(client):
                 break
         assert final is not None
         assert final["engine"] == "stub"
+
+
+def test_slow_llm_never_blocks_final_beyond_budget(client, monkeypatch):
+    """P0 regression (the measured ~51s stall): with refinement armed and a
+    slow/dead LLM, the `final` must arrive within the hard
+    OMNIVOICE_REFINE_TIMEOUT_S budget, NOT after the LLM's full latency.
+
+    Fail-before: the handler awaited ``maybe_refine`` unbounded, so a 3s (in
+    prod, ~51s) LLM held the `final` — the pill hung "Transcribing…". Pass-
+    after: the final ships the unrefined (but polished) text within the budget.
+    """
+    monkeypatch.setenv("OMNIVOICE_REFINE_TIMEOUT_S", "0.3")
+
+    def _slow(_t, **_kw):
+        time.sleep(3.0)  # a dead endpoint would never answer in the test window
+        return "REFINED (must never arrive)"
+
+    # Patch at the source module — the handler runs maybe_refine off-thread and
+    # maybe_refine_async resolves the name from services.refinement at call time.
+    monkeypatch.setattr("services.refinement.maybe_refine", _slow)
+
+    with client.websocket_connect("/ws/transcribe") as ws:
+        ws.send_bytes(_audio_chunk())
+        ws.send_text("EOF")
+        t0 = time.perf_counter()
+        final = None
+        for _ in range(10):
+            msg = ws.receive_json()
+            if msg.get("type") == "final":
+                final = msg
+                break
+        elapsed = time.perf_counter() - t0
+
+    assert final is not None, "server never delivered final"
+    # The unrefined, polished text — refinement timed out and fell back.
+    assert final["text"] == "Hello world."
+    assert "refined_text" not in final
+    # Well under the 3s LLM sleep; the 0.3s budget + overhead is the ceiling.
+    assert elapsed < 2.0, f"final blocked {elapsed:.1f}s on the slow LLM"
+
+
+# ── Capture-ASR background warm-up gating (dictation v2) ─────────────────────
+#
+# The dictation model warms in the background BY DEFAULT (~30s post-boot);
+# OMNIVOICE_PRELOAD_CAPTURE_ASR=0 opts out, and the warm-up is skipped when
+# the machine is under 4 GB of free RAM.
+
+
+def test_capture_preload_defaults_on(monkeypatch):
+    import main
+    monkeypatch.delenv("OMNIVOICE_PRELOAD_CAPTURE_ASR", raising=False)
+    assert main._env_flag("OMNIVOICE_PRELOAD_CAPTURE_ASR", default=True)
+    monkeypatch.setenv("OMNIVOICE_PRELOAD_CAPTURE_ASR", "0")
+    assert not main._env_flag("OMNIVOICE_PRELOAD_CAPTURE_ASR", default=True)
+    monkeypatch.setenv("OMNIVOICE_PRELOAD_CAPTURE_ASR", "1")
+    assert main._env_flag("OMNIVOICE_PRELOAD_CAPTURE_ASR", default=True)
+
+
+def test_capture_preload_delay_default_and_override(monkeypatch):
+    import main
+    monkeypatch.delenv("OMNIVOICE_CAPTURE_PRELOAD_DELAY", raising=False)
+    assert main._capture_preload_delay_s() == 30.0
+    monkeypatch.setenv("OMNIVOICE_CAPTURE_PRELOAD_DELAY", "0")
+    assert main._capture_preload_delay_s() == 0.0
+    monkeypatch.setenv("OMNIVOICE_CAPTURE_PRELOAD_DELAY", "junk")
+    assert main._capture_preload_delay_s() == 30.0
+
+
+def test_capture_preload_ram_guard(monkeypatch):
+    import types
+    import main
+    import psutil
+
+    monkeypatch.setattr(psutil, "virtual_memory",
+                        lambda: types.SimpleNamespace(available=2 * 1024**3))
+    assert not main._capture_preload_ram_ok()
+    monkeypatch.setattr(psutil, "virtual_memory",
+                        lambda: types.SimpleNamespace(available=8 * 1024**3))
+    assert main._capture_preload_ram_ok()
+
+    # Unmeasurable → warm anyway (the load path has its own error handling).
+    def _boom():
+        raise RuntimeError("no vm info")
+    monkeypatch.setattr(psutil, "virtual_memory", _boom)
+    assert main._capture_preload_ram_ok()

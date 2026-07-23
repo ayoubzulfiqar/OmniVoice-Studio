@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core import prefs
+from core.failure import is_hf_connectivity_error
 from utils import hf_progress
 from utils import download_aggregator
 # Weight-floor scan (MM2-07 / #352) lives in ``models.py`` — the lowest module in
@@ -29,6 +30,7 @@ from .models import (  # noqa: F401
     KNOWN_MODELS,
     invalidate_cache,
     snapshot_has_weights,
+    disk_space_error,
     _MIN_WEIGHT_BYTES,
     _WEIGHT_FLOORS,
 )
@@ -51,6 +53,15 @@ def _sweep_cooldowns(now: float) -> None:
     for k in stale:
         _install_cooldowns.pop(k, None)
 
+
+def clear_install_cooldowns() -> None:
+    """Reset every install cooldown. Called when the HF endpoint changes
+    (PUT /hf-mirror): the cooldown exists to stop hammering a network that
+    just failed, but switching endpoints changes that situation — the user's
+    very next action is "retry the failed download on the new mirror", and a
+    429 there would dead-end the wizard's switch-and-retry flow."""
+    _install_cooldowns.clear()
+
 # Repo_ids the user asked to cancel (FDL-11). Checked between retry attempts.
 # Note: a single in-flight snapshot_download/Xet fetch is not interruptible
 # mid-file in hf_hub 1.7.2 — cancel stops further retries, marks the row
@@ -71,12 +82,15 @@ def _download_max_workers() -> int:
 
 
 def _download_endpoint() -> "str | None":
-    """Optional HF endpoint override (FDL-10 mirror path, opt-in). Returned as a
-    per-call ``endpoint=`` rather than a process-wide HF_ENDPOINT mutation. A
+    """Optional HF endpoint override, per-call ``endpoint=`` rather than a
+    process-wide HF_ENDPOINT mutation. Explicit configuration (FDL-10 mirror
+    path: HF_ENDPOINT env / ``hf_endpoint`` pref / Settings) always wins; when
+    nothing was chosen, the automatic endpoint selection's cached pick applies
+    (services.endpoint_race — probe-based, cached, never probes here). A
     mirror routes through the classic LFS path (no Xet) — documented in
     docs/downloading-models.md."""
-    ep = prefs.resolve("hf_endpoint", env="HF_ENDPOINT", default=None)
-    return ep or None
+    from services import endpoint_race
+    return endpoint_race.effective_endpoint()
 
 
 def apply_xet_env() -> None:
@@ -130,11 +144,15 @@ def compute_plan(plan_files) -> dict:
 
 
 def _segmented_enabled() -> bool:
-    """Opt-in IDM-style accelerator (FDL-09), default OFF. Most useful when Xet
-    is inactive (the app's default): the legacy-LFS path is single-stream, so
-    this restores parallel speed AND gives real live byte progress."""
+    """IDM-style multi-connection accelerator (FDL-09), default **ON**. The app
+    forces the legacy-LFS path (HF_HUB_DISABLE_XET=1) for clear progress, but that
+    path is single-stream and slow — this restores parallel byte-range speed AND
+    real live progress, and falls back to snapshot_download on any error so it
+    can never compromise a correct install. Default-on so first-run downloads are
+    fast out of the box (pairs with an HF token for higher rate limits); set
+    OMNIVOICE_SEGMENTED_DOWNLOAD=0 to force the single-stream path."""
     return _truthy(prefs.resolve(
-        "segmented_downloader", env="OMNIVOICE_SEGMENTED_DOWNLOAD", default=False,
+        "segmented_downloader", env="OMNIVOICE_SEGMENTED_DOWNLOAD", default=True,
     ))
 
 
@@ -303,6 +321,41 @@ class InstallModelRequest(BaseModel):
     repo_id: str
 
 
+
+def _is_retryable_download_error(exc: BaseException) -> bool:
+    """Whether a failed download attempt is worth retrying.
+
+    Decides by CLASSIFICATION, not by exception type. The type-based tuple this
+    replaced — ``(HfHubHTTPError, LocalEntryNotFoundError, OSError)`` — silently
+    excluded ``httpx.RemoteProtocolError``, which inherits ``Exception``: a
+    4.6 GB model truncated at 4.0 GB escaped all five attempts and aborted the
+    install (#1224). Any future transport error with a novel base class would
+    have reopened the same hole.
+
+    A user cancel is never retryable, and neither is anything
+    ``is_hf_connectivity_error`` does not recognise.
+    """
+    # Imported here, not at module scope, for the same reason the worker does:
+    # huggingface_hub is heavy and this module is on the setup import path.
+    from huggingface_hub.utils import HfHubHTTPError, LocalEntryNotFoundError
+
+    if isinstance(exc, _InstallCancelled):
+        return False
+    if isinstance(exc, HfHubHTTPError):
+        # An auth / not-found / gone answer from the Hub is a settled verdict:
+        # the token is wrong, the repo is gated, or it isn't there. Retrying
+        # five times with backoff just delays the same message and postpones
+        # the install cooldown. (Pre-existing behaviour — the type-based tuple
+        # this replaced retried every HfHubHTTPError; surfaced in #1224 review.)
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (401, 403, 404, 410):
+            return False
+        return True
+    if isinstance(exc, (LocalEntryNotFoundError, OSError)):
+        return True
+    return is_hf_connectivity_error(str(exc))
+
+
 @router.post("/models/install")
 async def install_model(req: InstallModelRequest):
     """Download one HF repo snapshot; progress goes through the shared
@@ -400,6 +453,26 @@ async def install_model(req: InstallModelRequest):
             try:
                 _plan = snapshot_download(**_preflight_kwargs)
                 _summary = compute_plan(_plan)
+                # Disk-space guard (before a single byte flows): the preflight
+                # gives an exact "to download" size, so reject an install that
+                # would overrun the cache volume — with the numbers named —
+                # instead of failing mid-download with a cryptic OSError. No-op
+                # when it fits or the size is unknown. Same on every platform.
+                _disk_err = disk_space_error(_summary["to_download_bytes"])
+                if _disk_err:
+                    logger.info("model install %s: rejected — %s", req.repo_id, _disk_err)
+                    _resolving.set()  # stop the heartbeat thread before we bail
+                    hf_progress.emit({
+                        "repo_id": req.repo_id,
+                        "filename": req.repo_id,
+                        "downloaded": 0, "total": 0, "pct": 0.0,
+                        "phase": "install_error",
+                        "error": _disk_err,
+                    })
+                    # A disk-full is not a transient network failure — don't set
+                    # a cooldown (freeing space, not waiting, is the fix). The
+                    # outer finally still cleans up the aggregator + context.
+                    return
                 download_aggregator.start(
                     req.repo_id,
                     total_bytes=_summary["to_download_bytes"],
@@ -434,10 +507,11 @@ async def install_model(req: InstallModelRequest):
                     raise _InstallCancelled()
                 _attempt += 1
                 try:
-                    # Opt-in segmented accelerator (FDL-09): parallel byte-range
-                    # fetch with real live progress, for the legacy-LFS path.
-                    # Any failure falls through to snapshot_download — the
-                    # accelerator can never compromise a correct install.
+                    # Segmented accelerator (FDL-09, default ON): parallel
+                    # byte-range fetch with real live progress, for the
+                    # legacy-LFS path. Any failure falls through to
+                    # snapshot_download — the accelerator can never compromise a
+                    # correct install.
                     _snapshot_path = None
                     if _attempt == 1 and _segmented_enabled() and not _xet_active():
                         try:
@@ -454,14 +528,45 @@ async def install_model(req: InstallModelRequest):
                         _snapshot_path = snapshot_download(**dl_kwargs)
                     _validate_snapshot_has_weights(req.repo_id, _snapshot_path)
                     break
-                except (HfHubHTTPError, LocalEntryNotFoundError, OSError) as net_err:
-                    if _attempt >= _max_attempts:
+                except Exception as net_err:
+                    # #1224: a truncated body ("peer closed connection without
+                    # sending complete message body") arrives as
+                    # httpx.RemoteProtocolError, which inherits from Exception
+                    # — NOT OSError — so it escaped the old
+                    # (HfHubHTTPError, LocalEntryNotFoundError, OSError) tuple
+                    # and aborted a 4.6 GB install at 4.0 GB with no retry.
+                    # Widen to Exception and decide by CLASSIFICATION:
+                    # is_hf_connectivity_error is already the single source of
+                    # truth for "transient download failure" and now knows the
+                    # truncation signatures. Anything unrecognised (a cancel, a
+                    # validation failure, a bug) propagates untouched, exactly
+                    # as before.
+                    if _attempt >= _max_attempts or not _is_retryable_download_error(
+                        net_err
+                    ):
                         raise
                     _backoff = min(30, 2 ** _attempt)
                     logger.info(
                         "model install %s: attempt %d/%d failed (%s); retry in %ds",
                         req.repo_id, _attempt, _max_attempts, net_err, _backoff,
                     )
+                    # Endpoint failover (auto mode only, once per repo per
+                    # process): a network-classified failure re-races the
+                    # endpoints and, when the winner changed, the next attempt
+                    # retries on it — so a mid-download endpoint outage heals
+                    # instead of burning every retry on a dead host. Explicit
+                    # user endpoints are never switched.
+                    from services import endpoint_race
+                    if endpoint_race.reselect_after_failure(req.repo_id, str(net_err)):
+                        _endpoint = _download_endpoint()
+                        if _endpoint:
+                            dl_kwargs["endpoint"] = _endpoint
+                        else:
+                            dl_kwargs.pop("endpoint", None)
+                        logger.info(
+                            "model install %s: endpoint failover — retrying on %s",
+                            req.repo_id, _endpoint or "https://huggingface.co",
+                        )
                     hf_progress.emit({
                         "repo_id": req.repo_id,
                         "filename": req.repo_id,
@@ -502,12 +607,21 @@ async def install_model(req: InstallModelRequest):
             logger.info("model install failed for %s: %s", req.repo_id, e)
             import time as _time_fail
             _install_cooldowns[req.repo_id] = _time_fail.time()
+            # #874: when the install failed because the configured HF mirror is
+            # unreachable, name the mirror + the setting instead of leaking the
+            # raw connectivity error. #959: likewise for the SOCKS-proxy class
+            # (missing socksio fails the download's session construction).
+            # No-op for every other failure. docs_topic carries the failure
+            # class so the wizard can react structurally (HF_MIRROR_UNREACHABLE
+            # raises the inline mirror picker) without string-matching.
+            from core.failure import append_hint, classify
             hf_progress.emit({
                 "repo_id": req.repo_id,
                 "filename": req.repo_id,
                 "downloaded": 0, "total": 0, "pct": 0.0,
                 "phase": "install_error",
-                "error": str(e),
+                "error": append_hint(str(e)),
+                "docs_topic": classify(str(e)),
             })
         finally:
             _cancelled.discard(req.repo_id)

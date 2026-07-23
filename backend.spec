@@ -33,6 +33,14 @@ hiddenimports = [
     'uvicorn.lifespan', 'uvicorn.lifespan.on',
     'fastapi', 'fastapi.responses', 'starlette',
     'multipart',
+    # SOCKS proxy support (#959). httpx imports socksio lazily inside a
+    # try/except (only when a socks5:// proxy env var is set), so
+    # PyInstaller's static tracer never sees it — without this entry the
+    # frozen installers keep raising "Using SOCKS proxy, but the 'socksio'
+    # package is not installed" on every model load under a SOCKS proxy,
+    # even though pyproject.toml ships the package. Guarded by
+    # tests/test_socks_proxy.py.
+    'socksio',
 
     # Core
     'uuid', 'asyncio',
@@ -61,6 +69,11 @@ hiddenimports = [
     # Pipeline
     'yt_dlp', 'demucs', 'demucs.separate',
 
+    # Numbers→words for the pre-TTS text normalization pass
+    # (services/text_normalization.py). Imported inside a function (lazy),
+    # so pin it explicitly rather than trusting the tracer.
+    'num2words',
+
     # OmniVoice's own package
     'omnivoice', 'omnivoice.models', 'omnivoice.models.omnivoice',
 ]
@@ -72,6 +85,11 @@ if IS_MAC_ARM:
     # do NOT collect_all() mlx because that double-registers mlx.core with
     # nanobind and the binary aborts on the first mlx.core touch.
     hiddenimports.append('mlx_whisper')
+    # Parakeet TDT v3 ASR (services.asr_backend.ParakeetMLXBackend) — imported
+    # lazily at is_available()/transcribe time, so the tracer misses it. Same
+    # rule as mlx_whisper: list the package, never collect_all() anything that
+    # touches nanobind-registered mlx.core.
+    hiddenimports.append('parakeet_mlx')
     # mlx-audio engine multiplexer — Kokoro / CSM / Dia / Qwen3-TTS /
     # Chatterbox / MeloTTS / OuteTTS / … — gives mac-ARM users a rich
     # engine picker. Like mlx_whisper it's mac-ARM-only; also like
@@ -82,6 +100,16 @@ if IS_MAC_ARM:
         'mlx_audio.tts.models', 'mlx_audio.tts.generate',
         'mlx_audio.stt', 'mlx_audio.codec',
     ]
+    # Kokoro's phonemizer (misaki) loads the spaCy model en_core_web_sm
+    # DYNAMICALLY (spacy.load by name), so PyInstaller never sees the import —
+    # a frozen build without it would hit misaki's in-process downloader at
+    # first English generation (#1133 class; contained since #1143, but the
+    # generation still degrades). It's a plain data-heavy package with no
+    # nanobind involvement, so collect_all is safe here (unlike mlx itself).
+    _sm_datas, _sm_bins, _sm_hidden = collect_all('en_core_web_sm')
+    datas += _sm_datas
+    binaries += _sm_bins
+    hiddenimports += _sm_hidden
 
 # Note: we deliberately DON'T enumerate mlx submodules here. Any variant of
 # `collect_submodules('mlx')` or `collect_all('mlx')` — even filtered to

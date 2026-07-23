@@ -18,6 +18,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# These tests exercise the transcribe-stream mechanics and assume ASR weights
+# are installed — neutralize the no-ASR preflight (its own suite:
+# tests/test_asr_model_missing.py).
+pytestmark = pytest.mark.usefixtures("asr_model_installed")
+
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -115,6 +120,14 @@ def test_transcribe_stream_surfaces_model_load_failure(tmp_path, monkeypatch):
     drop the connection (the UI renders a dropped stream as a misleading generic
     "Transcribe stream dropped … Likely ASR backend failed to load").
 
+    Scoped to OMNIVOICE_PRELOAD_TTS_ASR, because that is now the only case in
+    which transcribe loads the TTS core at all: the preflight used to load it
+    unconditionally just to read an `_asr_pipe` that is None unless preloaded, and
+    then free it again (see tests/test_dub_no_tts_load_for_asr.py). With preload
+    off there is no TTS load on this path, so there is no TTS load failure to
+    surface — the ASR load failure, which is the one that can still happen, has
+    its own preflight guard and is covered separately.
+
     Drives the route's async generator directly (no TestClient/lifespan) — the
     preflight-error path yields a single event with no executor/Queue, so it
     stays isolated from the app event loop.
@@ -128,6 +141,7 @@ def test_transcribe_stream_surfaces_model_load_failure(tmp_path, monkeypatch):
     async def _boom():
         raise RuntimeError("CUDA driver init failed: simulated")
 
+    monkeypatch.setattr(dc, "should_preload_tts_asr", lambda: True)
     monkeypatch.setattr(dc, "get_model", _boom)
 
     async def _collect():
@@ -285,6 +299,254 @@ def test_transcribe_stream_surfaces_asr_load_failure_at_preflight(tmp_path, monk
     err_idx = body.find("event: error")
     done_idx = body.find("event: done")
     assert done_idx > err_idx >= 0, f"error must be followed by terminal done: {body}"
+
+
+def test_transcribe_stream_preflight_crash_is_a_structured_error(monkeypatch):
+    """Regression #1196: the whole preflight used to run in the endpoint body,
+    BEFORE the StreamingResponse existed. An exception on any line without its
+    own guard (the job-store lookup, the backend-id resolution, the
+    `services.asr_backend` import, …) became an HTTP 500 — whose body
+    EventSource cannot read — so the UI showed the generic "Transcribe stream
+    dropped … likely ASR backend failed to load" guess while a perfectly alive
+    backend knew the real cause. The preflight now runs INSIDE the stream, so
+    any such crash lands in the terminal-event guard (#516) as a structured
+    `error` + `done`.
+
+    `_get_job` stands in for the class: any raise, anywhere in the preflight,
+    must reach the client as a structured SSE error — never a non-2xx."""
+    import asyncio
+    from api.routers import dub_core as dc
+
+    def _boom_get_job(job_id):
+        raise RuntimeError("job store exploded: simulated")
+
+    monkeypatch.setattr(dc, "_get_job", _boom_get_job)
+
+    async def _collect():
+        resp = await dc.dub_transcribe_stream("t_preflightcrash")
+        parts = []
+        async for chunk in resp.body_iterator:
+            parts.append(chunk.decode() if isinstance(chunk, (bytes, bytearray)) else str(chunk))
+        return "".join(parts)
+
+    # Before the fix this raised straight out of the endpoint coroutine
+    # (→ HTTP 500 through the app); it must instead stream a terminal error.
+    body = asyncio.run(_collect())
+
+    assert "event: error" in body, body
+    assert "job store exploded: simulated" in body, body
+    err_idx = body.rfind("event: error")
+    done_idx = body.rfind("event: done")
+    assert done_idx > err_idx >= 0, f"error must precede the terminal done: {body}"
+
+
+def test_transcribe_stream_sends_bytes_while_asr_loads(tmp_path, monkeypatch):
+    """Regression #1196 (silent-load drop class): the old endpoint-body
+    preflight sent NOT ONE byte — not even response headers — until the ASR
+    backend finished loading. A first-run load downloads multi-GB weights, so
+    minutes of byte-silence tripped Chrome's ~5 min no-response timeout (and
+    reverse-proxy timeouts in front of Docker installs), severing the stream
+    with the generic "stream dropped" message even though the backend was
+    healthy and still working.
+
+    The stream must now (a) open with an immediate comment byte before the
+    preflight runs, and (b) emit keepalive comments while the load is in
+    flight — both invisible to EventSource handlers, so no client changes."""
+    import asyncio
+    import time
+    from api.routers import dub_core as dc
+
+    job_id = "t_slowload"
+    audio = tmp_path / "a.wav"
+    _make_wav(audio, seconds=1.0)
+    dc._dub_jobs[job_id] = {
+        "audio_path": str(audio), "vocals_path": None, "scene_cuts": [],
+    }
+
+    fake_model = MagicMock()
+    fake_model._asr_pipe = None
+
+    async def _ok_model():
+        return fake_model
+
+    def _slow_boom(**_kw):
+        time.sleep(0.15)  # long enough for several keepalive intervals below
+        raise RuntimeError("weights download interrupted: simulated")
+
+    monkeypatch.setattr(dc, "get_model", _ok_model)
+    monkeypatch.setattr(
+        "services.asr_backend.load_active_asr_backend", _slow_boom
+    )
+    monkeypatch.setattr(dc, "ASR_LOAD_KEEPALIVE_S", 0.02)
+
+    async def _collect():
+        resp = await dc.dub_transcribe_stream(job_id)
+        parts = []
+        async for chunk in resp.body_iterator:
+            parts.append(chunk.decode() if isinstance(chunk, (bytes, bytearray)) else str(chunk))
+        return parts
+
+    try:
+        parts = asyncio.run(_collect())
+    finally:
+        dc._dub_jobs.pop(job_id, None)
+
+    body = "".join(parts)
+    # (a) The very first bytes are the stream-open comment — before any model
+    # work. This is what stops the browser/proxy no-response clocks.
+    assert parts[0].startswith(": transcribe-stream open"), parts[0]
+    # (b) Keepalives flowed during the slow load, before the terminal error.
+    assert ": asr-load keepalive" in body, body
+    assert body.index(": asr-load keepalive") < body.index("event: error"), body
+    # And the slow load's real failure still surfaces as the structured
+    # preflight error, followed by the terminal done.
+    assert "ASR backend initialization failed" in body, body
+    assert "weights download interrupted: simulated" in body, body
+    err_idx = body.find("event: error")
+    done_idx = body.find("event: done")
+    assert done_idx > err_idx >= 0, f"error must be followed by terminal done: {body}"
+
+
+def test_reset_pool_on_wedge_resets_resilient_pool():
+    """#730: a chunk transcribe that times out wedges its GPU-pool worker. The
+    chunked stream must abandon the pool so the next chunk / a concurrent TTS
+    generate gets a fresh worker instead of starving behind it. dub_core now
+    shares asr_backend.reset_pool_after_wedge with the whole-file guards — one
+    mechanism, no drift."""
+    from api.routers import dub_core as dc
+
+    class _Pool:
+        def __init__(self):
+            self.resets = 0
+
+        def reset(self):
+            self.resets += 1
+
+    pool = _Pool()
+    assert dc.reset_pool_after_wedge(pool) is True
+    assert pool.resets == 1
+
+
+def test_reset_pool_on_wedge_is_a_noop_without_reset():
+    """A plain executor has no reset(); the helper must no-op, never raise —
+    it runs on the failure path it's recovering from."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from api.routers import dub_core as dc
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        assert dc.reset_pool_after_wedge(pool) is False  # must not raise
+    finally:
+        pool.shutdown(wait=False)
+
+
+def test_wedged_chunk_goes_through_guarded_reset_with_actionable_error(tmp_path, monkeypatch):
+    """Residual A on #730: a chunk that WEDGES (hangs past its timeout) must get
+    the SAME guarded-timeout + pool-reset semantics as the whole-file paths
+    (#851) — run_transcribe_guarded resets the pool once per wedged attempt and
+    the user sees the actionable ASRTimeoutError, not the old dead-end "Try
+    restarting the server". And because the retry (#867) wedges too, the second
+    consecutive timeout must surface the crash-isolated engine recommendation
+    (Residual B) in the stream error the user sees.
+    """
+    import asyncio
+    import threading
+    from concurrent.futures import Executor, ThreadPoolExecutor
+
+    from api.routers import dub_core as dc
+    from services import asr_backend
+
+    class _RecordingPool(Executor):
+        """Executor with a #851-style reset(): swap the inner pool, count calls."""
+
+        def __init__(self):
+            self.resets = 0
+            self._inner = ThreadPoolExecutor(max_workers=1)
+
+        def submit(self, fn, /, *args, **kwargs):
+            return self._inner.submit(fn, *args, **kwargs)
+
+        def reset(self):
+            self.resets += 1
+            old, self._inner = self._inner, ThreadPoolExecutor(max_workers=1)
+            old.shutdown(wait=False, cancel_futures=True)
+
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            self._inner.shutdown(wait=False, cancel_futures=True)
+
+    release_wedge = threading.Event()
+
+    class _WedgedASR:
+        id = "whisperx"
+
+        def ensure_loaded(self):
+            pass
+
+        def transcribe(self, path, *, word_timestamps=True):
+            release_wedge.wait(timeout=30)  # wedge far past the tiny chunk timeout
+            return {"chunks": [], "segments": [], "language": "en"}
+
+        def unload(self):
+            pass
+
+    job_id = "t_wedge"
+    audio = tmp_path / "a.wav"
+    _make_wav(audio, seconds=1.0)
+    dc._dub_jobs[job_id] = {
+        "audio_path": str(audio), "vocals_path": None, "scene_cuts": [],
+    }
+
+    fake_model = MagicMock()
+    fake_model._asr_pipe = MagicMock()
+
+    async def _ok_model():
+        return fake_model
+
+    pool = _RecordingPool()
+    monkeypatch.setattr(dc, "get_model", _ok_model)
+    monkeypatch.setattr(dc, "_gpu_pool", pool)
+    monkeypatch.setattr(dc, "TRANSCRIBE_CHUNK_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(dc, "_CHUNK_TRANSCRIBE_ATTEMPTS", 2)
+    monkeypatch.setattr(dc, "offload_tts_for_asr", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "services.asr_backend.get_active_asr_backend",
+        lambda *a, **k: _WedgedASR(),
+    )
+    # Deterministic streak + recommendation: start at 0, active engine is not
+    # already the isolated one (prefs on the dev box must not leak in).
+    monkeypatch.setattr(asr_backend, "_timeout_streak", 0)
+    monkeypatch.setattr(asr_backend, "active_backend_id", lambda: "whisperx")
+
+    async def _collect():
+        resp = await dc.dub_transcribe_stream(job_id)
+        parts = []
+        async for chunk in resp.body_iterator:
+            parts.append(chunk.decode() if isinstance(chunk, (bytes, bytearray)) else str(chunk))
+        return "".join(parts)
+
+    try:
+        body = asyncio.run(_collect())
+    finally:
+        release_wedge.set()  # let the wedged worker threads exit
+        pool.shutdown()
+        dc._dub_jobs.pop(job_id, None)
+
+    # Pool reset exactly once per wedged attempt, inside run_transcribe_guarded
+    # (no double-reset from the retry branch).
+    assert pool.resets == 2, f"expected one guarded reset per attempt, got {pool.resets}"
+    # The user-facing chunk error is the guard's actionable message …
+    assert "backend is running" in body, body
+    assert "OMNIVOICE_TRANSCRIBE_CHUNK_TIMEOUT_S" in body, body
+    # … not the old parallel mechanism's dead-end advice.
+    assert "Try restarting the server" not in body, body
+    # Second consecutive timeout-with-reset → the crash-isolated engine
+    # recommendation surfaces in the error the user sees (Residual B).
+    assert "faster-whisper-isolated" in body, body
+    # Terminal error followed by done — stream still closes via named events.
+    err_idx = body.rfind("event: error")
+    done_idx = body.rfind("event: done")
+    assert done_idx > err_idx >= 0, body
 
 
 @pytest.mark.xfail(

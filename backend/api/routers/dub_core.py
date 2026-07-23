@@ -14,8 +14,14 @@ from core.db import db_conn
 from core.config import PREVIEW_DIR
 from core.tasks import task_manager
 from core import event_bus
-from schemas.requests import DubIngestUrlRequest
-from services.model_manager import get_model, _gpu_pool, _cpu_pool, get_diarization_pipeline, offload_tts_for_asr, restore_tts_after_asr
+from schemas.requests import DubIngestUrlRequest, ParseSubtitleTextRequest
+from services.model_manager import get_model, _gpu_pool, _cpu_pool, get_diarization_pipeline, offload_tts_for_asr, restore_tts_after_asr, should_preload_tts_asr
+from services.asr_backend import (
+    ASR_TRANSCRIBE_TIMEOUT_S,
+    ASRTimeoutError,
+    reset_pool_after_wedge,
+    run_transcribe_guarded,
+)
 from services.audio_io import _safe_soundfile_write
 from services.ffmpeg_utils import find_ffmpeg
 from services.segmentation import (
@@ -33,6 +39,7 @@ from services import dub_pipeline
 
 router = APIRouter()
 logger = logging.getLogger("omnivoice.api")
+
 
 # ── Legacy-name aliases to services/dub_pipeline.py ────────────────────────
 # Phase 2.4 moved the business logic into a service. Other routers
@@ -55,6 +62,55 @@ _unregister_proc   = dub_pipeline.unregister_proc
 _kill_job_procs    = dub_pipeline.kill_job_procs
 _get_job           = dub_pipeline.get_job
 _save_job          = dub_pipeline.save_job
+
+# Pasted subtitle text is a transcript, not a media file: a feature-length
+# film's .srt is ~150 KB. 2 MB of characters is ~13x the worst realistic case
+# and still cheap to regex — past that we refuse rather than let a stray
+# paste (or a mis-aimed binary) burn CPU in the parser.
+_MAX_SUBTITLE_PASTE_CHARS = 2_000_000
+
+
+@router.post("/dub/parse-subtitle-text")
+def dub_parse_subtitle_text(req: ParseSubtitleTextRequest):
+    """Parse pasted subtitle text into timed cues. Stateless — no job, no I/O.
+
+    A thin wrapper over `services.srt_parser.parse_srt` so the client's
+    "paste a translation" flow reuses the exact lenient parser the .srt
+    import path uses (BOM / CRLF / `.`-vs-`,` ms / missing indices, plus
+    de-overlapping). Unlike `/dub/import-srt/{job_id}` this mutates
+    nothing: the caller maps these cues onto the segments it already has,
+    keeping the existing timings and `text_original`.
+    """
+    text = req.text or ""
+    if len(text) > _MAX_SUBTITLE_PASTE_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Pasted text is too large ({len(text)} characters). "
+                f"Limit is {_MAX_SUBTITLE_PASTE_CHARS} characters."
+            ),
+        )
+
+    from services.srt_parser import parse_srt
+    result = parse_srt(text)
+    if not result.segments:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No timed cues found in the pasted text. "
+                f"Skipped {result.skipped_cues} malformed cue(s). "
+                "Expected timestamp lines like '00:00:01,000 --> 00:00:04,500'."
+            ),
+        )
+    return {
+        "segments": [
+            {"start": s["start"], "end": s["end"], "text": s["text"]}
+            for s in result.segments
+        ],
+        "skipped_cues": result.skipped_cues,
+        "dropped_overlaps": result.dropped_overlaps,
+    }
+
 
 @router.post("/dub/import-srt/{job_id}")
 async def dub_import_srt(job_id: str, file: UploadFile = File(...)):
@@ -363,10 +419,46 @@ async def dub_ingest_url(req: DubIngestUrlRequest):
 
 TRANSCRIBE_CHUNK_S = float(os.environ.get("OMNIVOICE_TRANSCRIBE_CHUNK_S", "30.0"))
 TRANSCRIBE_CHUNK_TIMEOUT_S = float(os.environ.get("OMNIVOICE_TRANSCRIBE_CHUNK_TIMEOUT_S", "120.0"))
+#: How many times to attempt each transcribe chunk before giving up on it. A
+#: transient wedge (esp. the first chunk, where whisperx cold-loads its model)
+#: shouldn't silently drop that whole window — retry once on a fresh pool so the
+#: transcript doesn't come back "missing the beginning".
+_CHUNK_TRANSCRIBE_ATTEMPTS = max(1, int(os.environ.get("OMNIVOICE_TRANSCRIBE_CHUNK_ATTEMPTS", "2")))
+#: Seconds between SSE keepalive comments while the transcribe preflight loads
+#: the ASR backend (#1196). A first-run load can download multi-GB weights —
+#: minutes with zero bytes on the wire — and byte-silent streams get severed
+#: by Chrome's ~5 min no-response cap and by reverse-proxy idle timeouts,
+#: which the UI can only report as the generic "stream dropped" guess.
+ASR_LOAD_KEEPALIVE_S = float(os.environ.get("OMNIVOICE_ASR_LOAD_KEEPALIVE_S", "15.0"))
 
 
 _sse_event = dub_pipeline.sse_event
 _prep_event_helper = dub_pipeline.prep_event  # alias; we keep the module-local _prep_event below for the inline one-liner shape
+
+#: User-facing warning emitted when auto voice cloning is skipped because the
+#: speaker labels came from the silence-gap heuristic (see _diarize /
+#: extract_speaker_clones — gap-based labels routinely mix two people's audio
+#: into one reference, which is how "made up" clone voices happen).
+CLONE_SKIP_HEURISTIC_MSG = (
+    "auto voice cloning skipped: speaker labels are gap-based estimates — "
+    "set up diarization (Settings → Models → pyannote) for per-speaker clones"
+)
+
+
+def _clamp_num_speakers(value) -> Optional[int]:
+    """Clamp the user's speaker-count hint to a sane 1–20 range.
+
+    Shared by the SSE and legacy transcribe endpoints so the two can't drift.
+    None / non-int / out-of-range → None (auto-detect), so a bad query string
+    can never break a diarization call.
+    """
+    if value is None:
+        return None
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return None
+    return value if 1 <= value <= 20 else None
 
 
 @router.get("/dub/transcribe-stream/{job_id}")
@@ -386,72 +478,243 @@ async def dub_transcribe_stream(
     pyannote auto-detects the count — but its auto-detect can collapse a
     multi-speaker clip to a single speaker (issue #274). When the user knows
     the exact count, supplying it forces pyannote to return that many speakers.
+    On paths that can't honor the hint exactly (inline ASR turns, the
+    silence-gap heuristic) it is never silently dropped: the heuristic cycles
+    the requested count and a `warning` SSE event tells the user how far the
+    labels can be trusted.
     """
     # Clamp to a sane range; ignore anything non-positive / absurd so a bad
     # query string can never break the diarization call. None → auto-detect.
-    if num_speakers is not None:
+    num_speakers = _clamp_num_speakers(num_speakers)
+
+    # VRAM guard: _gen_body unloads the ASR backend on its normal completion
+    # path only — a crash mid-stream, an early `return` (e.g. "audio load
+    # failed"), or a client disconnect (GeneratorExit) used to skip that
+    # unload and retain the model in VRAM for the rest of the process.
+    # _gen_body parks the loaded backend here; the normal unload clears it;
+    # gen()'s `finally` unloads whatever is still parked, on EVERY exit.
+    _loaded_asr: dict = {"backend": None}
+    # Same shape, same reason, for the TTS offload (#1191): offload_tts_for_asr()
+    # moves the TTS model to CPU, and only _gen_body's success path moved it
+    # back — so an abort/error/disconnect stranded it there, silently making
+    # every subsequent /generate run on CPU. Set on a successful offload,
+    # cleared by the normal restore, honoured by gen()'s `finally` on EVERY exit.
+    _tts_offloaded: dict = {"v": False}
+
+    def _log_bg_failure(f, what):
+        """Retrieve a fire-and-forget future's exception so it isn't swallowed."""
+        if not f.cancelled() and f.exception():
+            logger.warning("%s failed: %s", what, f.exception())
+
+    def _restore_tts_bg():
+        """Move the TTS model back to the GPU without awaiting (#1191).
+
+        Defined out here rather than inside gen()'s `finally` on purpose: the
+        restore has to be dispatchable from a `finally` that also runs under
+        GeneratorExit (where awaiting is illegal), and keeping the control flow
+        out of the finally itself keeps that block free of the return/break
+        pattern that silently swallows in-flight exceptions.
+        """
         try:
-            num_speakers = int(num_speakers)
-            num_speakers = num_speakers if 1 <= num_speakers <= 20 else None
-        except (TypeError, ValueError):
-            num_speakers = None
-
-    job = _get_job(job_id)
-
-    preflight_error: Optional[str] = None
-    asr_audio_target: Optional[str] = None
-    _asr_backend = None
-    scene_cuts: list = []
-
-    if not job:
-        preflight_error = "Job not found. It may have been cleaned up or was never created."
-    else:
-        # Guard the model load: if it raises, the SSE stream would otherwise die
-        # before emitting any event, and the UI shows a misleading generic
-        # "stream dropped" message instead of the real cause (issue #255).
-        try:
-            _model = await get_model()
-        except Exception as e:
-            logger.exception("transcribe preflight: model load failed (job=%s)", job_id)
-            from core.failure import build_failure
-            f = build_failure(e, stage="transcribe-preflight", include_diagnostic=False)
-            preflight_error = f["reason"] + (f" — {f['hint']}" if f.get("hint") else "")
-            _model = None
-        if _model is not None:
-            asr_audio_target = job.get("vocals_path")
-            if not asr_audio_target or not os.path.exists(asr_audio_target):
-                asr_audio_target = job.get("audio_path")
-            if not asr_audio_target or not os.path.exists(asr_audio_target):
-                preflight_error = "No audio available for transcription."
-            else:
-                from services.asr_backend import get_active_asr_backend
-                try:
-                    # The PyTorch-Whisper backend lazily builds its own pipeline
-                    # when no preloaded `_asr_pipe` is present (issue #255), so it
-                    # no longer needs OMNIVOICE_PRELOAD_TTS_ASR=1.
-                    _asr_backend = get_active_asr_backend(asr_pipe=getattr(_model, "_asr_pipe", None))
-                    # Eagerly load the model HERE so a real load failure (e.g.
-                    # WhisperX: missing weights, CTranslate2/cuDNN mismatch, the
-                    # torch-2.6 weights-only VAD regression) surfaces once, with
-                    # its actual cause, as a clean preflight `error` event —
-                    # instead of being buried in N cryptic per-chunk failures
-                    # and retried on every chunk (#578). Run in a thread so the
-                    # (blocking) load doesn't stall the event loop.
-                    _ensure_loaded = getattr(_asr_backend, "ensure_loaded", None)
-                    if callable(_ensure_loaded):
-                        await asyncio.get_running_loop().run_in_executor(
-                            _gpu_pool, _ensure_loaded
-                        )
-                except Exception as e:
-                    logger.exception("transcribe preflight: ASR load failed (job=%s)", job_id)
-                    from core.failure import build_failure
-                    f = build_failure(e, stage="transcribe-preflight", include_diagnostic=False)
-                    preflight_error = "ASR backend initialization failed: " + f["reason"] + (
-                        f" — {f['hint']}" if f.get("hint") else ""
-                    )
-                scene_cuts = job.get("scene_cuts") or []
+            _r = asyncio.get_running_loop().run_in_executor(
+                _cpu_pool, restore_tts_after_asr
+            )
+            _r.add_done_callback(
+                lambda f: _log_bg_failure(f, "restore_tts_after_asr")
+            )
+        except RuntimeError:
+            # No running loop (interpreter teardown) — best effort, inline.
+            try:
+                restore_tts_after_asr()
+            except Exception as e:
+                logger.warning("restore_tts_after_asr failed: %s", e)
 
     async def _gen_body():
+        # ── Preflight — run INSIDE the stream, never before it (#1196) ──
+        # This whole block used to run in the endpoint body, before the
+        # StreamingResponse existed — i.e. OUTSIDE the stream's terminal-event
+        # contract (#516). Two real-world consequences (issue #1196):
+        #   * an exception on any unguarded line became an HTTP 500, whose
+        #     body EventSource cannot read — the UI could only show the
+        #     generic "Transcribe stream dropped … likely ASR backend failed"
+        #     guess while a perfectly alive backend knew the real cause;
+        #   * not a single byte (not even response headers) went out until
+        #     the ASR load finished — a first-run weight download can mean
+        #     minutes of total silence, tripping Chrome's hard ~5 min
+        #     no-response timeout (and any reverse-proxy timeout in front of
+        #     a Docker install), severing the stream with that same generic
+        #     message.
+        # In here, headers + a first comment go out immediately, keepalive
+        # comments flow while the ASR backend loads, and ANY preflight crash
+        # lands in gen()'s last-resort finalizer as a structured `error` +
+        # terminal `done`.
+        # Crash forensics (#1164): transcription is a prime OOM-kill site (ASR
+        # model loading on top of a resident TTS model). Record that one started
+        # so an unclean death is attributable. Kind only — never media content.
+        from core.run_sentinel import touch_activity
+        touch_activity("transcribe", "dub")
+
+        job = _get_job(job_id)
+
+        preflight_error: Optional[str] = None
+        # Extra machine-readable fields merged into the preflight `error` SSE event
+        # (e.g. the typed asr_model_missing payload → download-CTA in the UI).
+        preflight_payload: Optional[dict] = None
+        asr_audio_target: Optional[str] = None
+        _asr_backend = None
+        scene_cuts: list = []
+        # Defaulted here, not just inside the preflight block below: it is read from
+        # _gen_body (separated_vocals=), so a preflight that bails early would
+        # otherwise leave it unbound and raise NameError instead of the real error.
+        asr_on_vocals = False
+
+        if not job:
+            preflight_error = "Job not found. It may have been cleaned up or was never created."
+        else:
+            # The TTS core model is loaded here for exactly one reason: to harvest a
+            # preloaded `_asr_pipe` off it (passed to get_active_asr_backend below).
+            # That attribute is only ever set by OmniVoice.from_pretrained under
+            # OMNIVOICE_PRELOAD_TTS_ASR, which is off by default — so in the default
+            # config this loaded ~3 GB, harvested None, and then offload_tts_for_asr()
+            # freed it again 60 lines below. On unified memory that offload is a full
+            # UNLOAD (#1119), so dub_generate later cold-reloaded the same model (~8s).
+            # Every dub paid load → unload → reload for an attribute that was always
+            # None. Load it only when there is actually something to harvest.
+            _model = None
+            if should_preload_tts_asr():
+                # Guard the model load: if it raises, the SSE stream would otherwise die
+                # before emitting any event, and the UI shows a misleading generic
+                # "stream dropped" message instead of the real cause (issue #255).
+                try:
+                    # Same keepalive treatment as the ASR load below: a cold
+                    # TTS load can outlast a reverse proxy's per-read idle
+                    # timeout (~60-120 s nginx/Caddy defaults) — the initial
+                    # open comment stops the browser's no-response clock but
+                    # does not reset a proxy's idle timer.
+                    _model_task = asyncio.ensure_future(get_model())
+                    _model_task.add_done_callback(
+                        lambda f: f.cancelled() or f.exception()
+                    )
+                    while True:
+                        _done, _ = await asyncio.wait(
+                            {_model_task}, timeout=ASR_LOAD_KEEPALIVE_S
+                        )
+                        if _done:
+                            break
+                        yield b": tts-load keepalive\n\n"
+                    _model = _model_task.result()
+                except Exception as e:
+                    logger.exception("transcribe preflight: model load failed (job=%r)", job_id)
+                    from core.failure import build_failure
+                    f = build_failure(e, stage="transcribe-preflight", include_diagnostic=False)
+                    preflight_error = f["reason"] + (f" — {f['hint']}" if f.get("hint") else "")
+                    _model = None
+            if preflight_error is None:
+                asr_audio_target = job.get("vocals_path")
+                if not asr_audio_target or not os.path.exists(asr_audio_target):
+                    asr_audio_target = job.get("audio_path")
+                # #963: onset snapping is only trustworthy on the Demucs vocals
+                # track. When separation failed/was skipped, dub_pipeline sets
+                # vocals_path to the mixed audio_path — so compare paths instead
+                # of trusting the key's presence.
+                asr_on_vocals = bool(asr_audio_target) and asr_audio_target != job.get("audio_path")
+                if not asr_audio_target or not os.path.exists(asr_audio_target):
+                    preflight_error = "No audio available for transcription."
+                else:
+                    from services.asr_backend import (
+                        ASRModelMissingError,
+                        active_backend_id,
+                        asr_model_missing_detail,
+                        asr_model_missing_error,
+                        load_active_asr_backend,
+                    )
+                    # TTS-only install: no ASR model on disk. Bail BEFORE any
+                    # backend is constructed/loaded — the whisper backends would
+                    # otherwise silently auto-download multi-GB weights from HF.
+                    # Typed payload → the UI renders a one-click download CTA.
+                    # A preloaded `_asr_pipe` only substitutes for the
+                    # *pytorch-whisper* backend (its sole consumer) — any other
+                    # active backend still loads its own weights, so the preflight
+                    # must run for them even when the pipe is present.
+                    _missing = None
+                    _skip_preflight = (
+                        getattr(_model, "_asr_pipe", None) is not None
+                        and active_backend_id() == "pytorch-whisper"
+                    )
+                    if not _skip_preflight:
+                        _missing = await asyncio.get_running_loop().run_in_executor(
+                            None, asr_model_missing_error
+                        )
+                    if _missing is not None:
+                        preflight_error = asr_model_missing_detail(_missing)
+                        preflight_payload = _missing
+                    if _missing is None:
+                        try:
+                            # The PyTorch-Whisper backend lazily builds its own pipeline
+                            # when no preloaded `_asr_pipe` is present (issue #255), so it
+                            # no longer needs OMNIVOICE_PRELOAD_TTS_ASR=1.
+                            #
+                            # Select + eagerly load in ONE call so a real load failure
+                            # (e.g. WhisperX: missing weights, CTranslate2/cuDNN
+                            # mismatch, the torch-2.6 weights-only VAD regression)
+                            # surfaces once, with its actual cause, as a clean preflight
+                            # `error` event — instead of being buried in N cryptic
+                            # per-chunk failures and retried on every chunk (#578) —
+                            # and so a backend whose deep import chain is rotted (e.g.
+                            # `No module named 'lightning_fabric'` from a partial
+                            # install, #1185) is marked unavailable and skipped in
+                            # favor of the next engine instead of failing ASR init
+                            # wholesale. Run in a thread so the (blocking) load
+                            # doesn't stall the event loop.
+                            import functools
+                            _load_fut = asyncio.get_running_loop().run_in_executor(
+                                _gpu_pool,
+                                functools.partial(
+                                    load_active_asr_backend,
+                                    asr_pipe=getattr(_model, "_asr_pipe", None),
+                                ),
+                            )
+                            # On client disconnect the ASGI server cancels this
+                            # generator mid-wait; the executor load keeps
+                            # running (and still caches its result). Retrieve
+                            # its eventual exception so asyncio never logs
+                            # "Task exception was never retrieved" into the
+                            # crash forensics log.
+                            _load_fut.add_done_callback(
+                                lambda f: f.cancelled() or f.exception()
+                            )
+                            # Keepalive while the load runs (#1196): a first-run
+                            # load may download weights for minutes, and a
+                            # byte-silent stream gets severed by Chrome's
+                            # ~5 min no-response cap or a reverse proxy's idle
+                            # timeout — which the UI can only render as the
+                            # generic "stream dropped" guess. SSE comment
+                            # lines are invisible to EventSource, so no client
+                            # changes are needed.
+                            while True:
+                                _done, _ = await asyncio.wait(
+                                    {_load_fut}, timeout=ASR_LOAD_KEEPALIVE_S
+                                )
+                                if _done:
+                                    break
+                                yield b": asr-load keepalive\n\n"
+                            _asr_backend = _load_fut.result()
+                            _loaded_asr["backend"] = _asr_backend
+                        except ASRModelMissingError as e:
+                            # A broken primary fell through to a fallback whose
+                            # weights aren't installed — same typed payload
+                            # (and download CTA) as the initial preflight.
+                            preflight_error = asr_model_missing_detail(e.payload)
+                            preflight_payload = e.payload
+                        except Exception as e:
+                            logger.exception("transcribe preflight: ASR load failed (job=%r)", job_id)
+                            from core.failure import build_failure
+                            f = build_failure(e, stage="transcribe-preflight", include_diagnostic=False)
+                            preflight_error = "ASR backend initialization failed: " + f["reason"] + (
+                                f" — {f['hint']}" if f.get("hint") else ""
+                            )
+                    scene_cuts = job.get("scene_cuts") or []
+
         if preflight_error:
             # Always follow a terminal `error` with `done` so the stream closes
             # via a named event, not a raw connection drop. A bare error+close
@@ -459,7 +722,8 @@ async def dub_transcribe_stream(
             # `data`); if that native error wins, the client falls back to the
             # misleading generic "stream dropped … ASR backend failed" message
             # and the real cause (in `detail`) is lost (#578).
-            yield _sse_event("error", {"detail": preflight_error, "retryable": True})
+            yield _sse_event("error", {"detail": preflight_error, "retryable": True,
+                                       **(preflight_payload or {})})
             yield _sse_event("done", {})
             return
         import math
@@ -481,8 +745,38 @@ async def dub_transcribe_stream(
             return
 
         total = float(len(audio_np)) / float(sr) if sr else 0.0
-        chunks_n = max(1, int(math.ceil(total / TRANSCRIBE_CHUNK_S))) if total > 0 else 1
-        yield _sse_event("start", {"duration": total, "chunks": chunks_n, "chunk_s": TRANSCRIBE_CHUNK_S})
+        global_speaker_clustering = bool(
+            getattr(
+                _asr_backend,
+                "requires_full_audio_for_speaker_consistency",
+                False,
+            )
+        )
+        transcribe_chunk_s = (
+            total
+            if global_speaker_clustering and total > 0
+            else TRANSCRIBE_CHUNK_S
+        )
+        transcribe_timeout_s = (
+            ASR_TRANSCRIBE_TIMEOUT_S
+            if global_speaker_clustering
+            else TRANSCRIBE_CHUNK_TIMEOUT_S
+        )
+        transcribe_timeout_env = (
+            "OMNIVOICE_ASR_TRANSCRIBE_TIMEOUT_S"
+            if global_speaker_clustering
+            else "OMNIVOICE_TRANSCRIBE_CHUNK_TIMEOUT_S"
+        )
+        chunks_n = (
+            max(1, int(math.ceil(total / transcribe_chunk_s)))
+            if total > 0
+            else 1
+        )
+        yield _sse_event("start", {
+            "duration": total,
+            "chunks": chunks_n,
+            "chunk_s": transcribe_chunk_s,
+        })
 
         # Free VRAM: move TTS model to CPU so WhisperX + VAD can fit.
         # Only offloads when free GPU memory is < 4 GB (e.g. laptop GPUs).
@@ -490,6 +784,8 @@ async def dub_transcribe_stream(
         # transcription can still proceed (it just has less headroom).
         try:
             await loop.run_in_executor(_cpu_pool, offload_tts_for_asr)
+            # Restore is now owed on every exit path, not just success (#1191).
+            _tts_offloaded["v"] = True
         except Exception as e:
             logger.warning("offload_tts_for_asr failed (continuing): %s", e)
 
@@ -508,8 +804,8 @@ async def dub_transcribe_stream(
             if job.get("aborted"):
                 yield _sse_event("aborted", {})
                 return
-            t0 = i * TRANSCRIBE_CHUNK_S
-            t1 = min(total, t0 + TRANSCRIBE_CHUNK_S)
+            t0 = i * transcribe_chunk_s
+            t1 = min(total, t0 + transcribe_chunk_s)
             s_from = int(t0 * sr)
             s_to = int(t1 * sr)
             chunk_arr = audio_np[s_from:s_to]
@@ -548,31 +844,59 @@ async def dub_transcribe_stream(
                     logger.exception("chunk transcribe failed (backend=%s)", _asr_backend.id)
                     return {"chunks": [], "language": None, "error": str(e)}
 
-            try:
-                # wait_for in a loop to yield pings so the EventSource connection doesn't drop
-                fut = loop.run_in_executor(_gpu_pool, _transcribe_chunk)
-                waited = 0.0
-                part = None
+            # Retry a failed/timed-out chunk once on a fresh pool before giving
+            # up. Otherwise a transient wedge on the FIRST chunk (whisperx often
+            # cold-loads its model there, the #730 hang) drops that whole window
+            # and the transcript is "missing the beginning, only middle+end".
+            # The retry reuses the same audio window, so a recovered chunk fills
+            # the hole instead of leaving silent gaps.
+            part = None
+            for _attempt in range(1, _CHUNK_TRANSCRIBE_ATTEMPTS + 1):
+                # A wedged chunk gets the SAME guarded-timeout + pool-reset
+                # semantics as the whole-file paths (#730/#851):
+                # run_transcribe_guarded bounds the call, abandons the poisoned
+                # pool so the retry (and any concurrent TTS work) gets a fresh
+                # worker, and raises the actionable ASRTimeoutError. Run it as
+                # a task and poll so we can keep yielding pings — the
+                # EventSource connection drops without them.
+                pool_reset_by_guard = False
+                task = asyncio.ensure_future(run_transcribe_guarded(
+                    _gpu_pool, _transcribe_chunk,
+                    what=f"Dub chunk {i + 1}/{chunks_n}",
+                    timeout=transcribe_timeout_s,
+                    timeout_env=transcribe_timeout_env,
+                ))
                 while True:
-                    done, pending = await asyncio.wait([fut], timeout=5.0)
+                    done, _pending = await asyncio.wait({task}, timeout=5.0)
                     if done:
-                        part = done.pop().result()
                         break
                     yield _sse_event("ping", {})
-                    waited += 5.0
-                    if waited >= TRANSCRIBE_CHUNK_TIMEOUT_S:
-                        # Re-raise TimeoutError if we exceed the overall limit
-                        raise asyncio.TimeoutError()
-            except asyncio.TimeoutError:
-                logger.error(
-                    "Transcribe chunk %d/%d timed out after %.0fs (job=%s)",
-                    i + 1, chunks_n, TRANSCRIBE_CHUNK_TIMEOUT_S, job_id,
-                )
-                part = {
-                    "chunks": [], "language": None,
-                    "error": f"Chunk {i+1} timed out after {TRANSCRIBE_CHUNK_TIMEOUT_S:.0f}s — "
-                             f"ASR backend may be stuck. Try restarting the server.",
-                }
+                try:
+                    part = task.result()
+                except ASRTimeoutError as e:
+                    # The guard already reset the pool; keep the actionable
+                    # message (it names the durable fixes, and — after repeated
+                    # timeouts — the crash-isolated engine escape hatch).
+                    pool_reset_by_guard = True
+                    logger.error(
+                        "Transcribe chunk %d/%d timed out after %.0fs (attempt %d/%d, job=%s)",
+                        i + 1, chunks_n, transcribe_timeout_s, _attempt,
+                        _CHUNK_TRANSCRIBE_ATTEMPTS, job_id,
+                    )
+                    part = {"chunks": [], "language": None, "error": str(e)}
+                # Success → keep it. Failure/timeout → retry once on a fresh
+                # worker (the internal _transcribe_chunk except returns an
+                # error-part; the timeout path already reset the pool).
+                if part is not None and not part.get("error"):
+                    break
+                if _attempt < _CHUNK_TRANSCRIBE_ATTEMPTS:
+                    logger.warning(
+                        "Retrying transcribe chunk %d/%d after failure/timeout (next attempt %d/%d, job=%s)",
+                        i + 1, chunks_n, _attempt + 1, _CHUNK_TRANSCRIBE_ATTEMPTS, job_id,
+                    )
+                    if not pool_reset_by_guard:
+                        reset_pool_after_wedge(
+                            _gpu_pool, what=f"Dub chunk {i + 1}/{chunks_n}")
             if part.get("error"):
                 chunk_errors.append(part["error"])
                 logger.warning("Chunk %d/%d error: %s", i + 1, chunks_n, part["error"])
@@ -590,12 +914,19 @@ async def dub_transcribe_stream(
             # leading music/silence (classic case: speech begins at 0:03,
             # transcript says 0.0 → the dub plays 3 s early). Snap starts
             # forward to the actual speech onset. `audio_np` is the same
-            # track ASR ran on — vocals.wav when Demucs succeeded.
+            # track ASR ran on — vocals.wav when Demucs succeeded. #963:
+            # when it didn't (mixed audio), snapping is disabled — every
+            # footstep/sigh/score cue is a false onset candidate there.
             try:
-                snap_segment_starts(chunk_segs, audio_np, sr)
+                snap_segment_starts(chunk_segs, audio_np, sr,
+                                    separated_vocals=asr_on_vocals)
             except Exception as e:
                 logger.warning("onset alignment skipped for chunk %d: %s", i, e)
-            chunk_segs = assign_speakers_heuristic(chunk_segs)
+            # Provisional per-chunk labels for the streaming UI only — the
+            # final diarization pass below overwrites them. Honor the user's
+            # speaker-count hint here too so the interim view doesn't flip
+            # between 2 and N speakers.
+            chunk_segs = assign_speakers_heuristic(chunk_segs, num_speakers)
             for s in chunk_segs:
                 s["id"] = f"s{next_seg_id:05x}"
                 s["text_original"] = s.get("text", "")
@@ -649,33 +980,110 @@ async def dub_transcribe_stream(
             return
 
         def _diarize():
-            """Returns (segments, warning_payload_or_None).
+            """Returns (segments, warning_payload_or_None, labels_source).
+
+            `labels_source` records where the speaker labels came from —
+            `"pyannote"` | `"turns"` | `"heuristic"` — so downstream
+            auto-clone extraction can refuse to cut reference audio from
+            gap-based estimates (a mixed-speaker reference is how "made up"
+            clone voices happen).
 
             `warning_payload` is a structured dict
             `{detail, error_class, docs_url}` whenever we silently fell back
             to the silence-gap heuristic (no HF_TOKEN, model unavailable,
-            license not accepted, or pyannote raised). The heuristic only
-            detects speaker turns from >1.2s silences, so a rapid-fire
-            man↔woman exchange will read as one speaker. Issue #78 — we
-            attach an `error_class` so the front-end's errorDocsMap can
-            render a "See docs" deeplink instead of a dead-end toast.
+            license not accepted, or pyannote raised) — or whenever the
+            user's `num_speakers` hint could not be honored exactly. The
+            heuristic only detects speaker turns from >1.2s silences, so a
+            rapid-fire man↔woman exchange will read as one speaker. Issue
+            #78 — we attach an `error_class` so the front-end's errorDocsMap
+            can render a "See docs" deeplink instead of a dead-end toast.
             """
-            # The active ASR backend already diarized inline (FunASR cam++):
-            # use its speaker turns directly and skip pyannote entirely (#182).
-            if asr_speaker_turns:
-                logger.info("Using inline ASR diarization (%d turns); skipping pyannote.", len(asr_speaker_turns))
-                assigned = assign_speakers_from_turns(all_segments, asr_speaker_turns)
-                # #486: split any segment that spans two speakers' turns at the
-                # word boundary (single-speaker segments pass through unchanged).
-                return resplit_segments_by_turns(assigned, all_words, asr_speaker_turns), None
-
             from services.model_manager import (
                 DIARIZATION_ERR_LICENSE,
                 DIARIZATION_ERR_NO_TOKEN,
             )
             from core import error_docs_map
 
-            diar_pipe, err_sentinel = get_diarization_pipeline(return_error=True)
+            def _hint_suffix() -> str:
+                """Honest caveat appended to heuristic-fallback warnings when a
+                multi-speaker hint is set: the count is now honored, but the
+                heuristic can't attribute voices. (A hint of 1 IS fully
+                honored — one label — so it needs no caveat.)"""
+                if not num_speakers or num_speakers < 2:
+                    return ""
+                return (
+                    f" Your speaker-count setting ({num_speakers}) is only "
+                    f"approximately honored: the heuristic cycles "
+                    f"{num_speakers} speaker labels on silence gaps instead "
+                    f"of recognizing voices, so lines may be attributed to "
+                    f"the wrong speaker."
+                )
+
+            def _use_turns(crash: Exception | None = None, err_sentinel=None):
+                """Label from the ASR backend's inline speaker turns; warn when
+                that means the user's explicit count can't be enforced."""
+                logger.info(
+                    "Using inline ASR diarization (%d turns)%s.",
+                    len(asr_speaker_turns),
+                    "" if crash else "; skipping pyannote",
+                )
+                assigned = assign_speakers_from_turns(all_segments, asr_speaker_turns)
+                # #486: split any segment that spans two speakers' turns at the
+                # word boundary (single-speaker segments pass through unchanged).
+                resplit = resplit_segments_by_turns(assigned, all_words, asr_speaker_turns)
+                if not num_speakers:
+                    return resplit, None, "turns"
+                error_class = (
+                    "HF_AUTH_FAILED"
+                    if err_sentinel == DIARIZATION_ERR_NO_TOKEN
+                    else "PYANNOTE_LICENSE_REQUIRED"
+                )
+                if crash:
+                    detail = (
+                        f"Speaker diarization crashed mid-run "
+                        f"({type(crash).__name__}); falling back to the ASR "
+                        f"engine's built-in speaker turns. Speaker-count hint "
+                        f"ignored: the detected count may differ from the "
+                        f"{num_speakers} you set."
+                    )
+                else:
+                    detail = (
+                        f"Speaker-count hint ignored: pyannote diarization is "
+                        f"unavailable, so the ASR engine's built-in speaker "
+                        f"turns were used and the detected count may differ "
+                        f"from the {num_speakers} you set. Set up diarization "
+                        f"(Settings → Models → pyannote) to enforce an exact "
+                        f"speaker count."
+                    )
+                return resplit, {
+                    "detail": detail,
+                    "error_class": error_class,
+                    "docs_url": error_docs_map.lookup(error_class),
+                    "speaker_hint": {"requested": num_speakers, "status": "ignored"},
+                }, "turns"
+
+            # The active ASR backend already diarized inline (FunASR cam++):
+            # its turns are the fast path and skip pyannote entirely (#182) —
+            # but ONLY when the user didn't set an explicit speaker count.
+            # Inline turns can't be forced to N speakers through the shared ASR
+            # contract, so a set num_speakers prefers pyannote — the one engine
+            # that honors an exact count. When pyannote can't load, the turns
+            # are still the best labels available; use them and say so instead
+            # of silently eating the hint.
+            diar_pipe = None
+            err_sentinel = None
+            if asr_speaker_turns:
+                if num_speakers:
+                    diar_pipe, err_sentinel = get_diarization_pipeline(return_error=True)
+                if not diar_pipe:
+                    return _use_turns(err_sentinel=err_sentinel)
+                logger.info(
+                    "num_speakers=%d set: preferring pyannote over %d inline "
+                    "ASR turns (only pyannote honors an exact count).",
+                    num_speakers, len(asr_speaker_turns),
+                )
+            else:
+                diar_pipe, err_sentinel = get_diarization_pipeline(return_error=True)
             if not diar_pipe:
                 # Phase 1 AUTH-01: ask the resolver (App → Env → HF-CLI),
                 # not just the env var. This is the #35 fix — users who
@@ -726,13 +1134,20 @@ async def dub_transcribe_stream(
                         f"heuristic; rapid speaker turns may be merged."
                     )
                     error_class = "PYANNOTE_LICENSE_REQUIRED"
+                warning = {
+                    "detail": detail + _hint_suffix(),
+                    "error_class": error_class,
+                    "docs_url": error_docs_map.lookup(error_class),
+                }
+                if num_speakers:
+                    warning["speaker_hint"] = {
+                        "requested": num_speakers,
+                        "status": "approximate" if num_speakers > 1 else "honored",
+                    }
                 return (
-                    assign_speakers_heuristic(all_segments),
-                    {
-                        "detail": detail,
-                        "error_class": error_class,
-                        "docs_url": error_docs_map.lookup(error_class),
-                    },
+                    assign_speakers_heuristic(all_segments, num_speakers),
+                    warning,
+                    "heuristic",
                 )
             try:
                 # Pass the user's speaker-count hint through to pyannote when
@@ -747,9 +1162,14 @@ async def dub_transcribe_stream(
                 assigned = assign_speakers_from_diarization(all_segments, diar)
                 # #486: split any segment that spans two speakers' turns at the
                 # word boundary (single-speaker segments pass through unchanged).
-                return resplit_segments_by_diarization(assigned, all_words, diar), None
+                return resplit_segments_by_diarization(assigned, all_words, diar), None, "pyannote"
             except Exception as e:
-                logger.error(f"Diarization failed: {e}")
+                logger.exception("Diarization failed")
+                # Inline ASR turns beat the silence-gap heuristic as a crash
+                # fallback (this path is reachable with turns present since a
+                # set num_speakers routes turns-jobs through pyannote).
+                if asr_speaker_turns:
+                    return _use_turns(crash=e)
                 # Mid-run failure — classify against the same sentinels so a
                 # post-load 401 (rare but possible after a token rotation)
                 # still gets the right docs deeplink.
@@ -760,36 +1180,50 @@ async def dub_transcribe_stream(
                     if err_class_post == DIARIZATION_ERR_LICENSE
                     else "PYANNOTE_LICENSE_REQUIRED"  # LOAD failures land here too
                 )
+                warning = {
+                    "detail": (
+                        f"Speaker diarization crashed mid-run "
+                        f"({type(e).__name__}); falling back to a silence-gap "
+                        f"heuristic. Rapid speaker turns may be merged."
+                        + _hint_suffix()
+                    ),
+                    "error_class": error_class,
+                    "docs_url": error_docs_map.lookup(error_class),
+                }
+                if num_speakers:
+                    warning["speaker_hint"] = {
+                        "requested": num_speakers,
+                        "status": "approximate" if num_speakers > 1 else "honored",
+                    }
                 return (
-                    assign_speakers_heuristic(all_segments),
-                    {
-                        "detail": (
-                            f"Speaker diarization crashed mid-run "
-                            f"({type(e).__name__}); falling back to a silence-gap "
-                            f"heuristic. Rapid speaker turns may be merged."
-                        ),
-                        "error_class": error_class,
-                        "docs_url": error_docs_map.lookup(error_class),
-                    },
+                    assign_speakers_heuristic(all_segments, num_speakers),
+                    warning,
+                    "heuristic",
                 )
 
         fut_diar = loop.run_in_executor(_gpu_pool, _diarize)
         final_segs = None
         diar_warning = None
+        labels_source = "heuristic"
         while True:
             done, pending = await asyncio.wait([fut_diar], timeout=5.0)
             if done:
-                final_segs, diar_warning = done.pop().result()
+                final_segs, diar_warning, labels_source = done.pop().result()
                 break
             yield _sse_event("ping", {})
         if diar_warning:
             logger.warning("diarization fallback: %s", diar_warning.get("detail"))
-            yield _sse_event("warning", {
+            payload = {
                 "detail": diar_warning.get("detail"),
                 "source": "diarization",
                 "error_class": diar_warning.get("error_class"),
                 "docs_url": diar_warning.get("docs_url"),
-            })
+            }
+            # Machine-readable trail of what happened to the user's
+            # speaker-count hint (the `detail` text carries the human story).
+            if diar_warning.get("speaker_hint"):
+                payload["speaker_hint"] = diar_warning["speaker_hint"]
+            yield _sse_event("warning", payload)
 
         job["segments"] = final_segs
 
@@ -801,17 +1235,55 @@ async def dub_transcribe_stream(
         try:
             from services.speaker_clone import extract_speaker_clones, auto_profile_id
             vocals_for_clone = job.get("vocals_path") or asr_audio_target
-            fut_clones = loop.run_in_executor(
-                _cpu_pool, extract_speaker_clones,
-                vocals_for_clone, final_segs, os.path.dirname(vocals_for_clone),
-            )
-            clones = None
-            while True:
-                done, pending = await asyncio.wait([fut_clones], timeout=5.0)
-                if done:
-                    clones = done.pop().result()
-                    break
-                yield _sse_event("ping", {})
+            clones = {}
+            if labels_source == "heuristic":
+                # Clone-purity guard: heuristic labels are silence-gap
+                # estimates, not voice identity — a per-speaker reference cut
+                # from them routinely concatenates two people's audio and the
+                # clone sounds "made up". Skip auto-clones and say so instead
+                # of shipping bad ones. (extract_speaker_clones enforces the
+                # same guard internally; this branch exists to surface the
+                # warning to the user.)
+                logger.info(
+                    "auto speaker clones skipped (labels_source=heuristic, job=%s)",
+                    job_id,
+                )
+                yield _sse_event("warning", {
+                    "detail": CLONE_SKIP_HEURISTIC_MSG,
+                    "source": "speaker_clone",
+                })
+            else:
+                fut_clones = loop.run_in_executor(
+                    _cpu_pool, lambda: extract_speaker_clones(
+                        vocals_for_clone, final_segs,
+                        os.path.dirname(vocals_for_clone),
+                        labels_source=labels_source,
+                    ),
+                )
+                while True:
+                    done, pending = await asyncio.wait([fut_clones], timeout=5.0)
+                    if done:
+                        clones = done.pop().result()
+                        break
+                    yield _sse_event("ping", {})
+                if clones:
+                    from services.speaker_clone import refine_ref_texts
+                    # Bound the re-transcribe like every other ASR dispatch in
+                    # this file (#730): a wedged transcribe would otherwise hold
+                    # the GPU-pool worker forever and starve later work into a
+                    # "can't reach backend". On timeout the guard resets the pool
+                    # and raises — keep the original (unrefined) clones, matching
+                    # refine_ref_text's own "failure is a strict no-op" fallback.
+                    try:
+                        clones = await run_transcribe_guarded(
+                            _gpu_pool,
+                            lambda: refine_ref_texts(clones, _asr_backend),
+                            what="Dub clone ref-text refine",
+                        )
+                    except ASRTimeoutError as e:
+                        logger.warning(
+                            "clone ref-text refine timed out; keeping original ref_text: %s", e
+                        )
             # Wave 3.2: per-segment clone refs. Cut each long-enough segment's
             # own reference from the vocals so the dub of each line matches the
             # prosody of its source line. Short lines fall back to the
@@ -831,6 +1303,19 @@ async def dub_transcribe_stream(
                         ),
                     )
                     if seg_clones:
+                        from services.speaker_clone import refine_ref_texts
+                        # Same guard as the per-speaker refine above (#730):
+                        # keep the original seg_clones on a wedge/timeout.
+                        try:
+                            seg_clones = await run_transcribe_guarded(
+                                _gpu_pool,
+                                lambda: refine_ref_texts(seg_clones, _asr_backend),
+                                what="Dub segment ref-text refine",
+                            )
+                        except ASRTimeoutError as e:
+                            logger.warning(
+                                "segment ref-text refine timed out; keeping original ref_text: %s", e
+                            )
                         job["segment_clones"] = seg_clones
                 except Exception as e:
                     logger.warning("per-segment clone refs skipped: %s", e)
@@ -874,14 +1359,22 @@ async def dub_transcribe_stream(
         job["full_transcript"] = " ".join(s.get("text", "") for s in final_segs)
         _save_job(job_id, job)
 
-        # Restore TTS model to GPU now that ASR is done
+        # Restore TTS model to GPU now that ASR is done. unload() blocks
+        # (gc.collect + CUDA cache drop) — run it on the GPU pool so the
+        # event loop stays responsive; await it, because the TTS restore
+        # below must not contend with the ASR weights for VRAM
+        # (CodeRabbit review, #1198 — normal-completion half).
         if _asr_backend:
             try:
-                _asr_backend.unload()
+                await loop.run_in_executor(_gpu_pool, _asr_backend.unload)
             except Exception as e:
                 logger.warning("Failed to unload ASR backend: %s", e)
+            # Unload attempted once — don't retry from gen()'s finally.
+            _loaded_asr["backend"] = None
 
         await loop.run_in_executor(_cpu_pool, restore_tts_after_asr)
+        # Debt paid — don't make gen()'s finally repeat it.
+        _tts_offloaded["v"] = False
 
         if torch.backends.mps.is_available():
             try: torch.mps.empty_cache()
@@ -896,6 +1389,12 @@ async def dub_transcribe_stream(
         yield _sse_event("done", {})
 
     async def gen():
+        # First byte out the moment the stream starts (#1196): the browser's
+        # no-response clock stops, buffering middlemen flush the headers, and
+        # EventSource reports the stream open — all BEFORE the preflight
+        # (which may load models for minutes) runs inside _gen_body. A
+        # comment line is invisible to client event handlers.
+        yield b": transcribe-stream open\n\n"
         # Terminal-event guard (#516): the SSE stream must NEVER close without a
         # terminal event. Any unanticipated exception in the body (e.g. an ASR
         # load that escapes the per-chunk handler) previously dropped the
@@ -907,12 +1406,53 @@ async def dub_transcribe_stream(
             async for ev in _gen_body():
                 yield ev
         except Exception as e:  # noqa: BLE001 — last-resort stream finalizer
-            logger.exception("transcribe stream crashed (job=%s)", job_id)
+            logger.exception("transcribe stream crashed (job=%r)", job_id)
             from core.failure import build_failure
             f = build_failure(e, stage="transcribe", include_diagnostic=False)
             detail = f["reason"] + (f" — {f['hint']}" if f.get("hint") else "")
             yield _sse_event("error", {"detail": detail, "retryable": True})
             yield _sse_event("done", {})
+        finally:
+            # Last-resort VRAM release (see _loaded_asr above): covers crashes,
+            # early terminal-error returns, and client disconnects
+            # (GeneratorExit bypasses the except, never this finally).
+            _b = _loaded_asr.get("backend")
+            _loaded_asr["backend"] = None
+            # Pay the TTS-restore debt on every exit path (#1191). Leaving it
+            # unpaid is what stranded the TTS model on CPU after an abort or a
+            # disconnect, degrading every later generation by 10-50x.
+            _restore_tts = _tts_offloaded["v"]
+            _tts_offloaded["v"] = False
+
+            def _submit_tts_restore(_f=None):
+                if _f is not None:
+                    _log_bg_failure(_f, "Unloading ASR backend")
+                if _restore_tts:
+                    _restore_tts_bg()
+
+            if _b is not None:
+                # unload() blocks (gc.collect + CUDA cache drop can take
+                # seconds) and this finally also runs under GeneratorExit,
+                # where awaiting is illegal — so hand it to the GPU pool
+                # fire-and-forget and retrieve the eventual exception
+                # (CodeRabbit review, #1198).
+                try:
+                    _fut = asyncio.get_running_loop().run_in_executor(
+                        _gpu_pool, _b.unload
+                    )
+                    # Restore the TTS model only AFTER the ASR weights are
+                    # freed — the same ordering the success path enforces, so
+                    # the two never contend for VRAM.
+                    _fut.add_done_callback(_submit_tts_restore)
+                except RuntimeError:
+                    # No running loop (interpreter teardown) — best effort.
+                    try:
+                        _b.unload()
+                    except Exception as e:
+                        logger.warning("Failed to unload ASR backend: %s", e)
+                    _submit_tts_restore()
+            else:
+                _submit_tts_restore()
 
     return StreamingResponse(
         gen(),
@@ -925,18 +1465,52 @@ async def dub_transcribe_stream(
 
 
 @router.post("/dub/transcribe/{job_id}")
-async def dub_transcribe(job_id: str):
+async def dub_transcribe(job_id: str, num_speakers: Optional[int] = None):
+    """Legacy synchronous transcribe (kept for the headless CLI).
+
+    `num_speakers` mirrors the SSE endpoint's query param (same 1–20 clamp):
+    an exact speaker count forwarded to pyannote, or cycled by the silence-gap
+    heuristic when pyannote is unavailable. None → auto-detect.
+    """
+    num_speakers = _clamp_num_speakers(num_speakers)
     job = _get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    _model = await get_model()
+    # Same as the streaming preflight: the only use of the TTS core here is the
+    # last-resort `_model._asr_pipe` fallback below, which exists solely under
+    # OMNIVOICE_PRELOAD_TTS_ASR — and when it is off, that branch raises "fallback
+    # is not preloaded" anyway. Loading ~3 GB to reach a None attribute (and then
+    # having offload_tts_for_asr free it) was pure cost.
+    _model = await get_model() if should_preload_tts_asr() else None
+
+    # TTS-only install: no ASR model on disk → typed 409 with a download CTA,
+    # BEFORE any backend is constructed (the whisper backends auto-download
+    # multi-GB weights from HF on first load). Same gate as the SSE preflight:
+    # a preloaded `_asr_pipe` only substitutes for the *pytorch-whisper*
+    # backend (its sole consumer), so it only skips the preflight there.
+    from services.asr_backend import (
+        active_backend_id,
+        asr_model_missing_detail,
+        asr_model_missing_error,
+    )
+    if not (getattr(_model, "_asr_pipe", None) is not None
+            and active_backend_id() == "pytorch-whisper"):
+        missing = await asyncio.to_thread(asr_model_missing_error)
+        if missing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={**missing, "message": asr_model_missing_detail(missing)},
+            )
 
     def _transcribe():
-        
+
         asr_audio_target = job.get("vocals_path")
         if not asr_audio_target or not os.path.exists(asr_audio_target):
             asr_audio_target = job.get("audio_path")
-            
+        # #963: same source-awareness as the SSE endpoint — vocals_path
+        # falls back to the mixed audio_path when Demucs failed/skipped.
+        asr_on_vocals = bool(asr_audio_target) and asr_audio_target != job.get("audio_path")
+
         import torch
 
         detected_lang = None
@@ -953,7 +1527,7 @@ async def dub_transcribe(job_id: str):
                 result = _asr.transcribe(asr_audio_target, word_timestamps=True)
                 detected_lang = result.get("language")
             except Exception as e:
-                logger.error("ASR backend %s failed: %s", _asr.id, e)
+                logger.exception("ASR backend %s failed", _asr.id)
                 if getattr(_model, "_asr_pipe", None) is None:
                     raise RuntimeError(
                         f"ASR backend {_asr.id} failed and PyTorch Whisper fallback is not preloaded: {e}"
@@ -980,10 +1554,13 @@ async def dub_transcribe(job_id: str):
         segments = segment_transcript(result, duration=job.get("duration", 0.0), scene_cuts=scene_cuts)
 
         # #280: snap segment starts forward to the actual speech onset so the
-        # dub doesn't begin seconds before the original speaker does.
+        # dub doesn't begin seconds before the original speaker does. #963:
+        # only on the separated vocals track — on mixed audio every ambient
+        # sound is a false onset candidate, so snapping is disabled.
         try:
             audio_for_onset, onset_sr = sf.read(asr_audio_target, dtype="float32")
-            snap_segment_starts(segments, audio_for_onset, onset_sr)
+            snap_segment_starts(segments, audio_for_onset, onset_sr,
+                                separated_vocals=asr_on_vocals)
         except Exception as e:
             logger.warning("onset alignment skipped: %s", e)
 
@@ -991,13 +1568,20 @@ async def dub_transcribe(job_id: str):
         if diar_pipe:
             try:
                 diar_target = job.get("vocals_path") or job.get("audio_path")
-                diarization = diar_pipe(diar_target)
+                # Same hint pass-through as the SSE endpoint (#274): omit the
+                # kwarg entirely when unset so we don't depend on it existing
+                # in every pyannote build.
+                if num_speakers:
+                    logger.info("Diarizing with num_speakers=%d (user hint)", num_speakers)
+                    diarization = diar_pipe(diar_target, num_speakers=num_speakers)
+                else:
+                    diarization = diar_pipe(diar_target)
                 segments = assign_speakers_from_diarization(segments, diarization)
-            except Exception as e:
-                logger.error(f"Pyannote diarization failed during inference: {e}. Falling back to heuristic.")
-                segments = assign_speakers_heuristic(segments)
+            except Exception:
+                logger.exception("Pyannote diarization failed during inference. Falling back to heuristic.")
+                segments = assign_speakers_heuristic(segments, num_speakers)
         else:
-            segments = assign_speakers_heuristic(segments)
+            segments = assign_speakers_heuristic(segments, num_speakers)
 
         # Previously ran `segment_for_subtitles(segments)` here. Removed 2026-04-21 —
         # that splitter enforces Netflix's 17 CPS reading-speed ceiling which
@@ -1017,7 +1601,11 @@ async def dub_transcribe(job_id: str):
     try:
         loop = asyncio.get_running_loop()
         try:
-            segments_result = await loop.run_in_executor(_gpu_pool, _transcribe)
+            # Bound the whole-file transcribe (#730): a wedged whisperx/CTranslate2
+            # call would otherwise hold its GPU-pool worker forever and starve
+            # every other request into a "can't reach backend". run_transcribe_guarded
+            # also resets the pool on timeout so capacity is restored.
+            segments_result = await run_transcribe_guarded(_gpu_pool, _transcribe, what="Dub")
         except asyncio.CancelledError:
             job["aborted"] = True
             raise

@@ -4,7 +4,9 @@
 // Deduplication is automatic — two components using useSysinfo() share one
 // network request and one cache entry.
 
+import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useAppStore } from '../store';
 import * as systemApi from './system';
 import * as setupApi from './setup';
 import * as galleryApi from './gallery';
@@ -15,21 +17,21 @@ import type { CommunityFilters } from './community';
 
 // ── Keys (prevents typos, enables targeted invalidation) ─────────────────
 export const queryKeys = {
-  sysinfo:         ['sysinfo']         as const,
-  modelStatus:     ['model-status']    as const,
-  notifications:   ['notifications']   as const,
-  systemInfo:      ['system-info']     as const,
-  systemLogs:      (tail?: number) => ['system-logs', tail ?? 300] as const,
-  tauriLogs:       (tail?: number) => ['tauri-logs',  tail ?? 300] as const,
-  models:          ['models']          as const,
+  sysinfo: ['sysinfo'] as const,
+  modelStatus: ['model-status'] as const,
+  notifications: ['notifications'] as const,
+  systemInfo: ['system-info'] as const,
+  systemLogs: (tail?: number) => ['system-logs', tail ?? 300] as const,
+  tauriLogs: (tail?: number) => ['tauri-logs', tail ?? 300] as const,
+  models: ['models'] as const,
   recommendations: ['recommendations'] as const,
-  preflight:       ['preflight']       as const,
-  setupStatus:     ['setup-status']    as const,
-  galleryVoices:   (params?: any) => ['gallery-voices', params] as const,
+  preflight: ['preflight'] as const,
+  setupStatus: ['setup-status'] as const,
+  galleryVoices: (params?: any) => ['gallery-voices', params] as const,
   galleryCategories: ['gallery-categories'] as const,
   archetypeCategories: ['archetype-categories'] as const,
-  archetypes:      (filters?: any) => ['archetypes', filters] as const,
-  communityItems:  (filters?: any) => ['community-items', filters] as const,
+  archetypes: (filters?: any) => ['archetypes', filters] as const,
+  communityItems: (filters?: any) => ['community-items', filters] as const,
   communityManifest: (refresh?: boolean) => ['community-manifest', !!refresh] as const,
 };
 
@@ -76,6 +78,41 @@ export function useNotifications(enabled = true) {
     retryDelay: 1_500,
     enabled,
   });
+}
+
+/** A system notification the user may hide: info/warn describe standing facts
+ * (CPU-only box, low disk) that can be acknowledged; errors describe broken
+ * things that stay visible until actually fixed. */
+export function isDismissibleNotification(n: { level?: string }): boolean {
+  return n?.level === 'info' || n?.level === 'warn';
+}
+
+// The bell and the footer tab must agree on what is visible, so the
+// dismissed-ids filter lives here, next to the query they share. Dismissals
+// persist in the app store (prefsSlice.dismissedNotificationIds); the backend
+// keeps re-emitting the note every poll, which is exactly why filtering is
+// client-side — see the slice doc for the id-stability contract.
+export function useVisibleNotifications(enabled = true) {
+  const query = useNotifications(enabled);
+  const dismissed = useAppStore((s) => s.dismissedNotificationIds);
+  const all = query.data?.notifications;
+  // Memoized so the array reference is stable across re-renders while the
+  // inputs are unchanged (downstream effect/memo deps stay quiet).
+  // A note is hidden only while it is *currently* dismissible: if a stable id
+  // ever escalates to error level, an old info/warn dismissal must not hide it.
+  const notifications = useMemo(
+    () =>
+      (all || []).filter(
+        (n: { id?: string; level?: string }) =>
+          !n.id || !isDismissibleNotification(n) || !dismissed.includes(n.id),
+      ),
+    [all, dismissed],
+  );
+  // Omit `data` from the returned query: `data.notifications` is the raw
+  // UNFILTERED list, and any consumer reaching for it would silently bypass
+  // the dismiss filter. (No consumer uses `data` today.)
+  const { data: _data, ...rest } = query;
+  return { ...rest, notifications };
 }
 
 export function useSystemLogs(tail = 300, enabled = true, refetchInterval = 10_000) {
@@ -142,14 +179,6 @@ export function useSetupStatus() {
   });
 }
 
-export function useGalleryCategories() {
-  return useQuery({
-    queryKey: queryKeys.galleryCategories,
-    queryFn: galleryApi.listCategories,
-    staleTime: 60_000,
-  });
-}
-
 export function useGalleryVoices(params?: any) {
   return useQuery({
     queryKey: queryKeys.galleryVoices(params),
@@ -168,12 +197,16 @@ export function useArchetypeCategories() {
   });
 }
 
-export function useArchetypes(filters: ArchetypeFilters = {}) {
+// `enabled` lets a shared consumer (VoiceSelector) defer the fetch until its
+// dropdown actually opens — many pickers can mount (e.g. the Audiobook cast
+// list) without any of them hitting the network until used.
+export function useArchetypes(filters: ArchetypeFilters = {}, enabled = true) {
   return useQuery({
     queryKey: queryKeys.archetypes(filters),
     queryFn: () => archetypesApi.listArchetypes(filters),
     staleTime: 5 * 60_000,
     placeholderData: keepPreviousData, // v5: keep prior page visible while paginating
+    enabled,
   });
 }
 
@@ -184,14 +217,6 @@ export function useCommunityItems(filters: CommunityFilters = {}) {
     queryFn: () => communityApi.listCommunityItems(filters),
     staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
-  });
-}
-
-export function useCommunityManifest(refresh = false) {
-  return useQuery({
-    queryKey: queryKeys.communityManifest(refresh),
-    queryFn: () => communityApi.communityManifest(refresh),
-    staleTime: 5 * 60_000,
   });
 }
 
@@ -217,37 +242,6 @@ export function useDeleteModel() {
       qc.invalidateQueries({ queryKey: queryKeys.models });
       qc.invalidateQueries({ queryKey: queryKeys.setupStatus });
       qc.invalidateQueries({ queryKey: queryKeys.recommendations });
-    },
-  });
-}
-
-export function useFlushMemory() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (unloadModel: boolean) => systemApi.flushMemory(unloadModel),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.sysinfo });
-      qc.invalidateQueries({ queryKey: queryKeys.modelStatus });
-    },
-  });
-}
-
-export function useClearLogs() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => systemApi.clearSystemLogs(),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.systemLogs() });
-    },
-  });
-}
-
-export function useClearTauriLogs() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => systemApi.clearTauriLogs(),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.tauriLogs() });
     },
   });
 }
