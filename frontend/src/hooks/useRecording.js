@@ -8,6 +8,8 @@ import { toast } from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import { cleanAudio as apiCleanAudio } from '../api/system';
 import { micErrorMessage } from '../utils/micError';
+import { checkMicrophone } from '../utils/permissions';
+import { showMicDeniedGuide } from '../utils/micDeniedToast';
 
 export default function useRecording(ingestRefAudio) {
   const { t } = useTranslation();
@@ -19,6 +21,14 @@ export default function useRecording(ingestRefAudio) {
   const recordingTimerRef = useRef(null);
 
   const startRecording = async () => {
+    // Pre-flight: an OS-denied mic grant means getUserMedia can only throw an
+    // opaque NotAllowedError — skip it and show the guided path (per-OS hint
+    // + Open Settings) instead. 'prompt'/'granted'/'unknown' proceed as today
+    // (outside Tauri checkMicrophone() is always 'unknown' → unchanged).
+    if ((await checkMicrophone()) === 'denied') {
+      showMicDeniedGuide(t);
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
@@ -32,7 +42,7 @@ export default function useRecording(ingestRefAudio) {
 
       mediaRecorder.onstop = async () => {
         clearInterval(recordingTimerRef.current);
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach((t) => t.stop());
 
         const blob = new Blob(recordingChunksRef.current, { type: 'audio/webm' });
         if (blob.size < 1000) {
@@ -44,20 +54,26 @@ export default function useRecording(ingestRefAudio) {
         setIsCleaning(true);
         try {
           const formData = new FormData();
-          formData.append("audio", blob, "recording.webm");
+          formData.append('audio', blob, 'recording.webm');
           const res = await apiCleanAudio(formData);
 
           const cleanBlob = await res.blob();
-          const cleanFilename = res.headers.get("X-Clean-Filename") || "recording_clean.wav";
-          const cleanFile = new File([cleanBlob], cleanFilename, { type: "audio/wav" });
+          const cleanFilename = res.headers.get('X-Clean-Filename') || 'recording_clean.wav';
+          const cleanFile = new File([cleanBlob], cleanFilename, { type: 'audio/wav' });
 
           await ingestRefAudio(cleanFile);
-          toast.success(t('recording.cleaned_loaded', { defaultValue: 'Recording cleaned & loaded!' }));
+          toast.success(
+            t('recording.cleaned_loaded', { defaultValue: 'Recording cleaned & loaded!' }),
+          );
         } catch (e) {
           // Fallback: use raw recording without denoising
-          const rawFile = new File([blob], "recording.webm", { type: "audio/webm" });
+          const rawFile = new File([blob], 'recording.webm', { type: 'audio/webm' });
           await ingestRefAudio(rawFile);
-          toast.success(t('recording.loaded_raw', { defaultValue: 'Recording loaded (raw — denoising unavailable)' }));
+          toast.success(
+            t('recording.loaded_raw', {
+              defaultValue: 'Recording loaded (raw — denoising unavailable)',
+            }),
+          );
         } finally {
           setIsCleaning(false);
         }
@@ -71,7 +87,6 @@ export default function useRecording(ingestRefAudio) {
       recordingTimerRef.current = setInterval(() => {
         setRecordingTime(((Date.now() - st) / 1000).toFixed(1));
       }, 100);
-
     } catch (e) {
       // Same actionable mapping as the dictation pill: denied → per-OS
       // settings hint; otherwise no-device / device-busy / generic (#323).

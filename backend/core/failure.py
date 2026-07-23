@@ -18,9 +18,11 @@ from __future__ import annotations
 import os
 import platform
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from core import error_docs_map
 from core.logging_filter import REDACTED, _HF_TOKEN_RE
@@ -38,11 +40,196 @@ _HINTS: dict[str, str] = {
     "HF_AUTH_FAILED": "Set a valid HF_TOKEN in Settings → Hugging Face and retry.",
     "PYANNOTE_LICENSE_REQUIRED": "Accept the pyannote model licenses on Hugging Face, then retry.",
     "COMPUTE_TYPE_UNSUPPORTED": "Your GPU doesn't support float16 — OmniVoice retried on int8. If transcription still fails, set OMNIVOICE/ASR_COMPUTE_TYPE=int8 or use CPU.",
-    "TRANSFORMERS_IMPORT": "Your transformers install is incomplete. Reinstall it (`uv pip install --reinstall transformers`) or switch ASR to faster-whisper (Settings → Models).",
+    "TRANSFORMERS_IMPORT": "Your transformers install is incomplete, or a package it loads models through (torchaudio) is missing or mismatched with your torch. Reinstall them together (`uv pip install --reinstall torch torchaudio transformers`), then restart the backend. If only transcription is affected, switching ASR to faster-whisper (Settings → Models) also works around it.",
+    "WINDOWS_APP_CONTROL_BLOCKED": "Windows refused to load a file OmniVoice needs — an Application Control policy (Smart App Control, WDAC, or AppLocker) blocked it. On a personal PC: Windows Security → App & browser control → Smart App Control → Off (Windows only lets you turn it off once — re-enabling requires a Windows reset), then restart OmniVoice. On a managed/work PC, ask IT to allow the OmniVoice install folder.",
+    "AUDIO_IO_FAILED": "An audio file couldn't be read or written at the OS level. Check the drive isn't full, that the output and temp folders exist and are writable, and that antivirus or OneDrive isn't locking them (add an OmniVoice exclusion if you use one).",
+    "VIDEO_DOWNLOAD_OS_ERROR": "The OS refused a file operation while saving the downloaded video — this is a disk/folder problem, not a network one, so retrying the same link won't help. The download is written to a job folder under your OmniVoice data directory (Settings → Storage shows the path): check that drive isn't full, that the folder exists and is writable, and that antivirus or a cloud-sync client (OneDrive, Dropbox) isn't locking it — add an OmniVoice exclusion if you use one. If your data directory sits on a synced or network drive, move it to a local one.",
+    "OS_INVALID_ARGUMENT": "The OS rejected a file operation (Errno 22 / invalid argument) — in the transcribe path this is the temporary WAV write before ASR. It's almost always the temp directory: missing, read-only, on a full or removed drive, or blocked by antivirus. Check that your system TEMP/TMP folder exists and is writable and the drive has free space (add an OmniVoice antivirus exclusion if you use one), then retry.",
+    "SOCKS_PROXY_SUPPORT_MISSING": "A SOCKS proxy is configured in your environment (ALL_PROXY/HTTPS_PROXY=socks5://…) and the backend's HTTP client is missing SOCKS support. Newer OmniVoice builds ship SOCKS support (the socksio package) — update the app. If you still see this, unset ALL_PROXY/HTTPS_PROXY for OmniVoice, or run `uv pip install 'httpx[socks]'` in the backend venv, then restart.",
+    "SSL_HANDSHAKE_FAILURE": "A corporate or antivirus proxy is intercepting HTTPS traffic and re-signing certificates with its own CA — your OS trusts that CA, but Python's bundled certifi CA list doesn't, so the TLS handshake fails even though the connection reached the server. Newer OmniVoice builds trust the OS certificate store at startup (the truststore package), which should already fix this — update the app and retry. If you still see this, add an HTTPS-scanning exclusion for OmniVoice/Python in your antivirus, or ask IT for the proxy's CA bundle and set SSL_CERT_FILE to it, then restart.",
     "UNSUPPORTED_VIDEO_URL": "This link isn't a directly downloadable video. Paste a direct video page (e.g. a youtube.com/watch?v=… or douyin.com/video/<id> link), not a share/profile/feed link — or download the file and drop it in directly.",
     "VIDEO_DOWNLOAD_NETWORK": "The connection to the video server dropped mid-download (often a transient CDN/network blip or a regional rate-limit). Just retry — OmniVoice already cleaned up the partial download. If it keeps failing, check your network/VPN.",
     "BROKEN_VENV": "The Python backend environment was moved or damaged. OmniVoice rebuilds it automatically on the next launch; if it keeps failing, use Clean & Retry on the setup screen.",
+    "MODEL_CACHE_CORRUPT": "The model cache had broken file links — snapshot entries that no longer point at their downloaded data (interrupted renames or antivirus interference can cause this). OmniVoice repairs this automatically and retries the load once. If the error persists, quit OmniVoice, delete the model's models--<org>--<name> folder inside the Hugging Face cache, and restart — the model re-downloads automatically.",
+    # HF_MIRROR_UNREACHABLE has a DYNAMIC hint (it names the configured mirror)
+    # — see hf_mirror_hint(); build_failure special-cases it.
 }
+
+
+# ── HF mirror connectivity (#874) ────────────────────────────────────────────
+# When a non-default HF_ENDPOINT (a mirror, e.g. hf-mirror.com — set via
+# Settings → Models → Hugging Face mirror) is configured and a model
+# download/load fails with a connectivity error, the raw transformers/hf_hub
+# message ("We couldn't connect to 'https://hf-mirror.com' to load the files…")
+# gives the user no next step. This is the single classifier for that class,
+# shared by every surface: build_failure() (model status, dub/task events),
+# the global 500 handler (main.py — covers /generate and every other route
+# that can leak a model-load error), and the model-install SSE
+# (setup/download.py).
+
+_OFFICIAL_HF_ENDPOINTS = {"https://huggingface.co", "https://hf.co"}
+
+# Connectivity signatures across the layers an HF download failure surfaces
+# from: transformers' wording, huggingface_hub errors, requests/urllib3, and
+# raw socket/DNS failures (Linux/macOS/Windows variants).
+_HF_CONNECTIVITY_SIGNATURES = (
+    "couldn't connect to",             # transformers: "We couldn't connect to '<endpoint>' …"
+    "could not connect to",
+    "connection error",                # huggingface_hub / requests
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "max retries exceeded",            # urllib3 via requests
+    "failed to establish a new connection",
+    "name or service not known",       # Linux DNS
+    "temporary failure in name resolution",
+    "nodename nor servname provided",  # macOS DNS
+    "getaddrinfo failed",              # Windows DNS
+    "timed out",
+    "an error happened while trying to locate the file on the hub",  # LocalEntryNotFoundError
+    "we cannot find the requested files",                            # LocalEntryNotFoundError
+    # #1224: a TRUNCATED download — the server closed mid-body, so the client
+    # got fewer bytes than Content-Length promised. httpx words it "peer closed
+    # connection without sending complete message body"; urllib3/http.client
+    # raise IncompleteRead. This is as transient as a refused connection and
+    # must retry — a 4.6 GB model that dies at 4.0 GB used to abort the whole
+    # install (and, on the reporter's 16 GB Mac, take the process with it).
+    "peer closed connection",
+    "incomplete message body",
+    "incompleteread",
+    "incomplete read",
+    "connection broken",               # urllib3 ProtocolError wrapper
+    "response ended prematurely",
+)
+
+# The failure must also be Hugging-Face-shaped — the configured endpoint/host
+# named in the message, or HF-download wording — so a random socket error
+# (e.g. a local LLM provider being down) doesn't get the mirror hint just
+# because a mirror happens to be configured.
+_HF_CONTEXT_MARKERS = (
+    "huggingface",
+    "hf_hub",
+    "hf-hub",
+    "load the files",          # transformers
+    "cached files",            # transformers
+    "the requested files",     # LocalEntryNotFoundError
+    "locate the file on the hub",
+    "snapshot_download",
+)
+
+
+def is_hf_connectivity_error(reason: Optional[str]) -> bool:
+    """True when *reason* looks like a network/connectivity failure of an HF
+    download (DNS, refused/reset connections, timeouts, hub locate errors).
+
+    Signature match only — callers already in a download context (the model
+    install worker, the cache auto-repair, the endpoint failover in
+    services.endpoint_race) don't need the HF-context markers that
+    ``hf_mirror_hint`` requires. Never raises."""
+    low = (reason or "").lower()
+    return any(sig in low for sig in _HF_CONNECTIVITY_SIGNATURES)
+
+
+def configured_hf_mirror() -> str:
+    """The non-default Hugging Face endpoint (mirror) in effect, or "".
+
+    Same resolution the download paths use: ``HF_ENDPOINT`` env (what
+    Settings → Models → Hugging Face mirror persists via user_env, and what
+    the HF libraries read) with the ``hf_endpoint`` pref as fallback
+    (mirrors setup/download.py's ``prefs.resolve``). Never raises.
+    """
+    ep = (os.environ.get("HF_ENDPOINT") or "").strip()
+    if not ep:
+        try:
+            from core import prefs
+
+            ep = str(prefs.get("hf_endpoint", "") or "").strip()
+        except Exception:
+            ep = ""
+    ep = ep.rstrip("/")
+    if not ep or ep.lower() in _OFFICIAL_HF_ENDPOINTS:
+        return ""
+    return ep
+
+
+def hf_mirror_hint(reason: Optional[str]) -> str:
+    """Actionable hint when ``reason`` is an HF-download connectivity failure
+    and a non-default mirror endpoint is configured; "" otherwise.
+
+    The hint names the configured mirror, says it may be down, points at the
+    setting (Settings → Models → Hugging Face mirror; during first-run the
+    wizard renders its own inline picker), and suggests the official endpoint
+    when the model isn't cached yet. Model *downloads* pick up a mirror change
+    immediately (PUT /hf-mirror updates os.environ and the download paths
+    resolve the endpoint per call) — only transformers-side model *loads*,
+    which read HF_ENDPOINT at import time, still need a restart, so restart is
+    framed as the fallback when a retry still fails. Never raises.
+    """
+    mirror = configured_hf_mirror()
+    if not mirror:
+        return ""
+    low = (reason or "").lower()
+    if not is_hf_connectivity_error(low):
+        return ""
+    try:
+        host = (urlsplit(mirror).netloc or "").lower()
+    except Exception:
+        host = ""
+    if not (
+        mirror.lower() in low
+        or (host and host in low)
+        or any(m in low for m in _HF_CONTEXT_MARKERS)
+    ):
+        return ""
+    return (
+        f"Your Hugging Face mirror is set to {mirror}, which couldn't be "
+        "reached — the mirror may be down or blocked on your network. If the "
+        'model isn\'t in your local cache yet, switch to "Hugging Face '
+        '(official)" in Settings → Models → Hugging Face mirror — during '
+        "first-run setup, use the mirror picker right on this screen — or "
+        "wait for the mirror to recover, then retry: downloads pick up a "
+        "mirror change immediately. If a retry still fails after switching, "
+        "restart OmniVoice."
+    )
+
+
+def append_hf_mirror_hint(text: str) -> str:
+    """``"{text} — {hint}"`` when the mirror-connectivity class applies;
+    ``text`` unchanged otherwise. For surfaces that hand a raw error string to
+    the UI (the global 500 handler, the model-install SSE). Never raises."""
+    try:
+        hint = hf_mirror_hint(text)
+    except Exception:
+        return text
+    return f"{text} — {hint}" if hint else text
+
+
+# Classes whose hint is safe to attach on the CONTEXT-FREE surfaces (the
+# global 500 handler in main.py, the model-install SSE in setup/download.py),
+# where all we have is a raw error string with no stage. Only classes whose
+# classify() trigger is unmistakable belong here — e.g. VIDEO_DOWNLOAD_NETWORK
+# must NOT be added: its bare "timed out" trigger would stamp a "video server"
+# hint on a model-load timeout that leaks through the 500 handler.
+_CONTEXT_FREE_HINT_CLASSES = frozenset({
+    "SOCKS_PROXY_SUPPORT_MISSING",
+    "SSL_HANDSHAKE_FAILURE",
+})
+
+
+def append_hint(text: str) -> str:
+    """``"{text} — {hint}"`` for raw-string surfaces (the global 500 handler,
+    the model-install SSE): the dynamic mirror hint (#874) when that class
+    applies, else a context-free static class hint (#959). ``text`` unchanged
+    otherwise — a no-op for every other error. Never raises."""
+    try:
+        hint = hf_mirror_hint(text)
+        if not hint:
+            topic = classify(text)
+            if topic in _CONTEXT_FREE_HINT_CLASSES:
+                hint = _HINTS.get(topic, "")
+    except Exception:
+        return text
+    return f"{text} — {hint}" if hint else text
 
 
 def classify(reason: str) -> str:
@@ -65,12 +252,91 @@ def classify(reason: str) -> str:
     # failure gets its hint rather than falling through to "".
     if "compute type" in low or "efficient float16" in low:
         return "COMPUTE_TYPE_UNSUPPORTED"
-    if "could not import module" in low or "autofeatureextractor" in low:
+    # #763: a bare OS-level EINVAL ("[Errno 22] Invalid argument") while writing
+    # the per-chunk temp WAV for transcription (tempfile.NamedTemporaryFile /
+    # soundfile.write on the system temp dir) used to collapse into a dead-end
+    # "produced no segments. [Errno 22] Invalid argument" toast with no next
+    # step. errno 22 is EINVAL on every platform; in this path it's almost always
+    # a temp dir that's missing, read-only, on a full/removed drive, or blocked
+    # by antivirus. Name the class so build_failure attaches an actionable hint
+    # instead of a raw errno. Matching the errno (not the generic "invalid
+    # argument" wording) keeps this from mislabelling unrelated failures; the
+    # transformers "errno 2" rule below is unaffected — it also requires the
+    # transformers + site-packages markers, which this signature lacks.
+    # #1225: the same errno raised by the DUB video download is a different
+    # class with a different remedy — the failing directory is the job folder
+    # under the OmniVoice data dir, not the system temp dir. Checked first so
+    # a download's errno 22 stops being handed the transcribe path's
+    # "check your TEMP folder" hint, which sends the user to the wrong place.
+    if is_os_write_refusal(reason) and any(
+        marker in low for marker in _DOWNLOAD_CONTEXT_MARKERS
+    ):
+        return "VIDEO_DOWNLOAD_OS_ERROR"
+    if "errno 22" in low:
+        return "OS_INVALID_ARGUMENT"
+    # An HF cache whose snapshot entries don't resolve (dangling symlinks /
+    # zero-byte stand-ins): transformers reports the weights missing ("does
+    # not appear to have a file named pytorch_model.bin or model.safetensors")
+    # even though the blobs are fully on disk. model_manager self-heals this
+    # (delete broken entries → snapshot_download → retry once); the class here
+    # covers both the raw transformers wording (any load surface can leak it)
+    # and OmniVoice's own repair messages, so the user-facing error and the
+    # auto bug report name the class and its automatic repair.
+    if ("does not appear to have a file named" in low
+            or "broken file link" in low):
+        return "MODEL_CACHE_CORRUPT"
+    if (
+        "could not import module" in low
+        or "autofeatureextractor" in low
+        # A corrupted/incomplete transformers install: a model load lazily
+        # resolves a module file that's MISSING from site-packages (an
+        # interrupted `uv sync`, antivirus removal, or a partial update), e.g.
+        # `[Errno 2] No such file or directory:
+        #  '.../site-packages/transformers/models/qwen3/modeling_qwen3.py'`.
+        # That's a FileNotFoundError, not an ImportError, so the matches above
+        # miss it and the user got a useless "try restarting". Substring-match
+        # the package + the missing-file signal (separately, so it works on both
+        # POSIX `/` and Windows `\` paths).
+        or (
+            ("no such file" in low or "errno 2" in low)
+            and "transformers" in low
+            and "site-packages" in low
+        )
+    ):
         return "TRANSFORMERS_IMPORT"
+    # #959: httpx raises ImportError AT CLIENT CONSTRUCTION ("Using SOCKS
+    # proxy, but the 'socksio' package is not installed. Make sure to install
+    # httpx using `pip install httpx[socks]`.") when ALL_PROXY/HTTPS_PROXY is
+    # socks5:// and socksio isn't importable. It surfaced from
+    # huggingface_hub's get_session() inside model load — a bare 500 on
+    # /generate with no next step. Checked BEFORE the HF-auth/mirror rules so
+    # a message that also carries HF wording still names this class.
+    if "socks proxy" in low or "socksio" in low:
+        return "SOCKS_PROXY_SUPPORT_MISSING"
+    # #976: a TLS handshake failing AFTER the TCP connection succeeds — the
+    # signature of a corporate/antivirus proxy that TLS-inspects traffic and
+    # re-signs certificates with a CA the OS trusts but Python's bundled
+    # certifi list doesn't (a different failure mode from #984's TCP-level
+    # "can't reach the host at all"). Requires "ssl" plus a handshake/cert-
+    # verify marker so a generic connection error isn't mislabelled.
+    if "ssl" in low and (
+        "handshake" in low
+        or "certificate verify failed" in low
+        or "sslv3_alert" in low
+        or "sslcertverificationerror" in low
+    ):
+        return "SSL_HANDSHAKE_FAILURE"
     if ("huggingface" in low or "hf_token" in low or "401" in low or "unauthorized" in low) and (
         "token" in low or "auth" in low or "401" in low or "unauthorized" in low
     ):
         return "HF_AUTH_FAILED"
+    # #874: a model download that failed because the CONFIGURED HF mirror is
+    # unreachable. Env-aware by design — the class only exists when a
+    # non-default HF_ENDPOINT is configured. Checked BEFORE the video-download
+    # network class so a model download's "timed out"/"connection reset"
+    # names the mirror instead of the "video server".
+    if hf_mirror_hint(reason):
+        return "HF_MIRROR_UNREACHABLE"
     # Video download (#554/#536): a non-downloadable URL shape vs a transient
     # network drop — both previously surfaced as a bare yt-dlp string with no
     # next step. UNSUPPORTED first (more specific) so "Unable to download video:
@@ -85,6 +351,25 @@ def classify(reason: str) -> str:
         or "timed out" in low
     ):
         return "VIDEO_DOWNLOAD_NETWORK"
+    # #1227: Windows Smart App Control / WDAC / AppLocker refused to load a
+    # file the app needs. Matched on the numeric codes (locale-independent —
+    # the OS translates the message text) plus the English policy phrase.
+    if (
+        "[winerror 4551]" in low
+        or "[winerror 1260]" in low
+        or "application control policy" in low
+    ):
+        return "WINDOWS_APP_CONTROL_BLOCKED"
+    # #1221: libsndfile failed an OS-level audio read/write. Its own wording is
+    # a bare "System error.", so match the library name — audio_io already
+    # prefixes the target path and free space onto the write-path failures.
+    # ``audio_io.AUDIO_WRITE_FAILED_MARKER`` (kept as a literal — core must not
+    # import services). Matching the marker instead of generic wording like
+    # "error opening" keeps a failed MODEL/config/archive open from being handed
+    # the audio remedy, while still classifying the enriched write failures that
+    # no longer carry the word "libsndfile" verbatim.
+    if "libsndfile" in low or "writing the audio file failed" in low:
+        return "AUDIO_IO_FAILED"
     # A relocated/corrupted venv whose interpreter can't bootstrap its stdlib —
     # the Rust self-heal rebuilds it; this names the class for the toast.
     if "no module named 'encodings'" in low:
@@ -170,6 +455,67 @@ def diagnostic(*, reason: str, error_class: str, stage: str) -> str:
     return sanitize(block)
 
 
+# Signatures of the OS refusing a file operation. One list, because two
+# consumers must agree: ``classify`` (which picks the class + hint) and
+# ``dub_pipeline._with_target_facts`` (which decides whether to attach the
+# destination). When they drifted, an ENOENT download classified as a disk
+# problem but never got the folder named — the one fact that would have made
+# the message actionable (#1225 review).
+_OS_WRITE_REFUSAL_SIGNATURES = (
+    "errno 22", "invalid argument",
+    "errno 13", "permission denied",
+    "errno 28", "no space left",
+    "errno 2", "no such file or directory",
+    "unable to open for writing",
+    "unable to rename file",
+)
+
+# Wording that places a failure in the video-download path specifically.
+_DOWNLOAD_CONTEXT_MARKERS = (
+    "unable to download video",
+    "unable to open for writing",
+    "unable to rename file",
+    "yt_dlp",
+    "yt-dlp",
+)
+
+
+def is_os_write_refusal(reason: Optional[str]) -> bool:
+    """True when *reason* looks like the OS refusing a file operation (a full
+    or removed drive, a read-only folder, an antivirus/cloud-sync lock) rather
+    than a network or format failure. Signature match only; never raises."""
+    low = (reason or "").lower()
+    return any(sig in low for sig in _OS_WRITE_REFUSAL_SIGNATURES)
+
+
+def describe_path_target(path: str) -> str:
+    """Observable facts about where we were writing — "the folder does not
+    exist", "the folder is not writable", "1,234 MB free on its drive".
+
+    A bare OS error ("[Errno 22] Invalid argument", "System error.") names
+    neither the target nor the reason, which is what makes those reports
+    un-actionable (#1225). Attaching what we CAN see distinguishes a full
+    drive from a removed one from an antivirus/OneDrive lock. Never raises —
+    diagnosis must never replace the failure being diagnosed.
+    """
+    facts: list[str] = []
+    try:
+        directory = os.path.dirname(os.path.abspath(path)) or "."
+        if not os.path.isdir(directory):
+            facts.append("the folder does not exist")
+        else:
+            if not os.access(directory, os.W_OK):
+                facts.append("the folder is not writable")
+            try:
+                free_mb = shutil.disk_usage(directory).free / (1024 ** 2)
+                facts.append(f"{free_mb:,.0f} MB free on its drive")
+            except OSError:
+                facts.append("free space could not be read")
+    except Exception:
+        return ""
+    return "; ".join(facts)
+
+
 def build_failure(
     exc_or_msg: Any,
     *,
@@ -190,12 +536,15 @@ def build_failure(
 
     reason = sanitize(raw) or error_class
     docs_topic = classify(raw)
+    # HF_MIRROR_UNREACHABLE's hint is dynamic (it names the configured mirror)
+    # so it can't live in the static _HINTS table.
+    hint = hf_mirror_hint(raw) if docs_topic == "HF_MIRROR_UNREACHABLE" else _HINTS.get(docs_topic, "")
     fields: dict[str, Any] = {
         "reason": reason,
         "error": reason,  # backward-compat mirror for older frontends
         "error_class": error_class,
         "stage": stage,
-        "hint": _HINTS.get(docs_topic, ""),
+        "hint": hint,
         "docs_topic": docs_topic,
         "docs_url": error_docs_map.ERROR_DOCS.get(docs_topic, ""),
         "detail": sanitize(raw),

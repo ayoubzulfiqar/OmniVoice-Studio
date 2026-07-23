@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { scrubText, buildBugReportUrl, ISSUES_URL, REDACTED } from './bugReport';
+import { getLastBackendCrash } from './backendCrash';
+
+// #941: keep the real crashAge/describeCrashExit helpers; only the shell
+// bridge is mocked (it resolves null by default, like a non-Tauri context —
+// every pre-existing test keeps its no-crash behavior).
+vi.mock('./backendCrash', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, getLastBackendCrash: vi.fn().mockResolvedValue(null) };
+});
 
 describe('scrubText — frontend twin of backend/core/scrub.py', () => {
   it.each([
@@ -25,16 +34,50 @@ describe('scrubText — frontend twin of backend/core/scrub.py', () => {
     expect(out).toContain(REDACTED);
   });
 
-  it.each([['hf_hub'], ['sk-learn'], ['ghp_x']])(
-    'leaves short identifier %s alone',
-    (benign) => {
-      expect(scrubText(`import error in ${benign}`)).toContain(benign);
-    },
-  );
+  it.each([['hf_hub'], ['sk-learn'], ['ghp_x']])('leaves short identifier %s alone', (benign) => {
+    expect(scrubText(`import error in ${benign}`)).toContain(benign);
+  });
 
   it('handles null/undefined', () => {
     expect(scrubText(null)).toBe('');
     expect(scrubText(undefined)).toBe('');
+  });
+
+  // ── Hardening regressions (diagnostics audit) ──────────────────────────
+  it.each([['c:\\users\\john\\log.txt'], ['C:\\Users\\john\\log.txt'], ['C:/USERS/john/log.txt']])(
+    'redacts Windows home regardless of case: %s',
+    (raw) => {
+      expect(scrubText(raw)).not.toContain('john');
+    },
+  );
+
+  // Built from low-entropy parts so they match the scrubber's shape without
+  // tripping GitHub push-protection secret scanning.
+  it.each([
+    [`eyJ${'a'.repeat(20)}.${'b'.repeat(20)}.${'c'.repeat(20)}`], // JWT
+    [`AIza${'B'.repeat(35)}`], // Google
+    [`xox${'b-'}${'C'.repeat(20)}`], // Slack
+    [`AKIA${'D'.repeat(16)}`], // AWS
+  ])('redacts broadened credential shape %s', (secret) => {
+    expect(scrubText(`error: ${secret}`)).not.toContain(secret);
+  });
+
+  it('redacts a URL query secret value but keeps the param name', () => {
+    const out = scrubText('GET https://h/api?token=supersecretvalue12345&x=1');
+    expect(out).not.toContain('supersecretvalue12345');
+    expect(out).toContain('token=');
+    expect(out).toContain('x=1');
+  });
+});
+
+describe('buildBugReportUrl — encoded length ceiling', () => {
+  it('keeps the ENCODED body under the ceiling even when the raw body is dense', async () => {
+    // A body full of chars that expand under encodeURIComponent (newlines,
+    // spaces, backticks) must still yield a URL comfortably under ~8k.
+    const error = new Error('x'.repeat(200));
+    error.stack = `${'trace line with spaces\n'.repeat(500)}`;
+    const url = await buildBugReportUrl({ error });
+    expect(url.length).toBeLessThan(8000);
   });
 });
 
@@ -72,14 +115,115 @@ describe('buildBugReportUrl', () => {
   });
 });
 
+describe('buildBugReportUrl — crash-marker enrichment (#941)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    getLastBackendCrash.mockResolvedValue(null);
+  });
+
+  it('attaches the crash evidence (exit code + scrubbed stderr tail)', async () => {
+    getLastBackendCrash.mockResolvedValue({
+      ts: Math.floor(Date.now() / 1000) - 30,
+      exit_code: 3221226505,
+      signal: null,
+      exit_desc: 'exit code: 3221226505',
+      backend_version: '0.3.10',
+      uptime_s: 42,
+      last_stderr:
+        'File "/Users/alice/omnivoice/backend/main.py", line 1\nOSError: paging file too small',
+      acknowledged: true, // acked markers still ride along — ack ≠ delete
+    });
+    const body = decodeURIComponent(await buildBugReportUrl());
+    expect(body).toContain('## Last backend crash');
+    expect(body).toContain('exit code 3221226505');
+    expect(body).toContain('**Uptime before crash:** 42 s');
+    // Home paths in the stderr tail are scrubbed like every other section.
+    expect(body).toContain('~/omnivoice/backend/main.py');
+    expect(body).not.toContain('/Users/alice');
+  });
+
+  it('omits the section entirely when no crash was ever recorded', async () => {
+    const body = decodeURIComponent(await buildBugReportUrl());
+    expect(body).not.toContain('## Last backend crash');
+  });
+
+  it('keeps the newest end of an oversized stderr tail and stays under the URL ceiling', async () => {
+    getLastBackendCrash.mockResolvedValue({
+      ts: Math.floor(Date.now() / 1000),
+      exit_code: 1,
+      signal: null,
+      exit_desc: 'exit status: 1',
+      backend_version: '0.3.10',
+      uptime_s: 1,
+      last_stderr: `${'boot noise line\n'.repeat(400)}THE REAL TRACEBACK LINE`,
+      acknowledged: false,
+    });
+    const url = await buildBugReportUrl();
+    const body = decodeURIComponent(url);
+    expect(body).toContain('THE REAL TRACEBACK LINE'); // tail kept, head dropped
+    expect(url.length).toBeLessThan(8000);
+  });
+});
+
+describe('buildBugReportUrl — backend reachability section (#1164)', () => {
+  beforeEach(async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    getLastBackendCrash.mockResolvedValue(null);
+    const { _resetBackendContactForTests } = await import('./backendContact');
+    _resetBackendContactForTests();
+  });
+
+  it('reports deployment mode and "never answered" when there was no contact', async () => {
+    const body = decodeURIComponent(await buildBugReportUrl());
+    expect(body).toContain('## Backend reachability');
+    expect(body).toContain('**Deployment mode:** `dev`'); // vitest = DEV, no Tauri
+    expect(body).toContain('none this session');
+  });
+
+  it('reports the cached last contact even while the backend is down', async () => {
+    const { recordBackendContact } = await import('./backendContact');
+    recordBackendContact(Date.now() - 4000);
+    const body = decodeURIComponent(await buildBugReportUrl());
+    expect(body).toMatch(/\*\*Last backend response:\*\* \d+ s before this report/);
+  });
+
+  it('includes the transport ApiError diagnostics when the report is built from one', async () => {
+    const err = new Error("Can't reach the local OmniVoice backend");
+    err.detail = {
+      transport: 'Failed to fetch /Users/alice/x',
+      mode: 'server',
+      lastContactMs: null,
+      firstFailureTs: 1_700_000_000_000,
+      attempts: 4,
+    };
+    const body = decodeURIComponent(await buildBugReportUrl({ error: err }));
+    expect(body).toContain('**Attempts before giving up:** 4');
+    expect(body).toContain('**Mode at failure time:** `server`');
+    expect(body).toContain('**First failure:** 2023-11-14');
+    // Scrubbed like every other section.
+    expect(body).toContain('~/x');
+    expect(body).not.toContain('/Users/alice');
+  });
+
+  it('stays under the URL ceiling with the extra section', async () => {
+    const err = new Error('boom');
+    err.stack = 'at frame\n'.repeat(5000);
+    err.detail = { transport: 'x'.repeat(5000), mode: 'dev', attempts: 4 };
+    const url = await buildBugReportUrl({ error: err });
+    expect(url.length).toBeLessThan(8000);
+  });
+});
+
 describe('buildIssueSearchUrl', () => {
   it('builds a scrubbed, noise-free search query', async () => {
     const { buildIssueSearchUrl } = await import('./bugReport');
-    const url = buildIssueSearchUrl(new Error('CUDA error 700 at /home/eve/cache: illegal memory access'));
+    const url = buildIssueSearchUrl(
+      new Error('CUDA error 700 at /home/eve/cache: illegal memory access'),
+    );
     const q = decodeURIComponent(url.split('q=')[1]);
     expect(url).toContain('github.com/debpalash/OmniVoice-Studio/issues?q=');
     expect(q).toContain('CUDA error');
-    expect(q).not.toContain('700');       // machine-specific noise stripped
+    expect(q).not.toContain('700'); // machine-specific noise stripped
     expect(q).not.toContain('/home/eve'); // scrubbed + punctuation-stripped
   });
 

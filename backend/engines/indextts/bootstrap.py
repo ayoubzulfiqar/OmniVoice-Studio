@@ -41,9 +41,7 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -56,6 +54,16 @@ INDEXTTS_SIDECAR_SCRIPT: Path = Path(__file__).parent / "main.py"
 # Path to this package's owned venv (Probe 2). The IndexTTS clone, when
 # bootstrapped, is installed into this venv via ``uv pip install -e``.
 _ENGINES_VENV_DIR: Path = Path(__file__).parent / ".venv"
+
+
+def _uv_env() -> "dict[str, str] | None":
+    """uv cache co-location for installs on a non-system volume (D:-drive /
+    portable installs): without it uv stages every wheel on the system drive
+    and cross-volume COPIES it into the venv. Canonical logic lives in
+    services.sidecar_install.uv_subprocess_env (lazy import, like _locate_uv).
+    """
+    from services.sidecar_install import uv_subprocess_env
+    return uv_subprocess_env(_ENGINES_VENV_DIR.parent.parent)
 
 # Per-process resolution cache. Cleared by :func:`invalidate` for tests.
 _resolved_python: Optional[Path] = None
@@ -145,11 +153,12 @@ def _venv_python_path(venv_dir: Path) -> Path:
     """Return the python executable path inside a venv directory.
 
     Handles the Unix (``bin/python``) vs Windows (``Scripts/python.exe``)
-    layout. No filesystem access — caller checks .is_file().
+    layout. No filesystem access — caller checks .is_file(). Delegates to
+    the canonical implementation in :mod:`services.sidecar_install` so the
+    cross-platform venv-layout rule lives in exactly one place.
     """
-    if sys.platform == "win32":
-        return venv_dir / "Scripts" / "python.exe"
-    return venv_dir / "bin" / "python"
+    from services.sidecar_install import _venv_python
+    return _venv_python(venv_dir)
 
 
 def _probe_paths() -> list[Path]:
@@ -189,14 +198,14 @@ def _venv_can_import_indextts(python_path: Path) -> bool:
 
 
 def _locate_uv() -> Optional[str]:
-    """Find the uv binary — bundled first (Tauri-set env var), else PATH."""
-    bundled = os.environ.get("OMNIVOICE_BUNDLED_UV")
-    if bundled and Path(bundled).is_file():
-        return bundled
-    sys_uv = shutil.which("uv")
-    if sys_uv:
-        return sys_uv
-    return None
+    """Find the uv binary — bundled first (Tauri-set env var), else PATH.
+
+    Delegates to :mod:`services.sidecar_install`'s canonical resolver so the
+    bundled-uv contract (env var name, precedence) can't drift between this
+    lazy bootstrap and the one-click installer.
+    """
+    from services.sidecar_install import _locate_uv as _canonical_locate_uv
+    return _canonical_locate_uv()
 
 
 def _bootstrap_engines_venv(indextts_clone: Path) -> Path:
@@ -229,6 +238,7 @@ def _bootstrap_engines_venv(indextts_clone: Path) -> Path:
             check=True,
             timeout=_UV_VENV_TIMEOUT_S,
             capture_output=True,
+            env=_uv_env(),
         )
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
@@ -247,6 +257,7 @@ def _bootstrap_engines_venv(indextts_clone: Path) -> Path:
             check=True,
             timeout=_UV_PIP_INSTALL_TIMEOUT_S,
             capture_output=True,
+            env=_uv_env(),
         )
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(

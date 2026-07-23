@@ -22,8 +22,153 @@ ingestion, the streaming synth job + UI are deferred follow-ups.
 
 from __future__ import annotations
 
+import json
+import zlib
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+
+
+#: Mix constant for the per-occurrence seed nonce (#1208) — a large odd
+#: multiplier (Knuth) so occurrence 0/1/2 land in well-separated regions of the
+#: 2**31 seed space instead of adjacent integers.
+_NONCE_MIX = 2654435761
+
+
+def segment_seed(base_seed: int, text: str, nonce: int = 0) -> int:
+    """Deterministic RNG seed for one longform synthesis call (#1139).
+
+    A voice profile's pinned ``seed`` (locked takes, design profiles) makes
+    ``/generate`` reproducible, but the longform path used to fetch the seed
+    and never apply it — book renders were unseeded, so a profile pinned for
+    consistency still drifted between fresh renders. Deriving the per-call
+    seed from ``base_seed`` + a CRC of the chunk text mirrors ``/generate``'s
+    per-chunk decorrelation (``used_seed + i``) while staying order- and
+    cache-independent: a partially cached chapter re-renders its missing
+    segments with the exact seeds a full render would have used. Pure —
+    torch-free — so the router's synth wrappers stay unit-testable.
+
+    Text-keyed on purpose: identical repeated lines get identical takes.
+    That is already the longform pipeline's shipped semantic — the
+    content-addressed SegmentCache (longform_render.segment_cache_key hashes
+    text + voice sig, not position) replays one WAV for every identical span
+    — and it only applies when the user pinned a seed, i.e. asked for
+    reproducibility. Position-based keys would break it: inserting one
+    paragraph would shift every later span's seed, so a partial re-render
+    after an edit would no longer match the original render.
+
+    ``nonce`` (default 0 — the shipped text-keyed behaviour, byte-identical)
+    is the cache opt-out lever (#1208): when the user asks to *vary repeated
+    lines*, the synth wrapper feeds a per-occurrence nonce so each repeat of an
+    identical pinned-seed line gets a distinct-but-deterministic seed instead
+    of replaying one take.
+    """
+    return (int(base_seed) + zlib.crc32(text.encode("utf-8")) + int(nonce) * _NONCE_MIX) % (2**31)
+
+
+@dataclass(frozen=True)
+class ExpressiveOptions:
+    """Optional expressive/quality knobs for a longform render (#1208).
+
+    Every field is ``None``/``False`` by default, and a default instance means
+    *reproduce today's bytes exactly*: the audiobook/longform path renders at
+    its documented quality preset (num_step 32, guidance 2.0, model-default
+    temperatures, postprocess on) with no emotion and the shipped
+    content-addressed caching. Any non-default field is folded into every cache
+    signature via :meth:`cache_signature` (chapter cache, segment cache, and the
+    preview cache all consume it) so a changed setting can never silently replay
+    stale audio — the whole point of the CRITICAL TRAP guard.
+
+    ``emo_*`` reach only engines that understand them (IndexTTS2) through the
+    generic synth closure; the OmniVoice model rejects unknown config kwargs, so
+    the omnivoice path forwards only the sampling knobs. ``vary_repeats`` is the
+    cache opt-out: identical lines get distinct takes.
+    """
+
+    num_step: Optional[int] = None
+    guidance_scale: Optional[float] = None
+    position_temperature: Optional[float] = None
+    class_temperature: Optional[float] = None
+    postprocess_output: Optional[bool] = None
+    seed: Optional[int] = None
+    emo_vector: Optional[tuple] = None
+    emo_text: Optional[str] = None
+    emo_alpha: Optional[float] = None
+    vary_repeats: bool = False
+
+    @property
+    def is_default(self) -> bool:
+        """True when every knob is untouched → today's exact render + caching."""
+        return self == ExpressiveOptions()
+
+    def cache_signature(self) -> str:
+        """Deterministic content string folded into every cache key. Empty for a
+        default instance (so unset → byte-identical keys to pre-#1208). Includes
+        EVERY field, so a future forgotten knob still perturbs the key (the
+        regression test loops over the fields asserting each changes this)."""
+        if self.is_default:
+            return ""
+        payload = {
+            "num_step": self.num_step,
+            "guidance_scale": self.guidance_scale,
+            "position_temperature": self.position_temperature,
+            "class_temperature": self.class_temperature,
+            "postprocess_output": self.postprocess_output,
+            "seed": self.seed,
+            "emo_vector": list(self.emo_vector) if self.emo_vector else None,
+            "emo_text": self.emo_text,
+            "emo_alpha": self.emo_alpha,
+            "vary_repeats": self.vary_repeats,
+        }
+        return json.dumps(payload, sort_keys=True, ensure_ascii=False)
+
+    def to_manifest(self) -> dict:
+        """JSON-safe dict for the durable resume manifest (emo_vector → list)."""
+        return {
+            "num_step": self.num_step,
+            "guidance_scale": self.guidance_scale,
+            "position_temperature": self.position_temperature,
+            "class_temperature": self.class_temperature,
+            "postprocess_output": self.postprocess_output,
+            "seed": self.seed,
+            "emo_vector": list(self.emo_vector) if self.emo_vector else None,
+            "emo_text": self.emo_text,
+            "emo_alpha": self.emo_alpha,
+            "vary_repeats": self.vary_repeats,
+        }
+
+    @classmethod
+    def from_manifest(cls, data: Optional[dict]) -> "ExpressiveOptions":
+        """Rebuild from a resume manifest dict (unknown keys ignored)."""
+        if not data:
+            return cls()
+        ev = data.get("emo_vector")
+        return cls(
+            num_step=data.get("num_step"),
+            guidance_scale=data.get("guidance_scale"),
+            position_temperature=data.get("position_temperature"),
+            class_temperature=data.get("class_temperature"),
+            postprocess_output=data.get("postprocess_output"),
+            seed=data.get("seed"),
+            emo_vector=tuple(ev) if ev else None,
+            emo_text=data.get("emo_text"),
+            emo_alpha=data.get("emo_alpha"),
+            vary_repeats=bool(data.get("vary_repeats", False)),
+        )
+
+
+def voice_map_signature(voice_map: Optional[dict]) -> str:
+    """Deterministic cache-key fragment for a name→profile voice map (#1217).
+
+    A longform render can carry a ``voice_map`` (``[voice:NAME]`` → profile id);
+    remapping a name must re-render, so the map is folded into every cache key
+    exactly like :meth:`ExpressiveOptions.cache_signature`. Empty for
+    ``None``/``{}`` (so an absent map keeps today's byte-identical keys and
+    existing books never re-render); else canonical JSON over string keys."""
+    if not voice_map:
+        return ""
+    return json.dumps({str(k): v for k, v in voice_map.items()},
+                      sort_keys=True, ensure_ascii=False)
+
 
 @dataclass
 class Span:
@@ -101,15 +246,23 @@ def synthesize_chapter(
     *,
     crossfade_ms: int = 50,
     lexicon: Optional[dict] = None,
+    segment_cache: Optional["object"] = None,
 ):
     """Render a chapter's spans to one waveform via an injected ``synth``.
 
-    ``synth(text, voice_id, speed)`` returns a 1-D float32 audio tensor for a
-    span of text in the given voice (``speed`` may be ``None`` for the engine
-    default). Long spans are split with the ``chunked_tts`` splitter and
+    ``synth(text, voice_id, speed)`` returns a float32 audio tensor — 1-D
+    ``(samples,)`` or ``(channels, samples)``; real engines emit ``(1, samples)``
+    per the ``TTSBackend`` contract (#897) — for a span of text in the given
+    voice (``speed`` may be ``None`` for the engine default). Long spans are split with the ``chunked_tts`` splitter and
     crossfaded; inter-span ``pause_ms_after`` becomes silence. ``lexicon`` (when
     given) respells each span's text before chunking so the engine pronounces
     tricky words correctly; a ``None``/empty lexicon is a no-op pass-through.
+    ``segment_cache`` (when given — a :class:`services.longform_render.
+    SegmentCache`) is consulted per spoken span: a cached segment WAV is reused
+    instead of synthesizing, and every freshly rendered span is stored the
+    moment it finishes — so a one-sentence edit re-renders one segment and an
+    interrupted chapter resumes from its finished segments. Pauses are
+    synthesized silence and never touch the cache.
 
     Returns ``(audio_tensor, duration_seconds)``. torch + chunked_tts are
     imported lazily so this module stays import-light for the pure parser path.
@@ -118,23 +271,50 @@ def synthesize_chapter(
     from services.chunked_tts import concatenate_audio_chunks, split_text_into_chunks
     from services.pronunciation import apply_lexicon
 
-    parts: list = []
+    items: list = []  # ("a", tensor) for audio, ("s", n_samples) for silence
+    # Per-occurrence index for identical spans (#1208 cache opt-out). The
+    # segment cache folds it into its key ONLY when vary_repeats is on (else
+    # the key is byte-identical to pre-#1208), so a repeated identical line
+    # gets a distinct cache slot — and therefore a distinct take — instead of
+    # replaying one WAV. Always computed (cheap); inert when the cache ignores it.
+    occ_counts: dict = {}
     for span in spans:
         if span.text:
-            chunks = split_text_into_chunks(apply_lexicon(span.text, lexicon))
-            rendered = [synth(c, span.voice_id, span.speed) for c in chunks]
-            rendered = [r for r in rendered if r is not None and getattr(r, "numel", lambda: 0)()]
-            if len(rendered) == 1:
-                parts.append(rendered[0])
-            elif rendered:
-                parts.append(concatenate_audio_chunks(rendered, sample_rate, crossfade_ms=crossfade_ms))
+            occ_key = (span.voice_id, span.text, getattr(span, "speed", None))
+            occ = occ_counts.get(occ_key, 0)
+            occ_counts[occ_key] = occ + 1
+            audio = segment_cache.load(span, nonce=occ) if segment_cache is not None else None
+            if audio is None:
+                chunks = split_text_into_chunks(apply_lexicon(span.text, lexicon))
+                rendered = [synth(c, span.voice_id, span.speed) for c in chunks]
+                rendered = [r for r in rendered if r is not None and getattr(r, "numel", lambda: 0)()]
+                if len(rendered) == 1:
+                    audio = rendered[0]
+                elif rendered:
+                    audio = concatenate_audio_chunks(rendered, sample_rate, crossfade_ms=crossfade_ms)
+                if audio is not None and segment_cache is not None:
+                    segment_cache.store(span, audio, nonce=occ)
+            if audio is not None:
+                items.append(("a", audio))
         if span.pause_ms_after > 0:
             n = int(sample_rate * span.pause_ms_after / 1000.0)
             if n > 0:
-                parts.append(torch.zeros(n, dtype=torch.float32))
+                items.append(("s", n))
 
-    if not parts:
+    if not items:
         return torch.zeros(0, dtype=torch.float32), 0.0
+    # Engines return (1, samples) per the TTSBackend contract while a bare
+    # zeros(n) is 1-D — mixing the two crashed the final concat (#897). So
+    # materialize inter-span silence AFTER the loop, matching the rendered
+    # audio's channel dims / dtype / device (same pattern as generation.py's
+    # _render_with_pauses). A silence-only chapter stays 1-D float32 as before.
+    ref = next((t for kind, t in items if kind == "a"), None)
+    parts: list = [
+        val if kind == "a"
+        else (torch.zeros(val, dtype=torch.float32) if ref is None
+              else torch.zeros(*ref.shape[:-1], val, dtype=ref.dtype, device=ref.device))
+        for kind, val in items
+    ]
     # Hard-concat spans + silences (crossfading silence would bleed the gap).
     audio = parts[0] if len(parts) == 1 else concatenate_audio_chunks(parts, sample_rate, crossfade_ms=0)
     return audio, audio.shape[-1] / float(sample_rate)

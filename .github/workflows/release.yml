@@ -43,7 +43,7 @@ on:
         required: false
         default: "true"
       publish_preview:
-        description: "Publish a rolling 'preview' prerelease (updater Preview channel) from the selected branch"
+        description: "Publish a rolling 'preview' prerelease (updater Preview channel). Previews ALWAYS build from main — dispatching from any other branch fails the preview-gate."
         required: false
         type: boolean
         default: false
@@ -148,6 +148,15 @@ jobs:
           set -euo pipefail
           event="${{ github.event_name }}"
           if [ "$event" = "schedule" ] || { [ "$event" = "workflow_dispatch" ] && [ "${{ inputs.publish_preview }}" = "true" ]; }; then
+            # Preview channel policy (owner-set 2026-07-16): previews ALWAYS
+            # build from main. The preview updater manifest and the Docker
+            # rolling tags (:latest/:main/:rocm) all track main — a preview
+            # cut from a side branch would desync the channels and could
+            # ship code that never merged. Merge to main first.
+            if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+              echo "::error::Preview builds publish from main only (got '${{ github.ref }}'). Merge to main, then dispatch with publish_preview=true."
+              exit 1
+            fi
             echo "is_preview=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_preview=false" >> "$GITHUB_OUTPUT"
@@ -190,6 +199,14 @@ jobs:
           # backlog that motivated the original drop is contained by
           # fail-fast:false — a slow Intel leg can delay the release run but
           # can't fail the other targets.
+          #
+          # #889 (2026-07): Intel macOS is now UNSUPPORTED for the local
+          # backend — torch ≥2.3 ships no macOS x86_64 wheels, so the venv
+          # bootstrap can never succeed on Intel. The shipped x64 artifact is
+          # effectively UI-only (usable with a remote backend); the app now
+          # pre-fails first-run bootstrap with an honest message on Intel.
+          # Whether to keep shipping this x64 leg (UI-only) or drop it is an
+          # OWNER CALL — deliberately not changed in the #889 PR.
           - os: macos-15-intel
             arch: x86_64-apple-darwin
             label: "macOS Intel"
@@ -205,13 +222,24 @@ jobs:
             bundles: "msi,updater"
 
           # Linux: ship .AppImage only. AppImage is universal (no distro
-          # package-manager dep), runs on any glibc-2.31+ host, and is the
+          # package-manager dep), runs on any glibc-2.39+ host, and is the
           # Linux auto-update target. The .deb target was dropped: tauri-bundler
           # fails it with "Failed to create control scripts: No such file or
           # directory" (no custom deb config of ours is at fault) — revisit on a
           # tauri-cli bump. FUSE unavailability on GH runners is handled via
           # APPIMAGE_EXTRACT_AND_RUN=1.
-          - os: ubuntu-22.04
+          #
+          # Bumped from ubuntu-22.04 → ubuntu-24.04 (#961): the AppImage
+          # bundles whatever `libwebkit2gtk-4.1-dev` the build runner's apt
+          # repos resolve (see the "Linux system deps" step below) — 22.04's
+          # was meaningfully stale relative to what current Ubuntu/Fedora
+          # ship, and AppRun's LD_LIBRARY_PATH makes that bundled, stale copy
+          # take priority over a healthy system WebKitGTK at runtime. Raises
+          # the AppImage's glibc floor from 2.35 to 2.39 — pre-2022 distros
+          # (Ubuntu <22.04, Debian <12) lose support; no report of anyone on
+          # something that old has come in, and the project's own install
+          # docs already assume Debian 12 / Ubuntu 22.04+.
+          - os: ubuntu-24.04
             arch: x86_64-unknown-linux-gnu
             label: "Linux x64"
             rust_target: x86_64-unknown-linux-gnu
@@ -491,6 +519,12 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Analytics destination, injected at BUILD time (never committed — a
+          # token-shaped literal in the repo trips the secret scanner, and the
+          # frontend bundle is where a publishable client key belongs). Absent =>
+          # the build has no destination, the Privacy toggle isn't offered, and
+          # nothing can be sent. Analytics still requires the user to opt in.
+          VITE_POSTHOG_KEY: ${{ secrets.POSTHOG_PROJECT_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # macOS Apple signing (#134 / #72) is configured by the preceding
@@ -516,7 +550,9 @@ jobs:
           # Every other invocation — crucially the `v*` tag-push stable release
           # — evaluates these expressions to exactly their prior values.
           tagName: ${{ (needs.preview-gate.outputs.is_preview == 'true') && 'preview' || github.ref_name }}
-          releaseName: ${{ (needs.preview-gate.outputs.is_preview == 'true') && 'OmniVoice Studio (Preview)' || format('OmniVoice Studio {0}', github.ref_name) }}
+          # Version-first so the tag is readable in GitHub's truncated
+          # release-list sidebar (which clips the title mid-string).
+          releaseName: ${{ (needs.preview-gate.outputs.is_preview == 'true') && 'Preview — OmniVoice Studio' || format('{0} — OmniVoice Studio', github.ref_name) }}
           releaseBody: ${{ steps.changelog.outputs.body }}
           releaseDraft: ${{ (needs.preview-gate.outputs.is_preview == 'true') && 'false' || (inputs.draft || 'true') }}
           prerelease: ${{ needs.preview-gate.outputs.is_preview == 'true' }}
@@ -697,6 +733,103 @@ jobs:
           files: ${{ steps.checksums.outputs.checksums_file }}
           fail_on_unmatched_files: true
 
+  # ── Uninstall scripts as release assets (#1089) ───────────────────────────
+  # The in-app uninstaller (Settings → Storage → Remove all data) is the primary
+  # path, but a user who wants to clean up WITHOUT launching the app — or after
+  # already deleting it — has no repo to run scripts/uninstall.sh from. Ship the
+  # two scripts alongside the installers so they're one download away.
+  #
+  # MUST use `gh release upload` (attach to the EXISTING release), NOT
+  # softprops/action-gh-release: a second softprops publish races tauri-action's
+  # per-matrix draft and splits the platform installers across two releases for
+  # the tag (v0.3.20 shipped with only the Linux AppImage that way). `needs:
+  # [build]` guarantees the release already exists; `--clobber` makes a re-run
+  # idempotent. This can never create a second release.
+  uninstall-scripts:
+    needs: [build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Attach uninstall scripts to the existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            scripts/uninstall.sh scripts/uninstall.ps1 \
+            --clobber --repo "${{ github.repository }}"
+
+  # ── Contributors avatar strip on STABLE releases ──────────────────────────
+  # Stable v* releases keep their curated CHANGELOG body + the per-platform
+  # checksums; this appends ONE "## Contributors" avatar strip crediting every
+  # PR author for the tag — including the owner — the courtesy the preview
+  # channel already gets (preview-notes job). It closes the gap where stable
+  # releases credited nobody.
+  #
+  # Two things the naive version got wrong (fixed here):
+  #   1. RANK by contribution. Authors are ordered by merged-PR count for the
+  #      tag (descending, ties broken by handle), not alphabetically — the
+  #      owner with 30+ PRs should not sort under a one-PR contributor.
+  #   2. Exactly ONE section. GitHub auto-renders its OWN "Contributors" widget
+  #      from any plain `@handle` TEXT mention in the body (the CHANGELOG's
+  #      "— thanks @user!" credits → `mentions_count`), which duplicates ours
+  #      and can't be ranked or include the owner. We neutralise those inline
+  #      text mentions in the RELEASE body only (`thanks @u` → `thanks u`; the
+  #      repo CHANGELOG keeps the @handles) so GitHub renders no native widget —
+  #      our ranked strip's @handles live in HTML attributes, which GitHub does
+  #      not count as mentions, so the linked avatars stay clickable.
+  #
+  # MUST append via `gh release edit` on the EXISTING release (never a second
+  # softprops publish — that races tauri-action's per-matrix draft and splits
+  # installers across two releases; see uninstall-scripts). `needs: [build]`
+  # guarantees the release + all checksum appends already landed, and this job
+  # is single (no matrix) so there is no write race. Idempotent: it strips any
+  # prior "## Contributors" block before re-appending, so re-runs don't stack.
+  contributors-strip:
+    needs: [build]
+    if: >-
+      github.event_name == 'push'
+      && startsWith(github.ref, 'refs/tags/v')
+      && !contains(github.ref, '-')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Append ranked Contributors avatar strip to the stable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          NOTES=$(gh api --method POST "repos/$REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body)
+          # Rank PR authors by merged-PR count (desc), ties broken by handle.
+          RANKED=$(printf '%s\n' "$NOTES" | grep -oE 'by @[A-Za-z0-9-]+' | sed 's/^by @//' \
+                     | sort | uniq -c | sort -k1,1nr -k2,2 | awk '{print $2}' || true)
+          if [ -z "$RANKED" ]; then
+            echo "No PR-author handles in the generated notes for $TAG — nothing to append."
+            exit 0
+          fi
+          # Current body: drop any prior Contributors block (idempotent re-runs;
+          # the strip is always the tail, and checksum sections use '### '
+          # headers so they never match), then neutralise inline @thanks so
+          # GitHub renders no duplicate native contributors widget.
+          BODY=$(gh release view "$TAG" --repo "$REPO" --json body --jq .body)
+          BODY=$(printf '%s\n' "$BODY" | sed '/^## Contributors$/,$d' | sed 's/thanks @/thanks /g')
+          {
+            printf '%s' "$BODY"
+            printf '\n## Contributors\n\nThank you all 💜\n\n'
+            while IFS= read -r h; do
+              [ -z "$h" ] && continue
+              printf '<a href="https://github.com/%s" title="@%s"><img src="https://github.com/%s.png?size=64" width="48" alt="@%s"/></a> ' "$h" "$h" "$h" "$h"
+            done <<< "$RANKED"
+            printf '\n'
+          } > /tmp/stable-notes.md
+          gh release edit "$TAG" --repo "$REPO" --notes-file /tmp/stable-notes.md
+          echo "Appended ranked Contributors strip ($(printf '%s' "$RANKED" | tr '\n' ' ')) to $TAG."
+
   # ── Auto-generated preview release notes ──────────────────────────────────
   # tauri-action publishes the rolling `preview` release with the plain
   # changelog-fallback body ("Auto-generated release for main…"). Replace it
@@ -770,13 +903,18 @@ jobs:
           print(f"preview manifest OK: {v} platforms={sorted(pk)}")
           PY
 
-  # ── Post-release version bump (versioning hard rule, owner-set 2026-06-11) ──
-  # main is always last-release + 1 patch. The moment a stable v* tag is
-  # released, bump the three version sources on main to the next patch so every
-  # PR and preview build identifies as the next version. Pushes directly to
-  # main with the workflow token (a metadata-only commit; CI runs on PRs).
+  # ── Post-release version bump (OWNER-GATED as of 2026-07-01) ──────────────
+  # Previously auto-ran after every stable v* tag to keep main = release + 1.
+  # The owner now controls bumps manually ("keep 0.3.8; I say when to bump"), so
+  # this job is OPT-IN: it runs ONLY when the repo variable AUTO_VERSION_BUMP is
+  # set to 'true' (Settings → Secrets and variables → Actions → Variables).
+  # Unset/anything-else → main stays at whatever it is after release. Re-enable
+  # by setting the variable; disable again by unsetting it.
   version-bump:
-    if: github.event_name == 'push' && github.ref_type == 'tag' && !contains(github.ref, '-')
+    if: >-
+      github.event_name == 'push' && github.ref_type == 'tag'
+      && !contains(github.ref, '-')
+      && vars.AUTO_VERSION_BUMP == 'true'
     runs-on: ubuntu-22.04
     permissions:
       contents: write

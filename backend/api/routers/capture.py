@@ -18,7 +18,7 @@ import os
 import tempfile
 import time
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from typing import Optional
 
 router = APIRouter()
@@ -79,6 +79,20 @@ async def transcribe_audio(
 
         use_accurate = (mode or "").strip().lower() == "accurate"
 
+        # TTS-only install: no ASR model on disk → typed 409 with a download
+        # CTA, BEFORE any backend is constructed (the whisper backends
+        # auto-download multi-GB weights from HF on first load).
+        from services.asr_backend import asr_model_missing_detail, asr_model_missing_error
+        missing = await asyncio.to_thread(
+            asr_model_missing_error,
+            purpose="transcribe" if use_accurate else "dictation",
+        )
+        if missing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={**missing, "message": asr_model_missing_detail(missing)},
+            )
+
         def _run():
             if use_accurate:
                 # Accurate mode: full WhisperX with forced alignment —
@@ -96,9 +110,17 @@ async def transcribe_audio(
             return result, backend.id
 
         from services.model_manager import _gpu_pool
-        loop = asyncio.get_running_loop()
+        from services.asr_backend import ASRTimeoutError, run_transcribe_guarded
         t0 = time.perf_counter()
-        result, engine_id = await loop.run_in_executor(_gpu_pool, _run)
+        try:
+            result, engine_id = await run_transcribe_guarded(
+                _gpu_pool, _run, what="Dictation",
+            )
+        except ASRTimeoutError as e:
+            # Backend is alive — ASR couldn't finish. 504 with guidance, not a
+            # silent hang the UI reads as "can't reach the local backend".
+            logger.warning("Capture transcription timed out: %s", e)
+            raise HTTPException(status_code=504, detail=str(e))
         elapsed = round(time.perf_counter() - t0, 2)
 
         # Normalize result shape
@@ -111,6 +133,15 @@ async def transcribe_audio(
         # Segments keep the raw recognition so their timings stay truthful.
         from services.refinement import collapse_repetitive_artifacts
         full_text = collapse_repetitive_artifacts(full_text)
+
+        # Cross-transport parity: deterministically polish the final text
+        # (leading capital + terminal punctuation) exactly like the live
+        # dictation socket (capture_ws) does, so the widget's POST fallback and
+        # MCP/CLI callers get the same typed-looking result the WS returns —
+        # not the raw "...test" the REST path used to leak. Segments stay raw
+        # (their timings/verbatim recognition are the contract).
+        from services.text_polish import polish_text
+        full_text = polish_text(full_text)
 
         # Calculate audio duration from segments if available
         duration = 0.0
@@ -127,8 +158,12 @@ async def transcribe_audio(
         if _truthy(refine) and full_text:
             from services.refinement import maybe_refine
             refined = await asyncio.to_thread(maybe_refine, full_text)
-            if refined and refined != full_text:
-                refined_text = refined
+            if refined:
+                # Polish the refined text too, so both surfaced strings read as
+                # typed text (mirrors the raw-vs-refined contract of the WS).
+                refined = polish_text(refined)
+                if refined != full_text:
+                    refined_text = refined
 
         logger.info(
             "Capture transcription done: engine=%s, elapsed=%.2fs, duration=%.1fs, mode=%s, refined=%s",

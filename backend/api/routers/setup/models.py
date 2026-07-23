@@ -41,8 +41,8 @@ def _load_models_from_yaml() -> list[dict]:
     except FileNotFoundError:
         logger.warning("models.yaml not found at %s — using empty catalog", _YAML_PATH)
         return []
-    except Exception as e:
-        logger.error("Failed to load models.yaml: %s — using empty catalog", e)
+    except Exception:
+        logger.exception("Failed to load models.yaml — using empty catalog")
         return []
 
 
@@ -91,16 +91,36 @@ def get_model_catalog() -> ModelCatalog:
 # ── Platform Detection ─────────────────────────────────────────────────────
 
 def _current_platform_tags() -> list[str]:
-    """Return platform tags that the current host supports."""
+    """Return platform tags that the current host supports.
+
+    Beyond the OS/arch tags, emits the acceleration family so both the
+    ``platforms`` gate and the ``curated_on`` recommendation field can key on
+    it: ``cuda`` (NVIDIA — also present on ROCm hosts, where torch reports
+    CUDA available, so existing ``platforms: [cuda]`` entries keep working),
+    ``rocm`` (AMD HIP builds), and ``cpu`` (no GPU acceleration at all —
+    Apple Silicon is NOT tagged cpu; it curates via ``darwin-arm64``).
+    """
     tags = [sys.platform]
     arch = _platform.machine()
     tags.append(f"{sys.platform}-{arch}")
+    has_gpu = False
     try:
         import torch
         if torch.cuda.is_available():
             tags.append("cuda")
+            has_gpu = True
+            # ROCm torch masquerades through the CUDA API (torch.version.hip
+            # set, torch.cuda.is_available() True when the AMD GPU is usable).
+            # Grant 'rocm' only when BOTH hold: a ROCm *build* on a host whose
+            # AMD GPU isn't actually visible must curate as CPU, not as a
+            # working ROCm host.
+            if getattr(torch.version, "hip", None):
+                tags.append("rocm")
     except Exception:
         pass
+    is_apple_silicon = sys.platform == "darwin" and arch == "arm64"
+    if not has_gpu and not is_apple_silicon:
+        tags.append("cpu")
     return tags
 
 
@@ -112,6 +132,30 @@ def _model_supported(model: dict) -> bool:
     return bool(set(plats) & set(_current_platform_tags()))
 
 
+def _model_curated(model: dict, tags: "set[str] | None" = None) -> bool:
+    """True when this model is a curated "best for your system" pick here.
+
+    Driven by the ``curated_on`` field in models.yaml (``all`` matches every
+    host). Required models are always curated — the preset must include them.
+    """
+    if model.get("required"):
+        return True
+    curated_on = model.get("curated_on") or []
+    if "all" in curated_on:
+        return True
+    if tags is None:
+        tags = set(_current_platform_tags())
+    # A ROCm host also carries the 'cuda' tag (HIP masquerades through the
+    # CUDA API; the tag keeps `platforms: [cuda]` support-gates working). For
+    # *curation* ignore it: `curated_on: [cuda]` means NVIDIA-tuned picks —
+    # sweeping them into the AMD preset recommended models that are slow or
+    # broken there. Entries that want AMD list 'rocm' explicitly (the CT2
+    # large-v3 already does).
+    if "rocm" in tags:
+        tags = tags - {"cuda"}
+    return bool(set(curated_on) & tags)
+
+
 # ── HF Cache Helpers ───────────────────────────────────────────────────────
 
 def hf_cache_dir() -> str:
@@ -120,6 +164,66 @@ def hf_cache_dir() -> str:
         or os.environ.get("HUGGINGFACE_HUB_CACHE")
         or os.environ.get("HF_HOME")
         or os.path.expanduser("~/.cache/huggingface")
+    )
+
+
+# ── Disk-space guard (shared, single-sourced) ──────────────────────────────
+# MIN_FREE_GB is the headroom we insist on keeping free on the model-cache
+# volume — the wizard's absolute pre-install floor AND the extra buffer the
+# per-install check demands on top of the download itself, so an "Install all"
+# can't fill the disk to the brim (setup/download.py). Lives here — the lowest
+# module in the setup import graph — so the wizard, the /models header, and the
+# install endpoint can't drift apart (mirrors the weight-floor single-sourcing).
+_GIB = 1024 ** 3
+MIN_FREE_GB = 10
+
+
+def disk_free_bytes(path: "str | None" = None) -> int:
+    """Free bytes on the volume backing *path* (defaults to the HF cache).
+
+    Walks up to the nearest existing ancestor so a not-yet-created cache dir
+    still probes the correct mount point. ``shutil.disk_usage`` is cross-platform
+    (macOS/Windows/Linux) so this behaves identically everywhere. Never raises.
+    """
+    import shutil
+    try:
+        p = Path(path or hf_cache_dir()).resolve()
+        while not p.exists():
+            parent = p.parent
+            if parent == p:  # reached the volume root
+                break
+            p = parent
+        return int(shutil.disk_usage(str(p)).free)
+    except Exception:
+        return 0
+
+
+def disk_space_error(to_download_bytes: "int | None", *, cache_dir: "str | None" = None) -> "str | None":
+    """Actionable message when *to_download_bytes* (+ MIN_FREE_GB headroom) won't
+    fit on the cache volume; ``None`` when it fits, the size is unknown, or the
+    volume can't be probed (never block on missing information).
+
+    Names the three numbers a user needs to act — needs X, headroom Y, have Z —
+    so "Install all" can't silently overrun the disk (issue: no pre-install disk
+    check). Platform-agnostic; applied identically on macOS/Windows/Linux.
+    """
+    if not to_download_bytes or to_download_bytes <= 0:
+        return None  # unknown plan (older/gated repo, mirror without dry-run) → don't block
+    cache = cache_dir or hf_cache_dir()
+    free = disk_free_bytes(cache)
+    if free <= 0:
+        return None  # couldn't probe the volume → don't block on missing info
+    required = int(to_download_bytes) + MIN_FREE_GB * _GIB
+    if free >= required:
+        return None
+
+    def _gb(n: int) -> str:
+        return f"{n / _GIB:.1f} GB"
+
+    return (
+        f"Not enough disk space to install: this download needs {_gb(int(to_download_bytes))} "
+        f"plus {MIN_FREE_GB} GB free headroom ({_gb(required)} total), but only {_gb(free)} "
+        f"is free at {cache}. Free up space (or move the model cache to a bigger volume) and retry."
     )
 
 
@@ -372,6 +476,7 @@ def list_models():
         cached_by_repo = _scan_cache_on_disk()
 
     out = []
+    host_tags = set(_current_platform_tags())
     for m in KNOWN_MODELS:
         cached = cached_by_repo.get(m["repo_id"])
         on_disk = cached is not None and cached["size_on_disk"] > 0
@@ -386,11 +491,18 @@ def list_models():
             "size_on_disk_bytes": cached["size_on_disk"] if cached else 0,
             "nb_files": cached["nb_files"] if cached else 0,
             "supported": _model_supported(m),
+            # Curated "best for your system" pick (curated_on in models.yaml) —
+            # drives the recommended badge in the wizard and Settings model store.
+            "curated": _model_curated(m, host_tags),
         })
     response = {
         "models": out,
         "total_installed_bytes": sum(m["size_on_disk_bytes"] for m in out),
         "hf_cache_dir": hf_cache_dir(),
+        # Free space on the cache volume, so the Model Store header can warn
+        # BEFORE an "Install all" overruns the disk (pairs with the per-install
+        # disk_space_error guard in setup/download.py).
+        "disk_free_gb": round(disk_free_bytes() / _GIB, 1),
         "platform_tags": _current_platform_tags(),
     }
     _set_cache("models", response)
@@ -399,18 +511,21 @@ def list_models():
 
 @router.get("/setup/recommendations")
 def recommendations():
-    """Return a curated model preset for the caller's device + architecture."""
+    """Return a curated model preset for the caller's device + architecture.
+
+    Data-driven from the ``curated_on`` field in models.yaml — adding or
+    retargeting a curated pick is a catalog edit, not a code change. Only the
+    TTS model is required; the ASR picks here are the optional "best for your
+    system" set the wizard and Settings surface for on-demand install.
+    """
     is_mac_arm = sys.platform == "darwin" and _platform.machine() == "arm64"
     is_mac_intel = sys.platform == "darwin" and _platform.machine() == "x86_64"
     is_linux = sys.platform.startswith("linux")
     is_windows = sys.platform == "win32"
 
-    has_cuda = False
-    try:
-        import torch
-        has_cuda = bool(torch.cuda.is_available())
-    except Exception:
-        pass
+    tags = set(_current_platform_tags())
+    has_cuda = "cuda" in tags and "rocm" not in tags
+    has_rocm = "rocm" in tags
 
     # Device label — used as the card title.
     if is_mac_arm:
@@ -418,50 +533,47 @@ def recommendations():
     elif is_mac_intel:
         device_label = "macOS Intel (x86_64)"
     elif is_windows:
-        device_label = "Windows x64" + (" + CUDA" if has_cuda else "")
+        device_label = "Windows x64" + (" + CUDA" if has_cuda else " + ROCm" if has_rocm else "")
     elif is_linux:
-        device_label = "Linux x64" + (" + CUDA" if has_cuda else "")
+        device_label = "Linux x64" + (" + CUDA" if has_cuda else " + ROCm" if has_rocm else "")
     else:
         device_label = f"{sys.platform} / {_platform.machine()}"
 
-    # Pick the preset for this device.
+    # Curated preset for this host, in catalog order (required entries lead).
+    curated = [
+        m for m in KNOWN_MODELS
+        if _model_curated(m, tags) and _model_supported(m)
+    ]
+
     if is_mac_arm:
-        recommended_ids = [
-            "k2-fsa/OmniVoice",
-            "Systran/faster-whisper-large-v3",
-            "mlx-community/whisper-large-v3-mlx",
-            "mlx-community/whisper-large-v3-turbo",
-            "mlx-community/Kokoro-82M-bf16",
-            "KittenML/kitten-tts-mini-0.8",
-        ]
         rationale = (
-            "Apple Silicon gets the full stack: OmniVoice for multilingual clone + "
-            "WhisperX (faster-whisper weights) for cross-platform ASR + MLX-Whisper "
-            "for the Apple-optimised speedup + Whisper Turbo (5× faster) for live "
-            "dictation + Kokoro (mlx-audio) for fast local English + KittenTTS as "
-            "a CPU-realtime backup."
+            "Apple Silicon preset: OmniVoice (required) covers multilingual TTS + "
+            "cloning on its own. The optional picks are Metal-native: MLX Whisper "
+            "large-v3 for dubbing/transcription, Whisper Turbo (MLX) + Parakeet TDT "
+            "v3 for live dictation, Kokoro + KittenTTS for instant English TTS."
+        )
+    elif has_cuda:
+        rationale = (
+            "NVIDIA preset: OmniVoice (required) runs standalone. Optional ASR picks "
+            "are CUDA-accelerated via CTranslate2 — Whisper large-v3 for dubbing "
+            "(best word timestamps), Turbo for 5× faster transcription, Parakeet TDT "
+            "v3 for live dictation. KittenTTS adds CPU-realtime English."
+        )
+    elif has_rocm:
+        rationale = (
+            "AMD/ROCm preset: OmniVoice (required) runs standalone. CTranslate2 has "
+            "no ROCm backend, so the PyTorch Whisper large-v3 build is the "
+            "GPU-accelerated ASR route; faster-whisper works on CPU, and Parakeet "
+            "TDT v3 handles live dictation."
         )
     else:
-        recommended_ids = [
-            "k2-fsa/OmniVoice",
-            "Systran/faster-whisper-large-v3",
-            "KittenML/kitten-tts-mini-0.8",
-        ]
-        if has_cuda:
-            recommended_ids.append("openai/whisper-large-v3")
-            rationale = (
-                "Cross-platform stack + pytorch-whisper as a CUDA-accelerated "
-                "ASR fallback. MLX / mlx-audio are Apple-Silicon-only and don't "
-                "apply here."
-            )
-        else:
-            rationale = (
-                "Cross-platform stack: OmniVoice (multilingual clone) + WhisperX "
-                "(faster-whisper ASR) + KittenTTS (English turbo, CPU-realtime). "
-                "Clean install, every model runs on CPU."
-            )
+        rationale = (
+            "CPU preset: OmniVoice (required) runs standalone. Optional picks favour "
+            "speed on CPU — Whisper large-v3 (int8) for accuracy, Turbo when speed "
+            "matters, Parakeet TDT v3 (int8 ONNX) for live dictation, KittenTTS for "
+            "instant English TTS."
+        )
 
-    known_by_id = {m["repo_id"]: m for m in KNOWN_MODELS}
     cached_ids: set[str] = set()
     try:
         from huggingface_hub import scan_cache_dir
@@ -475,11 +587,11 @@ def recommendations():
         cached_ids = set(_scan_cache_on_disk().keys())
 
     entries = []
-    for rid in recommended_ids:
-        meta = known_by_id.get(rid, {})
+    for meta in curated:
+        rid = meta["repo_id"]
         # Mirror /models: a truncated cache (weights missing) is not installed, so
         # the wizard counts it toward the remaining download instead of "all set".
-        installed = rid in cached_ids and cache_is_complete(meta or {"repo_id": rid})
+        installed = rid in cached_ids and cache_is_complete(meta)
         entries.append({
             "repo_id": rid,
             "label": meta.get("label", rid),
