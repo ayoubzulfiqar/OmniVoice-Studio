@@ -911,6 +911,34 @@ class VoxCPM2Backend(TTSBackend):
 # ── MOSS-TTS-Nano adapter (tiny, CPU-friendly, 20 langs) ────────────────────
 
 
+# ── MOSS-TTS-Nano entry-point resolution (#1287) ────────────────────────────
+# The upstream repo is installed straight from git (`pip install -e .`) with no
+# pinned release, and the class it exports has changed. Rather than hard-import
+# one name and fail at generate time, resolve among the names it has used and
+# report honestly when none is present.
+_MOSS_CLASS_NAMES = ("MossTTSNano", "MOSSTTSNano", "MossTTS", "MossTTSNanoForCausalLM")
+
+
+def _moss_model_class(module):
+    """The first known MOSS model class on ``module``, or None."""
+    for name in _MOSS_CLASS_NAMES:
+        cls = getattr(module, name, None)
+        if cls is not None and hasattr(cls, "from_pretrained"):
+            return cls
+    return None
+
+
+def _moss_candidate_exports(module):
+    """Public names on ``module`` that look like a model class — so the error
+    can say what IS there instead of only what is missing."""
+    return [
+        n
+        for n in dir(module)
+        if not n.startswith("_")
+        and hasattr(getattr(module, n, None), "from_pretrained")
+    ]
+
+
 class MossTTSNanoBackend(TTSBackend):
     """OpenMOSS MOSS-TTS-Nano-100M — the low-resource / broad-language pick.
 
@@ -944,13 +972,27 @@ class MossTTSNanoBackend(TTSBackend):
         try:
             # MOSS ships its own package alongside the HF weights.
             import moss_tts_nano  # noqa: F401
-            return True, "ready"
         except ImportError:
             return False, (
                 "moss_tts_nano package not installed. Install from "
                 "https://github.com/OpenMOSS/MOSS-TTS-Nano "
                 "(`pip install -e .`), then set OMNIVOICE_TTS_BACKEND=moss-tts-nano."
             )
+        # Importing the MODULE is not enough (#1287). The user had the package
+        # installed, so this reported "ready", they switched engine, and the
+        # first generate died with `cannot import name 'MossTTSNano'` — the
+        # upstream repo is unpinned and moves. An availability check that does
+        # not verify the API it will actually call is a check that lies.
+        if _moss_model_class(moss_tts_nano) is None:
+            exported = ", ".join(_moss_candidate_exports(moss_tts_nano)) or "no model class"
+            return False, (
+                "moss_tts_nano is installed but does not expose a usable model "
+                f"class (found: {exported}). MOSS-TTS-Nano is unpinned upstream and "
+                "its entry point has changed before — pull the latest "
+                "github.com/OpenMOSS/MOSS-TTS-Nano and re-run `pip install -e .`, "
+                "or open an issue with the version you have so the name can be added."
+            )
+        return True, "ready"
 
     @property
     def sample_rate(self) -> int:
@@ -969,13 +1011,19 @@ class MossTTSNanoBackend(TTSBackend):
         ok, msg = self.is_available()
         if not ok:
             raise RuntimeError(f"MOSS-TTS-Nano unavailable: {msg}")
-        from moss_tts_nano import MossTTSNano  # type: ignore[import-not-found]
+        import moss_tts_nano  # type: ignore[import-not-found]
+
+        model_cls = _moss_model_class(moss_tts_nano)
+        if model_cls is None:  # pragma: no cover - is_available() gates this
+            raise RuntimeError(
+                "moss_tts_nano exposes no usable model class; see Settings → Engines"
+            )
         checkpoint = os.environ.get(
             "OMNIVOICE_MOSS_TTS_MODEL", "OpenMOSS-Team/MOSS-TTS-Nano"
         )
         logger.info("Loading MOSS-TTS-Nano from %s", checkpoint)
         self._model = _retry_once_with_fresh_hf_client(
-            lambda: MossTTSNano.from_pretrained(checkpoint, trust_remote_code=True),
+            lambda: model_cls.from_pretrained(checkpoint, trust_remote_code=True),
             "MOSS-TTS-Nano",
         )
 
@@ -1350,6 +1398,19 @@ class MLXAudioBackend(TTSBackend):
         logger.info("Loading mlx-audio model %s", self._model_id)
         self._model = load_model(self._model_id)
 
+    def _is_voice_design(self) -> bool:
+        """Whether the loaded model builds a voice from a text description.
+
+        Asks the model's own config — `tts_model_type`, the exact field
+        mlx-audio branches on — so this cannot drift from the library's own
+        behaviour. Falls back to the model id, which carries `VoiceDesign` by
+        naming convention, when a config doesn't expose the field.
+        """
+        kind = getattr(getattr(self._model, "config", None), "tts_model_type", None)
+        if kind:
+            return kind == "voice_design"
+        return "voicedesign" in (self._model_id or "").lower()
+
     def generate(self, text: str, **kw) -> torch.Tensor:
         import numpy as np
         self._ensure_loaded()
@@ -1358,6 +1419,7 @@ class MLXAudioBackend(TTSBackend):
         ref_audio = kw.get("ref_audio")
         ref_text  = kw.get("ref_text")
         language  = kw.get("language")
+        instruct  = kw.get("instruct")
         speed     = float(kw.get("speed", 1.0))
 
         # mlx-audio's generate(...) returns an iterator of result objects,
@@ -1367,6 +1429,21 @@ class MLXAudioBackend(TTSBackend):
         kwargs = {"text": text, "speed": speed}
         if voice:     kwargs["voice"] = voice
         if ref_audio: kwargs["ref_audio"] = ref_audio
+        # The comment above claimed instruct was passed "for Qwen3"; it never
+        # was. The curated `qwen3-tts` model IS the VoiceDesign variant, which
+        # mlx-audio refuses to run without one — so the engine was unusable no
+        # matter what the user typed, and the reported failure was a bare
+        # 400 quoting a library message (#1405).
+        if instruct:
+            kwargs["instruct"] = instruct
+        elif self._is_voice_design():
+            raise ValueError(
+                "This model builds a voice from a written description, so it "
+                "needs one — for example \"a warm, low-pitched British "
+                "narrator\". Pick a designed voice (those carry a "
+                "description), or choose a cloning model and supply a "
+                "reference clip instead."
+            )
         # CSM (sesame.py) only builds its cloning context when BOTH ref_audio
         # AND ref_text are present — with ref_text missing, its context list
         # stays empty and indexing into it raises an opaque
@@ -1848,6 +1925,17 @@ _LAZY_REGISTRY: dict[str, tuple[str, str]] = {
     # IndexTTS2. Lazy for the same import-cycle reason as the entries above.
     "moss-tts-v15": ("engines.moss_tts_v15", "MossTTSV15Backend"),
     "dots-tts": ("engines.dots_tts", "DotsTTSBackend"),
+    # The resident OmniVoice model in a crash-isolated sidecar (#730/#1190):
+    # same model and quality as the in-process "omnivoice" engine, but a wedged
+    # generate can be hard-killed to reclaim VRAM/device. Opt-in (the in-process
+    # engine stays the default). Unlike the entries above it runs under the
+    # parent interpreter (crash isolation, not dependency isolation).
+    "omnivoice-subprocess": ("engines.omnivoice_subprocess", "OmniVoiceSubprocessBackend"),
+    # Issue #1306: Kyutai PocketTTS, CPU-only, low-latency TTS hired for the
+    # "fastest CPU render / lowest latency" job. Opt-in, subprocess-isolated
+    # under the parent interpreter (crash isolation, not dependency isolation,
+    # same as omnivoice-subprocess: pocket-tts deps sit at the parent's pins).
+    "pockettts": ("engines.pockettts", "PocketTTSBackend"),
     # Issue #590: Confucius4-TTS (netease-youdao) — LLM-based, 14-language
     # cross-lingual zero-shot cloning, Apache-2.0. Opt-in + subprocess-isolated
     # (own Python 3.10 venv) like the entries above. Validated end-to-end
@@ -1943,6 +2031,7 @@ _LAST_ERRORS: dict[str, str] = {}
 # Helps users understand what pip package to install and where.
 _INSTALL_HINTS: dict[str, str] = {
     "omnivoice":     "pip install omnivoice  (bundled — no extra install needed)",
+    "omnivoice-subprocess": "No extra install; uses the host OmniVoice install. Opt in with OMNIVOICE_TTS_BACKEND=omnivoice-subprocess (same model in a killable sidecar, for unattended reliability).",
     "cosyvoice":     "git clone --recursive FunAudioLLM/CosyVoice + pip install -r requirements.txt + SoX",
     "kittentts":     "pip install kittentts  (ONNX, CPU-only, ~80 MB)",
     "mlx-audio":     "pip install mlx-audio  (Apple Silicon only)",
@@ -1953,6 +2042,7 @@ _INSTALL_HINTS: dict[str, str] = {
     "sherpa-onnx":   "pip install sherpa-onnx  (universal ONNX runtime, WASM-ready)",
     "omnivoice-gguf":"Bundled — runs the C++ omnivoice-tts binary in bin/. Quants download lazily from Serveurperso/OmniVoice-GGUF on first generate.",
     "supertonic3":   "uv sync --extra supertonic  (CPU-only ONNX, 31 langs, ~400 MB model on first use; OpenRAIL-M model license)",
+    "pockettts":     "pip install pocket-tts  (Kyutai, CPU-only, ~100 MB model on first use; MIT code + CC-BY-4.0 weights; weights are HF-gated, set HF_TOKEN)",
     "moss-tts-v15":  "git clone OpenMOSS/MOSS-TTS + set OMNIVOICE_MOSS_TTS_V15_DIR  (own venv, transformers==5.0; 8B, ~16 GB weights; CUDA/CPU, no MPS; Apache-2.0)",
     "dots-tts":      "git clone rednote-hilab/dots.tts + set OMNIVOICE_DOTS_TTS_DIR  (own venv, transformers==4.57; 2B, ~9 GB weights; CUDA/CPU, Linux/macOS only — no Windows; Apache-2.0)",
     "confucius4-tts":"git clone netease-youdao/Confucius4-TTS + set OMNIVOICE_CONFUCIUS4_TTS_DIR  (own Python 3.10 venv; 14-lang cross-lingual zero-shot clone; ~5 GB weights auto-download; CUDA/CPU, no MPS; Apache-2.0)",

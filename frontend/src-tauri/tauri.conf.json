@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "OmniVoice Studio",
+  "productName": "VoiceStudio",
   "version": "../package.json",
   "identifier": "com.debpalash.omnivoice-studio",
   "build": {
@@ -15,7 +15,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "OmniVoice Studio",
+        "title": "VoiceStudio",
         "width": 1920,
         "height": 1080,
         "minWidth": 900,
@@ -84,7 +84,7 @@
       "binaries/ffprobe"
     ],
     "macOS": {
-      "minimumSystemVersion": "12.0",
+      "minimumSystemVersion": "13.3",
       "signingIdentity": "-",
       "entitlements": "entitlements.plist"
     }
@@ -93,7 +93,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/debpalash/OmniVoice-Studio/releases/latest/download/latest.json"
+        "https://github.com/debpalash/VoiceStudio/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFMDQ1QkZCQ0I4RDlCQkYKUldTL200M0wrMXNFamdPSGF3VkUzVjBRY1FFOE0yTkxSMVZKNUowL2wyZEw2OG1TWXNLMDlSeTQK",
       "dialog": false

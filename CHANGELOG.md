@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to OmniVoice Studio.
+All notable changes to VoiceStudio.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Versions track the desktop app (`tauri.conf.json` + `frontend/src-tauri/Cargo.toml`).
@@ -10,20 +10,176 @@ The bundled TTS model package (`pyproject.toml`) is versioned independently.
 
 **Highlights**
 
+- RTX 40-series GPUs are used again instead of being sent to the CPU
+- A warning before a slow generation, rather than after a five-minute wait
+- The watermark can be turned off in Settings, as the docs always said
+- Workspace tabs in the title bar, if you prefer them to the icon rail (#1412)
+- macOS support now matches what the app actually delivers
+- Linux AppImage: a blank white window on rolling distros (Mesa 26.1+) now starts normally
+- A failed audiobook chapter says why, instead of turning red and saying nothing
+
+### Changed
+
+- The repository moved to github.com/debpalash/VoiceStudio. Every link in the app, docs and scripts now points there; GitHub redirects the old URLs, and the Docker image paths, the app bundle identifier and your data folder are all deliberately unchanged. (#1394)
+- The app is now **VoiceStudio** (previously OmniVoice-Studio). Only the name you see changes — your data folder, settings and the Docker image paths stay put, so upgrading needs nothing from you. On Linux the .deb is now `voicestudio`; remove the old `omnivoice-studio` package once.
+- macOS floor raised to 13.3 (Ventura) — the frontend has required Safari 16.4 for some time, so macOS 12 was a promise the stack could not keep (#1268)
+- The first-run setup screen no longer overpromises. It claimed "no account, no cloud, no telemetry" without qualification — untrue for anyone who opts into analytics — and now says what actually holds either way: your voices, recordings and projects never leave the machine, and no processing happens in the cloud.
+- Dictation no longer shows a floating pill. The hotkey records, transcribes and pastes with nothing on screen; the tray icon still marks recording, and anything needing your attention (Accessibility, microphone, a failed transcription) now arrives as a notification in the main window.
+
+### Added
+
+- Settings → Appearance → **Navigation style** switches the workspace switcher between the icon rail down the window edge and browser-style tabs across the title bar. Both offer the same workspaces; the choice sticks across launches, and the rail stays the default. Tab labels fold down to icons when the title bar runs out of room — the workspace you're in keeps its name. (#1412)
+- Portable mode lets you choose the folder — press **Change…** on the first-run setup screen and put the whole install on an external drive. It also stops being greyed out after a default Program Files install. (#766)
+- Settings → Privacy now has an **Invisible watermark** toggle. On by default, available to everyone, and it only affects audio generated after the change. (#1308)
+- A new opt-in crash-isolated TTS engine, so a native crash takes down the sidecar instead of the whole backend — thanks @paoloantinori! (#1292, #1298, #1304)
+- **PocketTTS** (Kyutai), an opt-in CPU-only engine for fast, low-latency renders in six languages (en/fr/de/pt/it/es) with zero-shot cloning from a reference clip. Enable in Settings → Engines — thanks @paoloantinori! (#1306, #1328)
+
+### CI
+
+- The stdio wire protocol every engine sidecar speaks is now tested once across all nine of them, instead of against a single engine — a bug in any one sidecar's copy gets caught — thanks @paoloantinori! (#1408)
+
+### Fixed
+
+- A generation abandoned while stuck on an internal lock now says so, instead of blaming your hardware and suggesting shorter text. Nothing had been computed, so none of that advice applied. (#1416, #1419)
+- A machine with a GPU that ends up on CPU now says why — a missing device node, a permissions problem, a card newer than the installed ROCm, an `HSA_OVERRIDE_GFX_VERSION` that is doing more harm than good, or an NVIDIA driver the container can't reach each read differently. Before, all of them looked identical to having no GPU at all. (#1274, #1228)
+- A slow machine is no longer told its IndexTTS-2 install isn't there. The check that confirms an engine's virtualenv gave up after 10 seconds and counted that as a broken install, so a cold first run 500'd; it now waits longer and treats slow as unproven, not broken. (#1414) — thanks @OracleNightmare!
+- A broken Python environment now says so, instead of blaming the app's own install. A missing or mismatched torch/transformers surfaced as "omnivoice not importable" and sent people reinstalling the wrong thing. (#1415)
+- A model that fails to load at startup no longer leaves the app looking healthy while producing nothing — the failure and its remedy now show up in the model status. (#1415)
+- Generating with the default engine works again on everything built from `main` since the rename — source checkouts, preview builds and Docker `:latest` all run the same backend, whose model import had been rewritten to a class name the library doesn't export, failing every generation with "cannot import name 'VoiceStudio'". The class keeps its library name, and a guard test now pins it. (#1420)
+- Running from source no longer dies at startup when a database migration is pending. Alembic resolved the migrations folder relative to wherever the app was launched from — fine from the repo root, fatal from the desktop shell (`tauri dev`), which reported "Path doesn't exist: backend/migrations" and stopped. The path is now anchored to the repo, wherever you start it. (#1420)
+- The first generation after startup no longer stalls or 500s while the model is still loading. A cold load reached from a worker thread waited on a lock owned by a different event loop, which either errored outright or deadlocked until the job was abandoned. (#1417)
+- The voice-design model on Apple Silicon works again. Its description was being dropped before it reached the engine, so every generation failed with a raw 400 no matter what you typed. (#1405)
+- The first-run setup screen no longer times out while it waits for you. Taking more than two minutes to choose an install location, region or mirror made the app declare "Setup failed", and Retry landed back on the same screen with the same clock — so a first install could never be completed. (#1376)
+- Transcription on an NVIDIA machine whose cuDNN 8 libraries are missing no longer kills the backend outright. The app checks the library before picking a transcription engine and falls back to PyTorch Whisper, instead of handing off to a component that aborts the process with no error and restarts into the same crash. (#1371)
+- The dictation model picker now tells the truth about download size. Every one of the seven models was wrong: Parakeet TDT v3, the recommended default, said 180 MB and actually downloads 670 MB, while the small low-RAM fallbacks were advertised as three times bigger than they are. (#1398)
+- Dictation with the 0.6B Parakeet models is steadier under load — they now decode on more threads (still capped by your CPU, still overridable with `OMNIVOICE_SHERPA_ASR_THREADS`). The small models are unchanged. (#1398)
+- The dictation hotkey no longer leaves a blank dark square stuck on your desktop. A press that arrived while the pill was re-arming was dropped, and the window it had already opened had nothing in it and no way to close it. (#1398)
+- The blank dark square is gone for good: the dictation window could mistake itself for the main window when its shell wasn't ready yet, and once it did, nothing in the app could close it again. It now learns which window it is before any of its code runs. (#1398)
+- Dictation is more reliable to trigger: the hotkey listener no longer briefly detaches every time the pill changes state, so a press is never silently lost. (#1398)
+- An auto-captured crash report now keeps the error that actually caused the crash. Python prints a chained traceback oldest-first, so trimming the log to its newest end kept the generic wrapper and cut the real cause — the reports that needed the detail most were the ones that arrived without it. (#1376)
+- Text ending in punctuation no longer wastes a whole synthesis pass on it. A chunk boundary could leave a trailing fragment with nothing speakable in it, which the engine renders as nothing at all. (#1330)
+- A take that is missing part of your text now says so instead of coming back quietly short. When the engine renders a sentence to nothing, the app names the missing text and suggests re-generating — until now the only way to notice was to read along. (#1330)
+- A long render on modest hardware is no longer abandoned as "too heavy for the available compute" while it is visibly working. A generate that keeps finishing chunks now extends its own deadline (bounded), the way a model download already could; one that stops producing anything still fails on time. (#1338, #1348, #1391)
+- A backend that dies while loading its own Python dependencies is no longer reported as a memory problem. The crash notice now says the environment is incomplete and points at "Clean & Retry", instead of sending users to flush a model that had nothing to do with it. (#1282, #1376)
+- A UI whose API requests land on the wrong host — a rehosted frontend, or a reverse proxy with no API route — no longer echoes that host's raw 404 page as the error. It now says the responding server is not a VoiceStudio backend and points at the Backend URL setting and the proxy route. (#1385)
+- Building the GGUF engine from source produced a binary that died on its very first spawn ("libggml.so.0: cannot open shared object file") — the build script deleted the shared libraries it had just linked against. It now ships them next to the binary on every platform, and the backend puts that folder on the loader path — thanks @vanderlpp! (#1348)
+- The GGUF engine's hard 120-second per-render kill switch — which was reaping legitimate CPU-only renders mid-synthesis — is now 600s, tunable via `OMNIVOICE_GGUF_GENERATE_TIMEOUT_S`, and the timeout error names that setting — thanks @vanderlpp! (#1348)
+- Every subprocess TTS engine would have turned a stereo render into noise: the mono downmix always averaged axis 0, which is time rather than channels for channels-last audio. Unreachable today since every engine returns mono, fixed in all five before it isn't. (#1328)
+- First-run wizard: the Continue button and the Hugging Face token box were pushed below the window with no way to scroll to them — a layout container grew to the full model list's height, defeating every scroll clamp inside it. The pinned row now stays on screen at every UI scale, with the model list scrolling under it. (#1382, #1383)
+- Dubbing the same video twice no longer ties the second job's cloned voices to the first job's files — deleting the older dub from history was silently turning the newer one's single-segment regens into a default voice. (#1331)
+- ...and deleting a dub whose files an existing saved dub still renders from now keeps those files on disk (the history entry still disappears) — protecting dubs created before this fix, whose references already cross directories. (#1331)
+- An unclean previous shutdown is no longer announced as a crash: the notice says what it actually knows, names the benign causes (sleep, force-quit, a stopped VM), and the one-click bug report is only offered when there is evidence to put in it — an empty report helps nobody. (#1375)
+- A first-use generate no longer fails at 300s while its model is still downloading: the download's own progress heartbeats now extend the generation budget (bounded), so a slow connection isn't reported as too-slow hardware. A job that goes silent still dies at the original deadline. (#1367)
+- A generation that hits its time limit now says so, instead of "an error VoiceStudio doesn't recognize" followed by an empty `TimeoutError:`. It names the likely causes and the setting that raises the limit. (#1368)
+- The "transformers install is incomplete" advice now names torchvision — the package whose version mismatch actually produces that error — and points at the pinned reinstall that repairs it, instead of a reinstall that left the broken package untouched. (#1376, #1357)
+- A model download cut off mid-request is no longer reported as a broken transformers install — reinstalling could never have fixed a dropped connection. (#1347)
+- A TLS connection cut during generation is explained as the dropped download it is, instead of falling through as an unrecognized error carrying `_ssl.c:1016`. (#1335)
+- Windows "paging file is too small" no longer suggests the Flush button, which cannot help. It now names the virtual-memory setting to change, and says plainly that it is not a network problem. (#1334)
+- A port conflict that resolves itself while the backend is dying no longer reports a bare "Backend died (exit code 1)" — the conflict is named even when the other process has already let the port go. (#1364, #1223)
+- Fresh installs failing to import `transformers.HiggsAudioV2TokenizerModel` with "RuntimeError: operator torchvision::nms does not exist" are fixed by pinning `torchvision==0.23.0` to match `torch 2.8.0` — thanks @HanzlahCh! (#1358, #1357)
+- ...and that pin now actually reaches Colab and Docker: both install with `uv pip install`, which ignores the pyproject setting the pin lived in, so the torch trio could still drift apart. It is passed explicitly now. (#1357)
+- Every RTX 40-series card (4060–4090) was declared unsupported and silently run on the CPU. The compatibility gate demanded an exact `sm_89` match, but PyTorch ships `sm_86` kernels that already cover Ada. (#1285)
+- Under-provisioned hardware is now flagged **before** a synthesis starts instead of after the full compute budget expires. (#1240, #1246, #1248, #1277, #1283, #1284)
+- Long text on a CPU-only machine gets the same warning up front. (#1260, #1299)
+- A crash inside the compute stack no longer blames VRAM: a segfault or Windows access violation now points at the GPU driver or an incomplete model download. (#1275, #1293)
+- ffmpeg failures report the failure instead of ffmpeg's build configuration. (#1309)
+- A cut TLS connection is explained in words rather than as `_ssl.c:1016`. (#1301)
+- `torch.compile` is skipped when the torch library path contains a space, instead of failing in the linker on every load. (#1266)
+- macOS Preview updates work again — the updater bundle had been colliding with itself since early July. (#1281)
+- macOS Preview updates no longer fail signature verification — the preview manifest is rebuilt from the published assets and every signature in it is verified against the file it points at — thanks @Pinkers01! (#1327)
+- A dub whose transcription stream is cut by a reverse proxy now says so, instead of blaming the ASR model. (#1317)
+- The dev backend going quiet under `--reload` is named as auto-reload rather than reported as a crash. (#1261)
+- Building from source: `bun run desktop-prod:run`, documented as a re-launch, wiped the app's data every time — voice profiles, projects and outputs included. It now keeps them — thanks @Kakuzen93! (#1333)
+- Audiobook: a chapter that fails to render now shows the reason in the chapter list and in the final error, instead of a red row whose cause existed only in the backend log — thanks @Reaksa-Cambodia! (#1321)
+- Audiobook: an engine that stops without producing audio no longer stalls the render forever with no error and no timeout. (#1321)
+- Linux AppImage: a permanently blank window on Mesa 26.1+ hosts (Arch/CachyOS and other rolling distros) — the bundled WebKit ran against a newer system Mesa than it was built for, and no environment variable could help because the failure precedes every rendering flag; the launcher now lets a newer system WebKitGTK take precedence — thanks @rvasilev and @HannaLovvold! (#1258, #1244)
+- Linux AppImage: `OMNIVOICE_PREFER_SYSTEM_WEBKIT=1` forces your own WebKitGTK for hosts where its version can't be read automatically (no `pkg-config`), and `=0` forces the bundled one (#1258)
+- Dubbing: the transcription overlay said "Transcribing with Whisper…" whatever ASR engine was actually running — it now names the stage, in all 21 languages — thanks @paoloantinori! (#1352)
+- Error messages no longer arrive with terminal colour codes spliced into the sentence (`download: ^[[0;31mERROR:^[[0m …`) — every surfaced failure is cleaned now, whichever tool produced it. (#1344)
+- Linux AppImage: recording failed with "No microphone found" on hosts whose GStreamer is newer than the build runner's, even with a verified-healthy audio stack — your own GStreamer now takes precedence, and the plugin cache is app-private so it can neither be confused by nor corrupt the one other apps use — thanks @Kakuzen93! (#1333)
+- Linux AppImage: that GStreamer preference actually takes effect — the check guarding it could never pass, so it had been silently doing nothing. (#1333)
+- A TTS job abandoned for exceeding its compute budget now records where it was actually stuck, so a hang stops being reported as a machine that is merely too slow. (#1338, #1329, #1348)
+- Translation through LM Studio works. The built-in model name was the placeholder `local-model`, which LM Studio rejects because it serves whatever you have loaded — VoiceStudio now asks it, and a 404 from a local server names the models that ARE loaded instead of telling you to check a URL that was fine — thanks @biga73! (#1332)
+- Generation that silently dropped the end of the input now says so. When an engine returns no audio for part of the text the result sounds clean and is simply short, so the only way to notice was to read along; the backend log now names the sentences that produced nothing. (#1330)
+- Dubbing: a re-rendered line that quietly came back in a default voice instead of the cloned one now says why in the backend log — the clone clips are extracted per job and a saved dub outlives them, so regenerating after cleanup loses the reference with no error. (#1331)
+
+### Docs
+
+- Engine acceptance: new `docs/engine-acceptance.md` documents the job map, the bar a new engine must clear, and the out-of-tree path (#1306)
+- macOS install notes and the README support table now state the real floor (#1268)
+- Contact: the project X account is listed alongside Discord (#1313)
+- `OMNIVOICE_ALLOWED_ORIGINS` is finally documented: a browser loading the UI from another machine's origin needs the backend's CORS allow-list, which neither server mode nor trusted networks touches — thanks @vanderlpp! (#1348)
+
+### CI
+
+- Windows smoke tests stopped silently passing a broken ffmpeg install, and every smoke leg is now budgeted for a cold dependency install. (#1290)
+- Test suites no longer leak config paths or model-manager shutdown state into one another, which had been failing unrelated pull requests. (#1269)
+- The nightly preview build stopped refusing to publish its own healthy updater manifest when the macOS legs finished a few minutes ahead of the slowest one — Preview-channel users were silently left without new builds.
+
+## [0.4.2] — 2026-07-28
+
+**Highlights**
+
+- The update prompt is a small toast with buttons, not a screenful of release notes
+- Installing an update no longer throws away work that is still running
+- Quitting the app mid-generate stops reporting itself as a crash
+- A half-downloaded model repairs itself instead of dead-ending
+- "Dismiss" no longer reads as "terminate an employee" in five languages
+
+### Changed
+
+- An available update now announces itself as a toast with **Install and restart**, **What's new** and **Later**, instead of only a dot beside the version number. The release notes stay in Settings → Updates, where there is room for them — a version's notes are the whole changelog section, and rendering them inline is what made the old prompt fill the screen (#1272)
+
+### Fixed
+
+- Installing an update no longer relaunches the app while work is running. The check only knew about dub synthesis, so a restart could silently discard an upload, a transcription, a translation, an export or a standalone synth — and two overlapping synths used to cancel each other's protection. Install is now greyed out while anything is in flight (#1272)
+- A half-downloaded model now repairs itself instead of failing with a raw 500. The automatic repair recognised only one of the two ways the loader reports missing weights, so an interrupted download whose subfolder failed to load got neither the repair nor a hint about what to do (#1273)
+- Quitting the app with a generate queued reported "500 Internal Server Error: model load skipped: backend shutting down" and offered to file a bug for it. A shutdown is not a fault: the backend now answers 503 with what to do, and no bug report is offered for it (#1276)
+- Dub history: clearing a large history while a render was running could still resurrect the deleted job — which markers survived depended on the process hash seed, and an oversized purge could discard a live one (#1252)
+- German, Japanese, Russian and both Chinese locales rendered "Dismiss" as the employment sense — "terminate an employee" — on close buttons (#1272)
+- The "wait for the current job to finish" message named dubbing specifically, though it now covers uploads, transcription, translation, exports and synthesis; reworded across all 21 languages (#1272)
+
+## [0.4.1] — 2026-07-27
+
+**Highlights**
+
 - AMD GPUs are used again — every ROCm host was silently running on the CPU
-- Two synth failures that used to say "an error OmniVoice doesn't recognize" now say what actually went wrong
+- Two synth failures that used to say "an error VoiceStudio doesn't recognize" now say what actually went wrong
 - A dub URL ingest that fails on a disk problem now says which folder and why
 - A broken audio dependency no longer takes the whole backend down at startup
 - A GPU too small for the chosen engine now says so up front, not after a five-minute wait
 - A port conflict now says so, instead of "Backend died (exit code 1)"
 - A model download that dies at 90% now resumes instead of failing the install
+- First run: Continue and the Hugging Face token box no longer sit under the status bar
+- macOS 12 (Monterey): the app launches again instead of dying on startup
+- Exporting a voice or a dub no longer fails when the name isn't spelled in Latin letters
+- Two more failures that used to arrive as raw OS text now say what to do about them
+- Unload works on every model the panel offers it for, and a language the active engine can't speak says so
+- Deleting a dub no longer un-deletes itself when the job it belonged to finishes
+
+### Changed
+
+- First run: the status bar (Logs, version, Sponsors) appears once you reach the studio, instead of overlaying the setup steps (#1241)
+
+### Added
+
+- `OMNIVOICE_MCP_ALLOWED_HOSTS` — comma-separated host patterns (e.g. `host.containers.internal:*,192.168.1.5:*`) that extend the MCP SDK's DNS-rebinding allowlist, so AI agents running in Docker containers or on other machines can reach the `/mcp` endpoint. The SDK default is localhost-only; this env var is opt-in (#1249)
 
 ### Docs
 
+- Linux install: a new section for the Mesa 26.1+ blank window, stating plainly that no environment variable works and why (#1258)
 - Docker: ROCm section explains that `torch.cuda.is_available() == True` isn't proof the app is on the GPU, and notes the `--group-add` needed for `/dev/kfd` on rootless hosts (#1228)
 
 ### Fixed
 
+- Deleting a dub while it was still importing crashed the import with the toast `ingest: 'mgw39lx3'` — a dict key and nothing else — and the delete could then be undone by the job's own pending write, in history or mid-render; both are fixed, and no failure can present itself as a bare value again — thanks @dustmaker124-ui! (#1252, #1253)
+- macOS 12 (Monterey): the app threw on startup and never started the backend — it called a Safari 16 method on the WebView that macOS ships. It launches and works now; some styling still needs a newer WebView (tracked in #1268) — thanks @singhrahat! (#1245)
+- Settings → Engines: Unload failed with `400 Unknown model id: engine:kittentts` on any in-process engine — the panel offered the button for ids the backend never accepted; the warm dictation model had the same gap — thanks @JavaxmI! (#1247)
+- Picking a language the active engine can't speak recited 23 codes without saying which engine refused or that switching engine was the fix — thanks @pulananave! (#1257)
+- A YouTube import that failed as "DRM protected" and then worked on a manual retry now escalates the player client automatically, and a genuinely undownloadable video says so — thanks @gysahlgreene! (#1254)
+- Exporting a voice profile, persona, dub, subtitle or stem whose name is Chinese, Japanese, Korean, Cyrillic, Greek, Hebrew or emoji failed with a `'latin-1' codec` 500 — every download endpoint now sends the name correctly, and browsers get the real one back — thanks @zvxzdx! (#1262)
+- A synth that failed because ffmpeg/ffprobe wasn't on the system path said "an error VoiceStudio doesn't recognize"; it now names the media engine and points at Settings → Audio tools, and the app's own copy is published on PATH so dependencies find it in the first place — thanks @Heuvelsma! (#1256)
+- Windows "The paging file is too small" arrived as a bare 500; it now explains that this is a virtual-memory setting, not full RAM, and gives the steps to raise it — thanks @trankeny545-sudo! (#1251)
 - AMD/ROCm: every ROCm host was silently force-routed to the CPU — the compatibility gate compared a CUDA `sm_` tag against a ROCm build's `gfx` list, which can never match — thanks @simmessa! (#1228)
 - AMD/ROCm: `torch.compile` was disabled on all AMD hosts by the same mismatched comparison (#1228)
 - AMD/ROCm: `HSA_OVERRIDE_GFX_VERSION` is auto-set only when your card genuinely needs it and the remap target exists in your build; gfx1150/gfx1151 (Strix Point/Halo) added to the map (#1228)
@@ -36,11 +192,16 @@ The bundled TTS model package (`pyproject.toml`) is versioned independently.
 - Colab notebook: the install cell now catches a broken environment with the real error, instead of a 5-minute health timeout two cells later — thanks @Navdeep-Chauhan-777! (#1229)
 - A GPU with less VRAM than the chosen engine needs is flagged in Settings → Engines before you generate, instead of showing a clean green "accelerated" until the job times out — thanks @AdityaHemantBhat and @beingavais! (#1226, #1222)
 - A generation timeout now names your actual card and its VRAM and recommends a lighter engine (#1226, #1222)
+- First run: Continue and the Hugging Face token box rendered underneath the status bar, off the bottom of the window — the wizard laid itself out against the viewport instead of its own frame (#1241)
 - A busy port 3900 now reports a port conflict instead of "Backend died (exit code 1)", in every language — thanks @xipb14! (#1223)
 - The app verifies it actually freed the port before starting the backend, rather than assuming the kill worked (#1223)
 - A model download truncated near the end is now retried and resumed instead of aborting the whole install — thanks @Reaksa-Cambodia! (#1224)
 - Engine first-use downloads (VoxCPM2, MOSS-TTS-Nano) retry transient network failures instead of failing the load outright (#1224)
 - A backend killed by the OS mid-stream now leaves a low-memory trail in the crash report (#1224)
+
+### CI
+
+- The AppImage launcher's unit tests now run in CI — they existed but nothing executed them (#1258)
 
 ## [0.4.0] — 2026-07-21
 
@@ -78,7 +239,7 @@ The bundled TTS model package (`pyproject.toml`) is versioned independently.
 - First-run consent question for the existing opt-in analytics (two equal buttons, skip = no)
 - First run: when the app auto-opens in a non-English system language, a one-time, dismissible banner offers to switch the UI to English — shown only until you pick a language, never for English systems (#1215)
 - Source builds carry the publishable analytics token and get the same first-run consent ask as installers; opt-in events now note the install channel (installer / docker / source) — thanks @agudmund! (#1193)
-- Official Google Colab notebook (`notebooks/OmniVoice_Studio_Colab.ipynb`) — full app + API feature tour on a free T4
+- Official Google Colab notebook (`notebooks/VoiceStudio_Studio_Colab.ipynb`) — full app + API feature tour on a free T4
 - ROCm Docker image `ghcr.io/debpalash/omnivoice-studio:rocm` (+ `:stable-rocm`, `:X.Y.Z-rocm`) (#1165)
 - `OMNIVOICE_TRUSTED_NETWORKS` — comma-separated CIDRs exempted from the consumption auth gates (share PIN / API key / dictation WS); admin routes stay loopback-only (#1170)
 - Info/warn system notifications are dismissible and stay dismissed across restarts; error-level notices can't be dismissed, and the unclean-shutdown notice is now acknowledged server-side — thanks @agudmund! (#1192)
@@ -108,7 +269,7 @@ The bundled TTS model package (`pyproject.toml`) is versioned independently.
 - Voice-clone trimmer: the preview now plays exactly the selected region on variable-bitrate clips (it had drifted off on VBR/mis-reported-duration files by playing the original file on a different timeline) (#1210)
 - Screen readers now announce the hidden file-picker buttons (batch add, gallery import, stories import) (#1211)
 - Audiobook language selection now reaches the backend — the client had dropped the `language` field, and the tab's Markup reference now lists the reaction tags (`[laughter]`, `[sigh]`, …) that already work there (#1208)
-- A backend that fails to start now says why — exit code and error output, with actionable hints and a one-click report — instead of the evidence-free "Can't reach the local OmniVoice backend" (#1177)
+- A backend that fails to start now says why — exit code and error output, with actionable hints and a one-click report — instead of the evidence-free "Can't reach the local VoiceStudio backend" (#1177)
 - Generation no longer crawls on CPU after a cancelled or failed dub: the TTS model is moved back to the GPU on every exit path, and each generation now verifies its own placement (#1191)
 - A generation queued behind a busy one no longer spends its timeout waiting: the budget starts when a GPU worker picks the job up, so a queued request can't be failed as "too heavy for the available compute" without having run (#1190)
 - One request's timeout no longer cancels unrelated jobs already waiting in the GPU queue (#1190)
@@ -172,11 +333,11 @@ The dubbing release. Dubbed videos stop sounding like a compromise: the music ke
 
 - **In-app analytics is now wired end to end — and still off until you say yes.** The frontend analytics SDK is only ever started *after* you opt in (Settings → Privacy), never at app launch, so a default install still transmits nothing. Two of the SDK's defaults are explicitly disabled because they would be actively harmful here: **autocapture**, which sends the text content of whatever you click — in this app, the script you are about to synthesise, your voice names, your file names — and **session recording**, which records the screen. Events carry metadata only, filtered through the same allowlist as the backend, so no future change can leak your content by adding a field.
 
-- **Opt-in analytics — off by default, and it can't lie to you.** OmniVoice still sends **nothing** out of the box: no accounts, no telemetry, no phone-home, and your text, audio, voices, and projects never leave your machine regardless of what you choose. There is now one toggle in **Settings → Privacy → "Help improve OmniVoice"**, **off unless you turn it on**. If you do, it sends anonymous usage stats — which engine and language you used, how long a generation took, how many *characters* the text had (a number, not the text), and the *type* of any error. It never sends the text you type, your audio, your file names, your voice names, or anything identifying you. That isn't a promise in a policy: an **allowlist in the code** drops any property that isn't on it, so a future change can't leak content by accident, and crash tracebacks are deliberately **not** auto-captured (they can carry file paths and tokens). Turning it off stops everything immediately. Builds from source have no analytics destination at all and don't even show the toggle.
+- **Opt-in analytics — off by default, and it can't lie to you.** VoiceStudio still sends **nothing** out of the box: no accounts, no telemetry, no phone-home, and your text, audio, voices, and projects never leave your machine regardless of what you choose. There is now one toggle in **Settings → Privacy → "Help improve VoiceStudio"**, **off unless you turn it on**. If you do, it sends anonymous usage stats — which engine and language you used, how long a generation took, how many *characters* the text had (a number, not the text), and the *type* of any error. It never sends the text you type, your audio, your file names, your voice names, or anything identifying you. That isn't a promise in a policy: an **allowlist in the code** drops any property that isn't on it, so a future change can't leak content by accident, and crash tracebacks are deliberately **not** auto-captured (they can carry file paths and tokens). Turning it off stops everything immediately. Builds from source have no analytics destination at all and don't even show the toggle.
 
 - **Settings → Usage: see what you've made, counted entirely on your own machine.** Takes generated, audio produced, voices, days used, and a breakdown by mode and language — all computed from the history already in your own database. It collects nothing new, stores nothing new, and transmits nothing anywhere, no matter what you've chosen under Settings → Privacy: this panel is *yours*, it works with analytics switched off, and it never phones home. If you want to know what you've been making, the answer shouldn't require sending it to anyone.
 
-- **The memory panel now tells the whole truth.** `Settings → Models` (and `GET /model/loaded`) used to report only the OmniVoice core model — a resident second engine like MLX-Audio, or the warm dictation model, was invisible, so the memory picture looked ~2 GB lighter than reality. It now lists every resident model (in-process engines and the dictation ASR included) and adds a system block with free/total RAM (and free VRAM on a dedicated GPU) plus a low-memory warning. On top of that, a load that starts while memory is already low leaves a breadcrumb in the backend log, so a subsequent out-of-memory kill points at the load that tipped it instead of dying silently. Advisory only — nothing is blocked (the OS can reclaim memory, and refusing a load on an estimate would brick machines that would actually cope). Tune the threshold with `OMNIVOICE_LOW_MEMORY_HEADROOM_GB` (default 2).
+- **The memory panel now tells the whole truth.** `Settings → Models` (and `GET /model/loaded`) used to report only the VoiceStudio core model — a resident second engine like MLX-Audio, or the warm dictation model, was invisible, so the memory picture looked ~2 GB lighter than reality. It now lists every resident model (in-process engines and the dictation ASR included) and adds a system block with free/total RAM (and free VRAM on a dedicated GPU) plus a low-memory warning. On top of that, a load that starts while memory is already low leaves a breadcrumb in the backend log, so a subsequent out-of-memory kill points at the load that tipped it instead of dying silently. Advisory only — nothing is blocked (the OS can reclaim memory, and refusing a load on an estimate would brick machines that would actually cope). Tune the threshold with `OMNIVOICE_LOW_MEMORY_HEADROOM_GB` (default 2).
 
 ### Fixed
 
@@ -212,13 +373,13 @@ The dubbing release. Dubbed videos stop sounding like a compromise: the music ke
 
 - **Clicking "Install" on an engine right after opening Settings could silently do nothing.** When the Engines page opens, it quietly checks each installable engine for an in-flight install to re-attach to. If you clicked Install while that check was still running, your click's status update was thrown away to keep requests orderly — so no progress panel, no error, no retry, just nothing (the install itself *did* start in the background; the UI simply never showed it). Fast machines usually won the race, which is why this mostly showed up as a once-in-a-while CI test failure. The Install click's update can no longer be dropped — it politely waits out the startup check instead. (#1131)
 
-- **Cloning re-listened to your reference clip for every chunk of text — now it listens once.** Before OmniVoice can speak in a cloned voice it has to *encode* the reference clip you gave it. That encode was being redone on **every single piece of the job**: long text is split into chunks, and each chunk re-encoded the same reference from scratch; so did each `[pause]` span, and each chapter segment of an audiobook. A cache to prevent exactly this was written a while back — and then quietly bypassed on the path the Generate button actually takes, so for several releases it only ever helped the API. It's now wired into every path. Measured on an M2, one encode costs **0.4 seconds**, so this gives back roughly **3–4 seconds on a long paragraph** and **about a minute on a 166-segment audiobook** — the same voice, the same audio out, just without listening to your reference clip 166 times. As a bonus, `preprocess_prompt` on the OpenAI-compatible endpoint now actually does something; it was being accepted and silently discarded. (#1130)
+- **Cloning re-listened to your reference clip for every chunk of text — now it listens once.** Before VoiceStudio can speak in a cloned voice it has to *encode* the reference clip you gave it. That encode was being redone on **every single piece of the job**: long text is split into chunks, and each chunk re-encoded the same reference from scratch; so did each `[pause]` span, and each chapter segment of an audiobook. A cache to prevent exactly this was written a while back — and then quietly bypassed on the path the Generate button actually takes, so for several releases it only ever helped the API. It's now wired into every path. Measured on an M2, one encode costs **0.4 seconds**, so this gives back roughly **3–4 seconds on a long paragraph** and **about a minute on a 166-segment audiobook** — the same voice, the same audio out, just without listening to your reference clip 166 times. As a bonus, `preprocess_prompt` on the OpenAI-compatible endpoint now actually does something; it was being accepted and silently discarded. (#1130)
 
 - **Dubbing loaded the 3 GB voice model, threw it away, and loaded it again.** Before transcribing, a dub pulled the entire voice model into memory to read a single setting off it — one that is empty unless you've turned on an off-by-default flag. So it loaded ~3 GB, found nothing, released it a moment later (on Apple Silicon that's a *full* unload), and then had to load the very same model again from cold when it was time to actually speak. Every dub paid for that round trip — roughly **8 seconds**, plus the memory churn on exactly the 16 GB machines where memory pressure is the problem. It now only loads the model when there's genuinely something to read. (#1130)
 
-- **The backend stopped holding the voice model hostage while it loads the transcription model — the 16 GB dub crash.** Before transcribing a dub, OmniVoice makes room by setting the TTS model aside. On an NVIDIA GPU it did. On **Apple Silicon it did nothing at all** — the code bailed out with "unified memory doesn't benefit from offloading". That was half right and wholly wrong: on unified memory, *moving* a model to "CPU" frees nothing (it's the same RAM), but the answer is to **release** it, not to skip the step. So a 16 GB Mac went into a dub holding the ~3 GB voice model, then loaded a ~3 GB transcription model on top of it — measured here: 4.1 GB free before, and large-v3 needs 3 — and the operating system killed the backend mid-transcription. That's the dub that "dropped before emitting any segments". The voice model is now genuinely released when memory is tight (and left alone when it isn't, so a roomy machine pays nothing); it reloads by itself on your next generation. (#1119)
+- **The backend stopped holding the voice model hostage while it loads the transcription model — the 16 GB dub crash.** Before transcribing a dub, VoiceStudio makes room by setting the TTS model aside. On an NVIDIA GPU it did. On **Apple Silicon it did nothing at all** — the code bailed out with "unified memory doesn't benefit from offloading". That was half right and wholly wrong: on unified memory, *moving* a model to "CPU" frees nothing (it's the same RAM), but the answer is to **release** it, not to skip the step. So a 16 GB Mac went into a dub holding the ~3 GB voice model, then loaded a ~3 GB transcription model on top of it — measured here: 4.1 GB free before, and large-v3 needs 3 — and the operating system killed the backend mid-transcription. That's the dub that "dropped before emitting any segments". The voice model is now genuinely released when memory is tight (and left alone when it isn't, so a roomy machine pays nothing); it reloads by itself on your next generation. (#1119)
 
-- **Dubbing on a Mac was transcribing on the CPU — with the GPU sitting idle.** OmniVoice picked its transcription engine without ever looking at your hardware: WhisperX won every time, and WhisperX (like faster-whisper) is built on CTranslate2, which **has no Metal backend at all**. So on Apple Silicon it ran whisper-large-v3 on the *processor*. Measured on an M2, one 30-second chunk: **90 seconds on the CPU versus 20 on the GPU** — slower than realtime, which turned a 16-minute video into a ~48-minute transcribe that looked exactly like a hang. Worse, the slowest chunks blew past the 2-minute per-chunk timeout and were **abandoned entirely**, so the transcript came back with pieces missing and the app blamed a "VRAM-starved GPU" — on a machine that has no VRAM. Apple Silicon now uses MLX, which runs the **same** whisper-large-v3 on the GPU, roughly **4x faster**. Word timing is unchanged: the wav2vec2 forced alignment that lip-sync depends on (±10-30 ms, versus Whisper's own ±100-300 ms) is layered on top exactly as before. Same model, same alignment, four times the speed. Nothing changes on NVIDIA or Linux, where WhisperX already used the GPU. (#1127)
+- **Dubbing on a Mac was transcribing on the CPU — with the GPU sitting idle.** VoiceStudio picked its transcription engine without ever looking at your hardware: WhisperX won every time, and WhisperX (like faster-whisper) is built on CTranslate2, which **has no Metal backend at all**. So on Apple Silicon it ran whisper-large-v3 on the *processor*. Measured on an M2, one 30-second chunk: **90 seconds on the CPU versus 20 on the GPU** — slower than realtime, which turned a 16-minute video into a ~48-minute transcribe that looked exactly like a hang. Worse, the slowest chunks blew past the 2-minute per-chunk timeout and were **abandoned entirely**, so the transcript came back with pieces missing and the app blamed a "VRAM-starved GPU" — on a machine that has no VRAM. Apple Silicon now uses MLX, which runs the **same** whisper-large-v3 on the GPU, roughly **4x faster**. Word timing is unchanged: the wav2vec2 forced alignment that lip-sync depends on (±10-30 ms, versus Whisper's own ±100-300 ms) is layered on top exactly as before. Same model, same alignment, four times the speed. Nothing changes on NVIDIA or Linux, where WhisperX already used the GPU. (#1127)
 
 - **The transcribe screen invented its ETA, and the number was a fiction.** It assumed transcription runs at ~20x realtime — true on a fast GPU — and predicted from the video's length alone. For a 16-minute video it promised **56 seconds**. Once reality overran the guess it pinned itself at "~0s remaining" with the bar frozen at 95%, and sat there for the next three quarters of an hour. It now reports the *real* fraction of the audio transcribed and extrapolates the time left from the speed it can actually observe — so it is right on a fast machine and a slow one, and says nothing at all until it has something true to say. (#1127)
 
@@ -232,59 +393,59 @@ The memory release. The reason the app kept saying "Can't reach the local backen
 
 ### Added
 
-- **Factory reset grew up: Settings → Storage → "Reset & remove".** It used to do exactly one thing — clear your UI preferences — while the only other option was deleting everything and starting over. Between "forget my theme" and "wipe the machine" sat every reset people actually needed. Now there are four one-click tiers — **UI preferences**, **all settings**, **downloaded assets & models**, and **everything OmniVoice did** — plus a per-item checklist if you want to drop just the model weights, just a wedged sidecar engine, or just the history. Every option shows its **real size on disk before you commit**, and the number on the button is exactly what gets freed. Deleting voices, projects or audio asks you to type `DELETE`; nothing irreversible happens on a single click. "Everything" deliberately stops short of the Python environment, so you land on a working first-run screen rather than a rebuild — the app stops its engine, deletes, and starts it again for you. On macOS and Linux the model cache is the **shared** Hugging Face cache, so it's its own checkbox and says so; on Windows and portable installs it's OmniVoice's own, and the app doesn't pretend otherwise.
+- **Factory reset grew up: Settings → Storage → "Reset & remove".** It used to do exactly one thing — clear your UI preferences — while the only other option was deleting everything and starting over. Between "forget my theme" and "wipe the machine" sat every reset people actually needed. Now there are four one-click tiers — **UI preferences**, **all settings**, **downloaded assets & models**, and **everything VoiceStudio did** — plus a per-item checklist if you want to drop just the model weights, just a wedged sidecar engine, or just the history. Every option shows its **real size on disk before you commit**, and the number on the button is exactly what gets freed. Deleting voices, projects or audio asks you to type `DELETE`; nothing irreversible happens on a single click. "Everything" deliberately stops short of the Python environment, so you land on a working first-run screen rather than a rebuild — the app stops its engine, deletes, and starts it again for you. On macOS and Linux the model cache is the **shared** Hugging Face cache, so it's its own checkbox and says so; on Windows and portable installs it's VoiceStudio's own, and the app doesn't pretend otherwise.
 
 - **The Storage panels got a design.** "Remove all data" and "Reset & remove" listed folders as a flat run of text, so a 7.5 GB model cache and a 391-byte config file carried exactly the same visual weight — the one thing you actually wanted to see (where the space went) was the one thing you couldn't. Every row now has an icon, a dimmed path, and a **proportional bar showing its share of what will be freed**, so the big one looks big. The shared Hugging Face cache is promoted out of the confirm dialog into its own "Optional" row with a checkbox, so ticking it moves the running total **in front of you** instead of springing a different number on you at the point of no return, and the dialog now lists exactly what is about to go.
 
 ### Fixed
 
-- **Switching TTS engines no longer stacks their models in memory.** Using a second engine in a session (or a per-request engine override) loaded its model *on top of* the first one's, because the OmniVoice core model and the other engines live in two separate caches that never coordinated — measured on a 16 GB M2, an `omnivoice` → `mlx-audio` switch left the machine holding both (footprint 3.9 GB → 4.3 GB, the ~2.8 GB core never freed). That accumulation is a direct contributor to the memory pressure behind the "Can't reach the local backend" OOM deaths. Now only one TTS engine's model stays resident: resolving an engine hands back every *other* resident engine first (the same `omnivoice → mlx-audio` switch now drops to ~1.5 GB). Steady-state single-engine use is unaffected; an A/B switch pays a re-load on the way back (~8 s for the OmniVoice core, ~1–2 s for the lighter engines). Opt out with `OMNIVOICE_SINGLE_ENGINE_RESIDENT=0` if you have RAM to keep several warm. Two underlying leaks are fixed as part of this: every in-process TTS engine's `unload()` now actually frees its model and empties the device cache (previously all but OmniVoice were silent no-ops), and `faster-whisper`'s `unload()` cleared the wrong attribute so its model was never released.
+- **Switching TTS engines no longer stacks their models in memory.** Using a second engine in a session (or a per-request engine override) loaded its model *on top of* the first one's, because the VoiceStudio core model and the other engines live in two separate caches that never coordinated — measured on a 16 GB M2, an `omnivoice` → `mlx-audio` switch left the machine holding both (footprint 3.9 GB → 4.3 GB, the ~2.8 GB core never freed). That accumulation is a direct contributor to the memory pressure behind the "Can't reach the local backend" OOM deaths. Now only one TTS engine's model stays resident: resolving an engine hands back every *other* resident engine first (the same `omnivoice → mlx-audio` switch now drops to ~1.5 GB). Steady-state single-engine use is unaffected; an A/B switch pays a re-load on the way back (~8 s for the VoiceStudio core, ~1–2 s for the lighter engines). Opt out with `OMNIVOICE_SINGLE_ENGINE_RESIDENT=0` if you have RAM to keep several warm. Two underlying leaks are fixed as part of this: every in-process TTS engine's `unload()` now actually frees its model and empties the device cache (previously all but VoiceStudio were silent no-ops), and `faster-whisper`'s `unload()` cleared the wrong attribute so its model was never released.
 
-- **The backend no longer sits on ~2 GB of idle dictation model — the real reason it was being killed on 16 GB Macs.** Four reports of *"Can't reach the local OmniVoice backend"* (#1076, #1092, #1093, #1101) all died at the same moment: during a generate, on a 16 GB machine. Measuring it showed the generate was never the problem — it costs about 116 MB. The problem was the **baseline**: the backend sat at **~6.2 GB even while idle**. The TTS model has always been unloaded after an idle timeout, but the speech-recognition model used for dictation never was — so once you dictated a single time, ~2 GB stayed resident for as long as the app ran. On a 16 GB Mac, that plus the app, macOS, and your other programs is enough for the system to run out of memory and kill the backend, which surfaced as the "can't reach the backend" error. Dictation's model now gets the same idle release the TTS model already had, handing that memory back. The only cost is a ~1.4-second re-warm on your next dictation after a long pause, and a live dictation session is pinned so nothing is ever unloaded mid-sentence.
+- **The backend no longer sits on ~2 GB of idle dictation model — the real reason it was being killed on 16 GB Macs.** Four reports of *"Can't reach the local VoiceStudio backend"* (#1076, #1092, #1093, #1101) all died at the same moment: during a generate, on a 16 GB machine. Measuring it showed the generate was never the problem — it costs about 116 MB. The problem was the **baseline**: the backend sat at **~6.2 GB even while idle**. The TTS model has always been unloaded after an idle timeout, but the speech-recognition model used for dictation never was — so once you dictated a single time, ~2 GB stayed resident for as long as the app ran. On a 16 GB Mac, that plus the app, macOS, and your other programs is enough for the system to run out of memory and kill the backend, which surfaced as the "can't reach the backend" error. Dictation's model now gets the same idle release the TTS model already had, handing that memory back. The only cost is a ~1.4-second re-warm on your next dictation after a long pause, and a live dictation session is pinned so nothing is ever unloaded mid-sentence.
 
 - **Folder sizes under 1 KB displayed as "0 KB".** The uninstall panel's `391 B` config folder rendered as `0 KB` — which reads as "nothing here" for a folder that very much exists. The Storage panels now share one byte formatter that can say `391 B`.
 
 - **Some styling silently did nothing.** A handful of components referenced CSS custom properties that were never defined (`--chrome-fg-subtle`, `--chrome-bg-raised`, `--color-warning`). An undefined `var()` makes the whole declaration invalid, so the browser drops it and the element quietly inherits — the dimmed folder paths in the Storage panels weren't dimmed at all. Fixed in those panels, and a new guard (`frontend/src/test/cssTokens.test.js`) fails on any bare `var(--token)` in JSX that isn't defined in a stylesheet or documented as runtime-injected, so a typo can't ship as invisible styling again.
 
-- **Uninstalling now removes the saved-environment file it used to leave behind.** OmniVoice keeps a small `~/.config/omnivoice/env` file (the model-cache location you chose, and any saved Hugging Face token). Every uninstall path — the in-app "Remove all data", `scripts/uninstall.sh`, and `scripts/uninstall.ps1` — walked right past it, so a later reinstall silently picked the *old* file back up and redirected its downloads to a location you may have long since deleted. All three now list and remove it (it's the same `~/.config/omnivoice` path on every OS, Windows included), and the per-platform tables in `docs/install/uninstall.md` document it.
+- **Uninstalling now removes the saved-environment file it used to leave behind.** VoiceStudio keeps a small `~/.config/omnivoice/env` file (the model-cache location you chose, and any saved Hugging Face token). Every uninstall path — the in-app "Remove all data", `scripts/uninstall.sh`, and `scripts/uninstall.ps1` — walked right past it, so a later reinstall silently picked the *old* file back up and redirected its downloads to a location you may have long since deleted. All three now list and remove it (it's the same `~/.config/omnivoice` path on every OS, Windows included), and the per-platform tables in `docs/install/uninstall.md` document it.
 
 - **Disk usage now counts installed sidecar engines instead of hiding them.** Settings → Storage measured engine venvs in `backend/engines` — the built-in engine *code*, which has no venvs — so a multi-GB IndexTTS-2 install (which actually lives in `DATA_DIR/engines/<id>`) was invisible in the engine row and quietly rolled into the data dir's "other" subtotal. The report now points at the real install location and sizes the **whole** install (venv + checkout + weights), counted once, so "IndexTTS-2 — 6.2 GB" shows up where you'd look for it.
 
 ## [0.3.20] — 2026-07-12
 
-The follow-through release. v0.3.19 promised that "Can't reach the local OmniVoice backend" would stop firing while the backend was merely restarting — and then a user hit it anyway, on 0.3.19, because the fix had a race in it. That's closed properly here. Uninstalling also stopped being a thing only maintainers could do: it's now a button in the app, where the person who asked for it can actually reach it.
+The follow-through release. v0.3.19 promised that "Can't reach the local VoiceStudio backend" would stop firing while the backend was merely restarting — and then a user hit it anyway, on 0.3.19, because the fix had a race in it. That's closed properly here. Uninstalling also stopped being a thing only maintainers could do: it's now a button in the app, where the person who asked for it can actually reach it.
 
 ### Added
 
-- **Uninstall is now in the app: Settings → Storage → "Remove all data".** The v0.3.19 uninstaller was a *script* — which never reached the people who needed it, since anyone who installed the .dmg / .msi / AppImage has no repo to run it from (exactly the case in #1089). The app now lists every folder this install owns with its real size, deletes them behind a typed confirmation, and quits. The **downloaded model weights are a separate, opt-in checkbox**, because that's the standard Hugging Face cache shared with other AI tools on your machine — removing it can delete models OmniVoice never downloaded. Custom and portable install locations are honored, and nothing outside OmniVoice's own folders can be touched. The scripts now also ship as **release assets**, so you can clean up without launching the app at all. (#1089)
+- **Uninstall is now in the app: Settings → Storage → "Remove all data".** The v0.3.19 uninstaller was a *script* — which never reached the people who needed it, since anyone who installed the .dmg / .msi / AppImage has no repo to run it from (exactly the case in #1089). The app now lists every folder this install owns with its real size, deletes them behind a typed confirmation, and quits. The **downloaded model weights are a separate, opt-in checkbox**, because that's the standard Hugging Face cache shared with other AI tools on your machine — removing it can delete models VoiceStudio never downloaded. Custom and portable install locations are honored, and nothing outside VoiceStudio's own folders can be touched. The scripts now also ship as **release assets**, so you can clean up without launching the app at all. (#1089)
 
 ### Fixed
 
-- **"Can't reach the local OmniVoice backend" could still fire on 0.3.19 — the fix had a hole.** The app asks the desktop shell whether a start/restart is in progress before showing that error, but the shell learns of a dead backend from a **2-second poll**: when the backend dies mid-generation, the supervisor needs a moment to notice it, record the crash, and flip its state to "restarting". The app was asking **once**, ~3 seconds in — often still hearing "everything's fine" — and dead-ending on the generic toast anyway. A failed connection *contradicts* "everything's fine", so that answer is now treated as stale rather than authoritative: the app keeps retrying briefly, letting the shell catch up, which turns the failure into the "backend is restarting — hang tight" banner (and gives the crash report time to be written, so you get the real cause instead of a guess). A shell that has genuinely given up, or no shell at all, still errors immediately. (#1101)
+- **"Can't reach the local VoiceStudio backend" could still fire on 0.3.19 — the fix had a hole.** The app asks the desktop shell whether a start/restart is in progress before showing that error, but the shell learns of a dead backend from a **2-second poll**: when the backend dies mid-generation, the supervisor needs a moment to notice it, record the crash, and flip its state to "restarting". The app was asking **once**, ~3 seconds in — often still hearing "everything's fine" — and dead-ending on the generic toast anyway. A failed connection *contradicts* "everything's fine", so that answer is now treated as stale rather than authoritative: the app keeps retrying briefly, letting the shell catch up, which turns the failure into the "backend is restarting — hang tight" banner (and gives the crash report time to be written, so you get the real cause instead of a guess). A shell that has genuinely given up, or no shell at all, still errors immediately. (#1101)
 
 - **The uninstaller was leaving the backend's log folder behind on Linux and Windows.** It cleaned the app-data, config, and Python-env folders but missed where the backend actually writes `backend.log` / `backend_err.log` — `~/.local/state/OmniVoice` on Linux and `%LOCALAPPDATA%\OmniVoice\Logs` on Windows. Both the scripts and the documented path lists now cover them. (#1089)
 
 ## [0.3.19] — 2026-07-12
 
-The honesty release. Every error in here was already *technically* true and practically useless — so this round went after the lies the app tells when something goes wrong. "Can't reach the local OmniVoice backend" no longer fires while the backend is simply still starting; a dead Hugging Face mirror no longer strands the setup wizard with advice it can't follow; and a dub that dies mid-transcription now names the actual cause instead of guessing at it. Alongside that: generated speech starts playing on the *first* chunk instead of the last, and there's finally a real uninstaller.
+The honesty release. Every error in here was already *technically* true and practically useless — so this round went after the lies the app tells when something goes wrong. "Can't reach the local VoiceStudio backend" no longer fires while the backend is simply still starting; a dead Hugging Face mirror no longer strands the setup wizard with advice it can't follow; and a dub that dies mid-transcription now names the actual cause instead of guessing at it. Alongside that: generated speech starts playing on the *first* chunk instead of the last, and there's finally a real uninstaller.
 
 ### Added
 
 - **Generated speech starts playing on the first chunk, instead of after the last one.** Long text is synthesized in chunks, but you used to sit through the entire render before hearing anything. The Studio now streams the preview: audio begins the moment the first chunk is ready and the rest arrives as it renders, so a long passage is audible in about the time the first sentence takes. The take saved to your history is **byte-identical** to the non-streaming render — streaming is a delivery channel, not a different synthesis path — and if a stream fails mid-flight the app falls back to the classic whole-file flow with nothing half-written to disk. (#1088)
 
-- **A clean uninstaller + a straight answer to "where's my data?"** OmniVoice is fully local, so removing it is just deleting the folders it wrote — but until now users had to guess which ones. New `scripts/uninstall.sh` (macOS/Linux) and `scripts/uninstall.ps1` (Windows) find every OmniVoice folder — app data, the multi-GB managed Python env, config, logs, and (separately, because it's shared) the Hugging Face model cache — print each with its size as a **dry-run first**, and delete only on `--yes`. They honor your custom locations (`OMNIVOICE_DATA_DIR`, `HF_HOME`, portable mode) and never touch the app binary. The complete per-platform path list lives in the new `docs/install/uninstall.md`, linked from the README FAQ, SUPPORT, and troubleshooting. (#1089)
+- **A clean uninstaller + a straight answer to "where's my data?"** VoiceStudio is fully local, so removing it is just deleting the folders it wrote — but until now users had to guess which ones. New `scripts/uninstall.sh` (macOS/Linux) and `scripts/uninstall.ps1` (Windows) find every VoiceStudio folder — app data, the multi-GB managed Python env, config, logs, and (separately, because it's shared) the Hugging Face model cache — print each with its size as a **dry-run first**, and delete only on `--yes`. They honor your custom locations (`OMNIVOICE_DATA_DIR`, `HF_HOME`, portable mode) and never touch the app binary. The complete per-platform path list lives in the new `docs/install/uninstall.md`, linked from the README FAQ, SUPPORT, and troubleshooting. (#1089)
 
 ### Fixed
 
 - **A dub that dies mid-transcription now says what actually happened instead of guessing.** "Transcribe stream dropped before emitting any segments. Likely ASR backend failed to load" was a *guess* — and usually the wrong one. The backend is contract-bound to emit a terminal event on every stream even when it fails, so a stream that simply goes silent means the backend **process died underneath it** — on smaller GPUs, almost always a native out-of-memory abort while loading the ASR model on top of a still-resident TTS model. The app now consults the desktop shell's crash forensics and tells you that: the exit code, when it happened, a one-click "View crash details" with the captured error output, and the actual next step (free VRAM / pick a smaller ASR model) rather than "check the backend log". With no crash recorded, the original message still stands. (#1062)
 
-- **"Can't reach the local OmniVoice backend" stopped crying wolf during startups and restarts.** A real backend start or auto-restart takes 10–20+ seconds (Python spawn plus the PyTorch import), but the app's transport retry only bridged ~3 seconds — every click inside that window dead-ended with the scary toast, over and over, even though the backend healed itself moments later. The app now asks the desktop shell whether a start/restart is actually in progress and simply waits for it (up to the shell's own 2-minute restart budget), and shows a single "backend is restarting — hang tight" banner with a "back — carrying on" confirmation — the reconnecting affordance the supervisor has promised since #567. A truly dead backend (or a non-desktop deployment) still errors promptly, and the crash notice keeps telling the honest story.
+- **"Can't reach the local VoiceStudio backend" stopped crying wolf during startups and restarts.** A real backend start or auto-restart takes 10–20+ seconds (Python spawn plus the PyTorch import), but the app's transport retry only bridged ~3 seconds — every click inside that window dead-ended with the scary toast, over and over, even though the backend healed itself moments later. The app now asks the desktop shell whether a start/restart is actually in progress and simply waits for it (up to the shell's own 2-minute restart budget), and shows a single "backend is restarting — hang tight" banner with a "back — carrying on" confirmation — the reconnecting affordance the supervisor has promised since #567. A truly dead backend (or a non-desktop deployment) still errors promptly, and the crash notice keeps telling the honest story.
 
 - **A dead Hugging Face mirror can no longer strand the first-run wizard.** When a model download failed because the *configured* mirror was unreachable, the error pointed at Settings — which first-run users can't open (the wizard gates the studio) — and falsely claimed the mirror setting only applies after a restart (downloads actually pick it up per call, immediately). Now the wizard shows the mirror quick-pick (including "Hugging Face (official)") right next to the failed download and retries it the moment you switch; the corrected hint says retry-first, restart only if it still fails. Two backend holes in the same flow are closed too: switching endpoints clears the "failed recently" retry cooldown (no more 429 on the immediate retry), and clearing to official also removes the legacy `hf_endpoint` pref, which used to silently keep the dead mirror in effect.
 
 ### Changed
 
-- **The first-run wizard shows the app version in its masthead**, next to the OmniVoice Studio title — so setup-time screenshots and bug reports identify the build at a glance (the install splash already did).
+- **The first-run wizard shows the app version in its masthead**, next to the VoiceStudio title — so setup-time screenshots and bug reports identify the build at a glance (the install splash already did).
 
 - **Repo root decluttered.** Retired the finished planning archives (`.planning/`, `specs/`), the pre-React design mockups (`design/`), the legacy research dir (`research/`), and stale third-party agent rules (`.agents/`) — ~110 files of process noise gone; everything stays in git history, and the four load-bearing engine decision docs moved to `docs/adr/`. Contributor-facing only; the app is unchanged.
 
@@ -397,7 +558,7 @@ The community-fixes release. Two contributors didn't just report bugs — they d
 
 ### Added
 
-- **A path to Qwen3-ASR today: generic OpenAI-compatible transcription.** The direct integration is still blocked on `transformers>=5.13` stabilizing upstream, but a community member proposed splitting the work — add a backend that talks to any OpenAI-compatible transcription server right now. Point OmniVoice at a self-hosted Qwen3-ASR/FunASR/SenseVoice server, or OpenAI's own API, configured in Settings → Models. No install; audio does leave your machine to whichever server you configure, unlike every other ASR engine. (#877)
+- **A path to Qwen3-ASR today: generic OpenAI-compatible transcription.** The direct integration is still blocked on `transformers>=5.13` stabilizing upstream, but a community member proposed splitting the work — add a backend that talks to any OpenAI-compatible transcription server right now. Point VoiceStudio at a self-hosted Qwen3-ASR/FunASR/SenseVoice server, or OpenAI's own API, configured in Settings → Models. No install; audio does leave your machine to whichever server you configure, unlike every other ASR engine. (#877)
 
 ### Fixed
 
@@ -413,7 +574,7 @@ The community-fixes release. Two contributors didn't just report bugs — they d
 
 ### Changed
 
-- **Removed the donate heart from the nav rail.** Support OmniVoice is still one click away from Settings and the Contact page.
+- **Removed the donate heart from the nav rail.** Support VoiceStudio is still one click away from Settings and the Contact page.
 
 ### CI
 
@@ -430,14 +591,14 @@ A community-issue sweep — nineteen open reports triaged in one pass, most fixe
 ### Fixed
 
 - **First-run no longer dead-ends behind restricted networks (e.g. China).** The system check probed hardcoded huggingface.co, and any failure locked the Continue button — users behind the Great Firewall were stuck on the very first screen, even when they had already configured a working mirror. The check now probes the Hugging Face endpoint actually in effect, an unreachable endpoint is a warning instead of a blocker (models already on disk keep working offline), and when huggingface.co is blocked but the hf-mirror.com community mirror answers, the wizard says so and offers a one-click mirror switch right on the check screen — no restart needed. (#984)
-- **Installs behind a corporate or antivirus TLS-inspecting proxy no longer fail with a raw SSL error.** `SSLV3_ALERT_HANDSHAKE_FAILURE` happens when a proxy re-signs HTTPS traffic with a root CA your OS trusts but Python's bundled certificate list doesn't — a different failure mode from the network-blocking case above. OmniVoice now trusts your OS's certificate store directly, which should resolve the handshake outright rather than just explain it better. (#976)
-- **The loaded-models panel now says when a resident model is not your active engine.** Switching TTS engines keeps the previous model in VRAM (so switching back is instant) — but the panel showed it with no context, so "OmniVoice TTS — 1.9 GB" after selecting VoxCPM2 looked like the selection was ignored. A field report confirmed the confusion. Resident-but-inactive models are now tagged "not active — safe to unload", and the API self-describes each entry's engine. (#985)
+- **Installs behind a corporate or antivirus TLS-inspecting proxy no longer fail with a raw SSL error.** `SSLV3_ALERT_HANDSHAKE_FAILURE` happens when a proxy re-signs HTTPS traffic with a root CA your OS trusts but Python's bundled certificate list doesn't — a different failure mode from the network-blocking case above. VoiceStudio now trusts your OS's certificate store directly, which should resolve the handshake outright rather than just explain it better. (#976)
+- **The loaded-models panel now says when a resident model is not your active engine.** Switching TTS engines keeps the previous model in VRAM (so switching back is instant) — but the panel showed it with no context, so "VoiceStudio TTS — 1.9 GB" after selecting VoxCPM2 looked like the selection was ignored. A field report confirmed the confusion. Resident-but-inactive models are now tagged "not active — safe to unload", and the API self-describes each entry's engine. (#985)
 - **Voices no longer ship with a hidden echo.** Every non-raw synthesis was getting a small room reverb baked in by the mastering pre-stage — on top of whatever effect preset you chose, so even "Podcast" (which promises *no reverb*) had some, and Cinematic/Warm got it twice. A field report ("a lot of echo/reverb on some of the voices") led straight to it. The mastering stage is now highpass + compressor only; reverb happens only when a preset explicitly declares it. Also documented: cloned voices reproduce the reference clip's room acoustics — dry, close-mic references clone cleanest. (#986)
-- **Your engine selection now actually applies to Dubbing and Batch TTS.** Both hardcoded OmniVoice regardless of what was picked in Settings → Engines — pick VoxCPM2, dub anyway with OmniVoice, no error. Both now resolve the active engine up front; an engine that can't clone from reference audio (KittenTTS, Sherpa-ONNX, Supertonic 3 — fixed preset voices only) fails the job immediately with a clear message naming which engines do support it, instead of silently substituting OmniVoice or mis-cloning every speaker into one voice. Batch only requires cloning when a specific voice is pinned — an unpinned batch job runs on any engine. (#987)
+- **Your engine selection now actually applies to Dubbing and Batch TTS.** Both hardcoded VoiceStudio regardless of what was picked in Settings → Engines — pick VoxCPM2, dub anyway with VoiceStudio, no error. Both now resolve the active engine up front; an engine that can't clone from reference audio (KittenTTS, Sherpa-ONNX, Supertonic 3 — fixed preset voices only) fails the job immediately with a clear message naming which engines do support it, instead of silently substituting VoiceStudio or mis-cloning every speaker into one voice. Batch only requires cloning when a specific voice is pinned — an unpinned batch job runs on any engine. (#987)
 - **AMD ROCm torch install no longer silently falls back to CPU.** A community member (Kaihui-AMD) diagnosed it precisely: the ROCm wheel index we pointed at tops out at PyTorch 2.5.1, but the app pins `torch==2.8.0` — the reinstall was unsatisfiable and silently kept the default CUDA build, which runs on CPU on an AMD GPU. Bumped the default index to one that actually carries the pinned version. (#972)
 - **mlx-audio no longer crashes on unsupported languages.** Selecting a language like Dutch, Spanish, or Portuguese with mlx-audio's Kokoro model crashed with a raw, unreadable internal-details dump instead of a real error — the code was guessing an ISO language code by truncating the language name, which only worked by coincidence for a few languages. Unsupported languages now fail cleanly with a message naming what's actually supported, and no engine can leak a raw crash-internals dump into an error message again. (#977)
 - **The voice-design panel no longer crashes on certain saved voice profiles.** A genuine regression: an earlier translation fix accidentally introduced a crash when a saved design profile's data was incomplete (possible from an older app version or a partial save). Fixed at every layer — the render no longer crashes, both places that restore saved data complete it first, and profiles can no longer be *saved* with incomplete data in the first place. (#983)
-- **Windows: the dictation pill no longer steals focus.** Pressing the dictation shortcut activated the pill window, which meant the auto-paste landed back in OmniVoice instead of whatever app you were dictating into, and the pill would get stuck on screen. Precisely diagnosed by a community reporter; fixed to match how this already worked on macOS. (#982)
+- **Windows: the dictation pill no longer steals focus.** Pressing the dictation shortcut activated the pill window, which meant the auto-paste landed back in VoiceStudio instead of whatever app you were dictating into, and the pill would get stuck on screen. Precisely diagnosed by a community reporter; fixed to match how this already worked on macOS. (#982)
 - **The nemo-parakeet ASR engine's install hint no longer breaks your backend.** Following the in-app "pip install nemo_toolkit[asr]" instruction silently downgraded core packages your backend needs to start — the install reported success, and the breakage only showed up on the next restart. The hint now says plainly that this isn't safe to install into the shared environment. (#974)
 - **A stuck generate now tells you the actual fix.** When a job times out from GPU/VRAM contention, the error explained why but never mentioned Flush/Unload — the one action that actually resolves it, and one the sibling ASR-timeout error already recommended. (#939)
 
@@ -487,15 +648,15 @@ The dictation release — and a deep reliability pass driven by live-testing the
 
 ### Added
 
-- **Sponsor OmniVoice.** A new `SPONSORS.md` (tiers, logo guidelines, how to sponsor), a README Sponsors section, and an in-app Sponsors area (Support page + a footer link) let people back the project — with a one-click "Become a sponsor" that opens a structured GitHub issue form, no account or token needed. Sponsorship is a thank-you, not a paywall: OmniVoice stays free and AGPL-3.0. (#923, #924)
-- **OpenAPI reference in Settings.** A new Settings → OpenAPI page embeds an interactive Scalar reference for OmniVoice's local backend API, with a one-click footer button. Fully local — Scalar is bundled, not loaded from a CDN, and phones home to nothing. (#928)
+- **Sponsor VoiceStudio.** A new `SPONSORS.md` (tiers, logo guidelines, how to sponsor), a README Sponsors section, and an in-app Sponsors area (Support page + a footer link) let people back the project — with a one-click "Become a sponsor" that opens a structured GitHub issue form, no account or token needed. Sponsorship is a thank-you, not a paywall: VoiceStudio stays free and AGPL-3.0. (#923, #924)
+- **OpenAPI reference in Settings.** A new Settings → OpenAPI page embeds an interactive Scalar reference for VoiceStudio's local backend API, with a one-click footer button. Fully local — Scalar is bundled, not loaded from a CDN, and phones home to nothing. (#928)
 - **Engine Self-test.** The Engines matrix gains a "Self-test" button for in-process TTS engines that runs a tiny real synthesis and reports duration + sample rate — proving an engine actually makes audio, not just imports — plus a copy-paste `export OMNIVOICE_*_DIR=…` setup line for opt-in engines right in the "Why unavailable?" panel. (#930)
 - **One canonical HuggingFace-token store + incomplete-download visibility.** The Model Store token field now saves to and is cleared from the same encrypted store as Settings → Credentials (no more two-stores split), and a truncated model cache shows an "incomplete · N MB" state with one-click Repair and Delete instead of masquerading as "not installed". (#927)
 - **Launchpad, reimagined as a deck of cards.** The seven feature cards now fan out with animated waveform faces in each card's accent color; hover or keyboard-focus any card and it comes forward while the rest tuck underneath, and the layout stays usable down to the minimum window size. (#904)
-- **See exactly what OmniVoice keeps on disk — and get warned before space runs out.** Settings → Storage shows real usage for the model cache (with your largest models), app data, engine environments and temp files, plus a free-space gauge and low-disk / near-full-volume warnings with one-click paths to open folders or reclaim space. (#906)
+- **See exactly what VoiceStudio keeps on disk — and get warned before space runs out.** Settings → Storage shows real usage for the model cache (with your largest models), app data, engine environments and temp files, plus a free-space gauge and low-disk / near-full-volume warnings with one-click paths to open folders or reclaim space. (#906)
 - **A "What's new" changelog reader in Settings → Updates.** The available update's real release notes now render in-app, alongside an offline changelog viewer and a one-time "what's new" note after each update. (#909)
 - **Route each AI feature to its own LLM — or switch it off.** A new Settings → LLM Skills panel lists every LLM-powered capability (Cinematic/Autofit translation, slot fitting, glossary auto-extract, direction parsing, dictation cleanup) with a per-skill toggle and provider picker, so sensitive work can stay on a local model while heavier jobs use a remote one. Disabled skills fall back to the exact non-LLM behavior. (#912)
-- **A small thank-you moment, done right.** After a successful export, dub, audiobook, or batch run, OmniVoice may — rarely — show a friendly, dismissible note by the footer heart about supporting development: never more than once a session, at most every 7 days, never for brand-new users, with a permanent "don't ask again". The logs bar also gained an icon and the footer icons now share one size. (#898)
+- **A small thank-you moment, done right.** After a successful export, dub, audiobook, or batch run, VoiceStudio may — rarely — show a friendly, dismissible note by the footer heart about supporting development: never more than once a session, at most every 7 days, never for brand-new users, with a permanent "don't ask again". The logs bar also gained an icon and the footer icons now share one size. (#898)
 
 - **Dictation, rebuilt.** The dictation pill now shows a live waveform the moment the mic opens, streams words as you speak with real download/loading progress on first use, and finishes what you say in about half a second of silence instead of two-and-a-half. Transcripts come out properly capitalized and punctuated. Text insertion is now honest and safe: your clipboard is preserved and restored, failures show what to do (including a one-click jump to macOS Accessibility settings when permission is missing) instead of a false "Pasted", and Esc cancels cleanly at any point. The dictation model also pre-warms in the background after launch, so the first press of the hotkey no longer sits on a cold model load.
 
@@ -504,7 +665,7 @@ The dictation release — and a deep reliability pass driven by live-testing the
 ### Changed
 
 - **A "Get in touch" page that actually guides you.** The Contact page is now clearly-labelled cards (report a bug, request a feature, get community help, support the project, report a security issue) with a sentence each on when to use them, instead of a flat link list. (#925)
-- **Release titles are version-first.** GitHub's release-list sidebar truncates the title, so "OmniVoice Studio v0.3.8" hid the version; releases are now named "vX.Y.Z — OmniVoice Studio" so the version is always visible. (#922)
+- **Release titles are version-first.** GitHub's release-list sidebar truncates the title, so "VoiceStudio v0.3.8" hid the version; releases are now named "vX.Y.Z — VoiceStudio" so the version is always visible. (#922)
 - **Launchpad feature cards now fill the window.** The seven cards (Voice Clone, Voice Design, Video Dubbing, Stories, Audiobook, Voice Gallery, Transcripts) span the full content width on a maximized display instead of a fixed ~780px fan, and reflow responsively (7→3→1 columns) down to the 900×600 minimum — driven by the shell's own width, keeping the animated card faces, hover/keyboard-focus raise, and reduced-motion fallback. (#915)
 - **LLM Providers settings, de-confused.** The old inline "LLM endpoint" box in Translation is gone — LLM Providers is now the one place that owns it. Fields pinned by an environment variable are shown disabled with an explainer instead of silently reverting, the make-active button explains when a provider is env-pinned, and the Cloudflare Account ID is remembered and editable. (#907)
 - **Intel Macs: honestly unsupported for the local backend.** PyTorch no longer ships Intel-Mac builds, so the backend cannot run there; instead of a cryptic dependency error, Intel users now get a clear explanation up front (with the remote-backend option), and the README/docs say so plainly. (#889, #891)
@@ -534,7 +695,7 @@ The dictation release — and a deep reliability pass driven by live-testing the
 
 - **Parakeet TDT transcription now works without an NVIDIA GPU.** The `nemo-parakeet` ASR engine (parakeet-tdt-0.6b-v3, 25 languages, word timestamps) was hard-gated behind CUDA — but a live measurement on an Apple Silicon M2 shows it transcribing at ~10× realtime *on CPU*, roughly 20× faster than the default whisper-large-v3 on the same machine at equal accuracy. The false GPU gate is removed, so Mac and CPU-only users can now pick the dramatically faster engine in Settings → Engines.
 
-- **8 GB GPUs: voice-clone/dub transcription no longer kills the backend.** On cards where the TTS model already held most of the VRAM (e.g. RTX 4060 Ti 8 GB), loading whisper `large-v3` in float16 for a reference-clip or dub transcription died as a *native* CUDA out-of-memory abort — the whole backend process vanished with no error logged, and the app showed "Can't reach the local OmniVoice backend." A new VRAM preflight re-checks free GPU memory right before the ASR load and steps down float16 → int8 → CPU instead of attempting a load that can't fit (opt-out: `OMNIVOICE_ASR_VRAM_PREFLIGHT=0`). (#723)
+- **8 GB GPUs: voice-clone/dub transcription no longer kills the backend.** On cards where the TTS model already held most of the VRAM (e.g. RTX 4060 Ti 8 GB), loading whisper `large-v3` in float16 for a reference-clip or dub transcription died as a *native* CUDA out-of-memory abort — the whole backend process vanished with no error logged, and the app showed "Can't reach the local VoiceStudio backend." A new VRAM preflight re-checks free GPU memory right before the ASR load and steps down float16 → int8 → CPU instead of attempting a load that can't fit (opt-out: `OMNIVOICE_ASR_VRAM_PREFLIGHT=0`). (#723)
 
 ### CI
 
@@ -757,9 +918,9 @@ across dub, generate, and design (a corrupt-binary failure no longer poses as
 
 - **Dubbing a video URL no longer fails with "ffmpeg is not installed."** yt-dlp
   downloads video and audio as separate streams and muxes them with ffmpeg, but
-  it only looked on PATH — so on Windows (where OmniVoice's ffmpeg is a bundled
+  it only looked on PATH — so on Windows (where VoiceStudio's ffmpeg is a bundled
   sidecar / `imageio-ffmpeg` binary off PATH) the merge aborted before the dub
-  could start. yt-dlp is now pointed at the same ffmpeg OmniVoice resolves. (#712)
+  could start. yt-dlp is now pointed at the same ffmpeg VoiceStudio resolves. (#712)
 - **A synth that succeeded no longer 500s because of a history-logging hiccup.**
   If the local database somehow missed schema init, recording the clip to
   generation history failed with *"no such table: generation_history"* and
@@ -857,7 +1018,7 @@ across dub, generate, and design (a corrupt-binary failure no longer poses as
 - **Dubbing a URL no longer fails with `[Errno 22] Invalid argument` on Windows.**
   yt-dlp stamps the downloaded file's modified-time with the video's upload
   date; an out-of-range/invalid timestamp makes the `os.utime` call raise
-  `[Errno 22]` and aborts the whole URL ingest. OmniVoice downloads to a throwaway
+  `[Errno 22]` and aborts the whole URL ingest. VoiceStudio downloads to a throwaway
   file and never uses its mtime, so it now skips the stamp entirely
   (`updatetime=False`). (#642)
 
@@ -954,7 +1115,7 @@ across dub, generate, and design (a corrupt-binary failure no longer poses as
   field now owns its own height (starts taller, and the corner grip grows it
   reliably on every platform). (#595)
 - **An interrupted model download now self-repairs instead of dead-ending.**
-  When the OmniVoice TTS cache was missing weight shards (the usual aftermath of
+  When the VoiceStudio TTS cache was missing weight shards (the usual aftermath of
   an interrupted first download), the next synthesize failed with a 500 and a
   "delete the model and install it again" instruction — a manual dead-end. The
   backend now detects the truncated-cache error on load, re-fetches just the
@@ -1232,7 +1393,7 @@ first-run, and install reliability all get a pass too.
 - **Portable personas (`.ovsvoice`).** Export any voice as a self-contained,
   fully-local persona bundle — identity, optional reference clip, consent
   attestation, SPDX license, and a watermarked preview — and import it back into
-  another OmniVoice install. A privacy toggle ships a **preview-only** bundle so
+  another VoiceStudio install. A privacy toggle ships a **preview-only** bundle so
   no raw recording of your voice has to travel. Verified-own-voice status can't
   be forged by hand-editing a bundle (real recording + consent text + attestation
   required). Legacy `.omnivoice` files still import. See
@@ -1244,7 +1405,7 @@ first-run, and install reliability all get a pass too.
   active engine's GPU verdict (accelerated / caveat / CPU-fallback /
   unavailable). At synth time every TTS entry point (`/generate`,
   `/v1/audio/speech`) enforces the same routing — an engine that can't use this
-  host's GPU returns an explicit error or an `X-OmniVoice-Routing` header instead
+  host's GPU returns an explicit error or an `X-VoiceStudio-Routing` header instead
   of silently dropping to CPU or dying mid-synth. (#21)
 - **Diagnostics suite.** New self-check tooling for when something's wrong: a
   `/system/diagnose` report (and matching backend `--diagnose`), a persistent
@@ -1286,7 +1447,7 @@ first-run, and install reliability all get a pass too.
   crossfade removes the per-generation length cap, and a new sentence-by-sentence
   `/ws/tts` streams audio as it's produced. An inline `[pause Nms]` marker
   inserts measured silence in generated speech. (#276, #357, #358)
-- **MCP server v1.** OmniVoice mounts an MCP server on `/mcp` (with a stdio shim
+- **MCP server v1.** VoiceStudio mounts an MCP server on `/mcp` (with a stdio shim
   and per-agent voice binding) so it can act as a local TTS/STT provider for
   agentic pipelines. (#368)
 - **Remote-backend access.** Point the desktop UI at a remote backend URL with a
@@ -1302,7 +1463,7 @@ first-run, and install reliability all get a pass too.
 ### Fixed
 
 - **Transcription/dubbing failed when ffmpeg wasn't on `PATH`** (notably on
-  Windows). WhisperX now decodes audio through OmniVoice's own validated ffmpeg
+  Windows). WhisperX now decodes audio through VoiceStudio's own validated ffmpeg
   binary instead of a bare `PATH` lookup, so ASR works without a system ffmpeg
   install. (#479)
 - **Translation defaulted the source language to English.** Dubbing/translation
@@ -1551,4 +1712,4 @@ Region selector, realtime download speed, retry buttons, recheck top-right, HF m
 
 ## Earlier releases
 
-See [GitHub Releases](https://github.com/debpalash/OmniVoice-Studio/releases) for prior versions.
+See [GitHub Releases](https://github.com/debpalash/VoiceStudio/releases) for prior versions.

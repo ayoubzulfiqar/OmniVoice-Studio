@@ -1,10 +1,10 @@
-# OmniVoice Studio — Install with Docker
+# VoiceStudio — Install with Docker
 
 For headless servers, dedicated GPUs, or "I want one command" deployments.
 The docker image bundles the backend; the UI is served over HTTP and you open
 it in a normal browser.
 
-**Official images:** [`ghcr.io/debpalash/omnivoice-studio`](https://github.com/debpalash/OmniVoice-Studio/pkgs/container/omnivoice-studio)
+**Official images:** [`ghcr.io/debpalash/omnivoice-studio`](https://github.com/debpalash/VoiceStudio/pkgs/container/omnivoice-studio)
 and [`palashdeb/omnivoice-studio` on Docker Hub](https://hub.docker.com/r/palashdeb/omnivoice-studio) — same images, same tags.
 
 > **Image ↔ version mapping**
@@ -13,12 +13,12 @@ and [`palashdeb/omnivoice-studio` on Docker Hub](https://hub.docker.com/r/palash
 > |-----|--------------|
 > | `:latest` | **Rolling preview** — latest commit on `main`, at or ahead of the last release. This is the preview channel; pin `:stable` for production. |
 > | `:stable` | Most recent versioned release (updated on every `v*` git tag) |
-> | `:0.4.0` | Exact release version |
+> | `:0.4.1` | Exact release version |
 > | `:0.4` | Latest patch within the 0.4 minor |
 > | `:main` | Alias of the same rolling `main` build as `:latest` |
 > | `:sha-xxxxxxx` | Specific commit (produced by manual workflow dispatch) |
 > | `:rocm` | **AMD GPU (ROCm) build** of the rolling preview — the ROCm analogue of `:latest` |
-> | `:stable-rocm`, `:0.4.0-rocm`, `:0.4-rocm`, `:sha-xxxxxxx-rocm` | ROCm builds of the corresponding CUDA tags above |
+> | `:stable-rocm`, `:0.4.1-rocm`, `:0.4-rocm`, `:sha-xxxxxxx-rocm` | ROCm builds of the corresponding CUDA tags above |
 >
 > Versioning rule: preview builds always come from `main` and never
 > version-sort below `:stable` — upgrades flow naturally.
@@ -89,7 +89,7 @@ PublishPort=127.0.0.1:3900:3900
 Volume=omnivoice-data:/app/omnivoice_data
 ```
 
-Release pins exist too: `:stable-rocm`, `:0.4.0-rocm`, `:0.4-rocm` mirror
+Release pins exist too: `:stable-rocm`, `:0.4.1-rocm`, `:0.4-rocm` mirror
 the CUDA tags exactly.
 
 > **Consumer cards and APUs (RX 6000/7000, Strix Point/Halo):** the backend
@@ -115,9 +115,18 @@ docker exec omnivoice python3 -c \
 
 (ROCm-built PyTorch reports through `torch.cuda.*` — `True` plus your card's
 name means torch can see the GPU.) That check alone isn't proof the app is
-using it: **Settings → System** shows the device OmniVoice actually resolved.
+using it: **Settings → System** shows the device VoiceStudio actually resolved.
 If it reads `cpu` while the command above prints `True`, the backend log line
 starting `Falling back to CPU:` names the architecture mismatch it hit.
+
+If the command prints `False`, **Settings → System** now says why, and the
+three answers need different fixes:
+
+| What it says | What to do |
+|---|---|
+| `/dev/kfd is not present` | The container was started without `--device /dev/kfd --device /dev/dri`, or the host's `amdgpu` driver isn't loaded. |
+| `this process cannot open it` | A group problem. Run `ls -l /dev/kfd /dev/dri/render*` **on the host**, and pass those GIDs with `--group-add`. The numbers differ between machines — a `--group-add 39` copied from someone else's command grants nothing. |
+| `no GPU was enumerated` | The device nodes are fine and the runtime still found nothing — usually a card newer than the image's ROCm. Check `rocminfo` on the host, and see the `HSA_OVERRIDE_GFX_VERSION` note above. |
 
 ## Docker Compose (recommended)
 
@@ -141,7 +150,7 @@ enforces loopback-only.
 
 <a id="lan-access"></a>
 
-To expose OmniVoice on your LAN (e.g. you're running it on a homelab box and
+To expose VoiceStudio on your LAN (e.g. you're running it on a homelab box and
 opening the UI from a laptop), change the host port mapping:
 
 ```yaml
@@ -152,7 +161,7 @@ services:
       - "0.0.0.0:3900:3900"   # ← was 127.0.0.1:3900:3900
 ```
 
-The OmniVoice frontend defaults to the **same origin** the page was served
+The VoiceStudio frontend defaults to the **same origin** the page was served
 from, so opening the UI from `http://<lan-ip>:3900` Just Works for both the
 page load *and* the API/media requests it makes afterwards.
 
@@ -173,7 +182,7 @@ docker run -e OMNIVOICE_PUBLIC_API_BASE=https://api.your-host.example \
 > may instead bake `VITE_OMNIVOICE_API` at build time, but the runtime var above
 > is simpler and image-agnostic.
 
-> **Security:** OmniVoice ships no authentication. Anything on your LAN with
+> **Security:** VoiceStudio ships no authentication. Anything on your LAN with
 > the URL can use the app. Put it behind a reverse proxy with `basic_auth`
 > (Caddy / nginx + htpasswd) or a private network overlay (Tailscale, ZeroTier)
 > before exposing publicly.
@@ -210,7 +219,10 @@ Two paths are worth persisting across container restarts:
 - **GPU not detected (AMD):** make sure you pulled the `:rocm` tag (the default
   image is CUDA-only) and passed `--device /dev/kfd --device /dev/dri`. Check
   the container sees the card with
-  `docker exec omnivoice rocminfo | grep -i gfx`; on RDNA3 consumer cards try
-  `-e HSA_OVERRIDE_GFX_VERSION=11.0.0` — see
-  [Pull and run (AMD GPU / ROCm)](#pull-and-run-amd-gpu--rocm) above.
+  `docker exec omnivoice rocminfo | grep -i gfx`. On consumer cards, run
+  **without** any `HSA_OVERRIDE_GFX_VERSION` first — the backend sets it
+  itself when your card needs it, and overriding a natively-supported GPU
+  only forces it onto foreign kernels. See
+  [Pull and run (AMD GPU / ROCm)](#pull-and-run-amd-gpu--rocm) above for when
+  to set one by hand.
 - More entries: [docs/install/troubleshooting.md](troubleshooting.md).

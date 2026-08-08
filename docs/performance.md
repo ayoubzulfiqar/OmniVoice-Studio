@@ -1,6 +1,6 @@
 # Performance guide
 
-Where the time goes when OmniVoice feels slow, what you can tune, and what you
+Where the time goes when VoiceStudio feels slow, what you can tune, and what you
 should leave alone. Everything here applies to the current release; numbers
 marked "measured" come from `scripts/bench_pipeline.py` on a 16 GB Apple
 Silicon M2 — your hardware will differ, but the *ratios* hold.
@@ -90,6 +90,7 @@ None of them are required — the defaults are chosen for the common case.
 | `OMNIVOICE_INDEXTTS_FP16` | `1` | IndexTTS half-precision. Leave on. |
 | `OMNIVOICE_ASR_VRAM_PREFLIGHT` | `1` | Downgrade transcription precision instead of crashing when VRAM is short (CUDA). Leave on. |
 | `OMNIVOICE_GENERATE_TIMEOUT_S` | `300` | Abandon a generation after this many seconds **of actual compute** — the clock starts when a GPU worker picks the job up, never while it waits in line. It's a floor, not a ceiling: the budget grows with the text (+1 s per 40 characters past the first 1200), so long inputs rarely need this raised. |
+| `OMNIVOICE_ENGINE_IMPORT_PROBE_TIMEOUT_S` | `60` | How long to wait while checking that a sidecar engine's virtualenv can import the engine. Only affects how quickly a *broken* venv is ruled out — a probe that runs out of time is treated as "unproven", and the venv is used anyway, so a slow machine is never told its engine is missing. Per-engine override: `OMNIVOICE_INDEXTTS_IMPORT_PROBE_TIMEOUT_S` (and the same shape for `CONFUCIUS4`, `DOTS_TTS`, `MOSS_TTS_V15`). |
 | `OMNIVOICE_GPU_QUEUE_TIMEOUT_S` | `1800` | How long a job may sit in the GPU queue before it's reported as a saturated pool (a retryable condition — nothing ran). Waiting is normal on 1-worker machines; lower this only if you'd rather fail fast than queue. |
 
 **torch.compile** is probe-based, not platform-based: it's attempted only
@@ -100,6 +101,35 @@ The one user-facing control is Settings → Performance → "Disable
 torch.compile" (shown on Windows), for the rare setup where a partial Triton
 install makes the probe pass but the compile attempt itself crash — see
 [Windows install notes](install/windows.md).
+
+## Warnings before a slow generation
+
+The 300 s budget used to be discovered the hard way: you pressed Generate,
+waited out the whole budget, and were then told the job was too heavy. Two
+checks now run **before** the request leaves the app, at the one call every
+synthesis path shares (Generate, voice previews, the compare modal, the stories
+editor, profile previews, and streaming).
+
+| Situation | What you see |
+| --- | --- |
+| The engine declares a VRAM floor above what this GPU has, or routing fell back to CPU | The routing caveat, naming your card, the engine's floor, and the ways around it |
+| The host synthesizes on the CPU **and** the text is over 1200 characters | A heads-up that this generation may exceed the time budget |
+
+**Why 1200 characters:** it is the same figure the budget itself uses. The first
+1200 characters get the flat `OMNIVOICE_GENERATE_TIMEOUT_S`, and only past that
+does the budget start growing (+1 s per 40 characters). Below the threshold you
+are inside a budget the backend already considers generous, so ordinary
+sentences on a CPU laptop stay quiet.
+
+Both warnings are **advisory** — nothing is blocked. A driver can page to system
+RAM, and a short input fits where a long one does not, so the engine still runs
+if you want it to. Each fires **once per engine per session**, keyed on the
+reason, so a genuinely different problem still gets through but the same
+sentence is not repeated on every synthesis. Switching engines re-arms it.
+
+If you are already on a CPU-tuned engine (OmniVoice GGUF, Supertonic-3) the
+warning drops the "try a CPU-tuned engine" suggestion — it would be advice to
+switch to what you are already using.
 
 ## Flush caches / Unload resident model
 
