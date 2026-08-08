@@ -283,19 +283,33 @@ export default function SetupWizard({ onReady }) {
   const STEP_SUBTITLES = {
     system: t('setup.system_check_desc'),
     models: t('setup.install_models_desc'),
-    consent: t('consent.title', 'Help improve OmniVoice?'),
+    consent: t('consent.title', 'Help improve VoiceStudio?'),
     dictation: t('setup.try_dictation'),
   };
   const STEP_LABELS = {
     system: t('setup.system_check'),
     models: t('firstrun.stage_models', 'Models & engines'),
-    consent: t('consent.step_label', 'Improve OmniVoice'),
+    consent: t('consent.step_label', 'Improve VoiceStudio'),
     dictation: t('setup.try_dictation'),
   };
 
   return (
-    <div className="fixed inset-0 flex flex-col items-center overflow-hidden bg-bg px-6 pt-12 font-sans text-fg">
-      <div className="flex w-full max-w-[1100px] flex-1 flex-col">
+    // `absolute`, not `fixed`: this mounts inside `.app-wizard-wrap`, and a
+    // fixed root would ignore that box and lay its pinned footer out against
+    // the viewport — putting Continue and the HF-token card behind the status
+    // bar, off the bottom of the window. `pb-4` keeps the pinned row off the
+    // very edge now that it really is the last thing on screen.
+    <div className="absolute inset-0 flex flex-col items-center overflow-hidden bg-bg px-6 pb-4 pt-12 font-sans text-fg">
+      {/* min-h-0 is THE fix for the pushed-off-screen Continue button: without
+          it this wrapper's automatic minimum height is its CONTENT height (per
+          flex spec, min-height:auto on a column-flex item resolves to
+          min-content, and the step's flex-basis:auto contributes its full
+          content) — so the wrapper silently grows past the root, the root's
+          overflow-hidden clips everything below the window, and no inner
+          min-h-0/overflow-y-auto clamp further down can ever engage. Measured
+          in a real engine (Chromium): footer at y=3078 in a 900px window
+          without this class; y=884 and the list scrolling with it. */}
+      <div className="flex w-full min-h-0 max-w-[1100px] flex-1 flex-col">
         {/* ── Masthead: identical identity to setup + install acts ────────── */}
         <header
           className="fr-rise flex flex-col gap-3 pb-1"
@@ -311,7 +325,7 @@ export default function SetupWizard({ onReady }) {
                   className="m-0 font-serif text-[clamp(1.6rem,3vw,2.2rem)] font-semibold leading-tight tracking-tight"
                   data-tauri-drag-region
                 >
-                  OmniVoice Studio
+                  VoiceStudio
                 </h1>
                 {/* Same identity mark as the install splash footer. */}
                 <span
@@ -424,7 +438,7 @@ export default function SetupWizard({ onReady }) {
               className="fr-rise flex min-h-0 flex-1 flex-col gap-2.5"
               style={{ '--rise': 1 }}
             >
-              <SectionHead>{t('consent.title', 'Help improve OmniVoice?')}</SectionHead>
+              <SectionHead>{t('consent.title', 'Help improve VoiceStudio?')}</SectionHead>
               <div className="min-h-0 flex-1 overflow-y-auto pt-2">
                 <AnalyticsConsentCard onDone={() => setStep(step + 1)} />
               </div>

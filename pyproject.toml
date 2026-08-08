@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omnivoice"
-version = "0.4.0"
+version = "0.4.2"
 description = "OmniVoice: Towards Omnilingual Zero-Shot Text-to-Speech with Diffusion Language Models"
 readme = "README.md"
 # Free and open-source under the GNU Affero General Public License v3 (see
@@ -36,6 +36,7 @@ classifiers = [
 dependencies = [
     "torch>=2.4",
     "torchaudio>=2.4",
+    "torchvision>=0.19",
     "transformers>=5.3.0",
     "accelerate",
     "pydub",
@@ -85,7 +86,10 @@ dependencies = [
     "parakeet-mlx>=0.5.2 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "demucs>=4.0.1",
     "yt-dlp>=2024.12.13",
-    "alembic>=1.13",
+    # >=1.16: alembic.ini relies on path_separator=os (new in 1.16.0), which
+    # older alembic silently ignores and then colon-splits C:\ paths /
+    # space-splits POSIX paths containing spaces.
+    "alembic>=1.16",
     # Lightweight English TTS "Turbo" tier — 25-80 MB ONNX model, 8 preset
     # voices (Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki, Leo), CPU
     # realtime on any platform. Complements OmniVoice's 2.4 GB multilingual
@@ -240,6 +244,9 @@ torch = [
 torchaudio = [
   { index = "pytorch-cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+torchvision = [
+  { index = "pytorch-cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 
 [[tool.uv.index]]
 name = "pytorch-cuda"
@@ -253,6 +260,7 @@ explicit = true
 constraint-dependencies = [
     "torch==2.8.0",
     "torchaudio==2.8.0",
+    "torchvision==0.23.0",
 ]
 
 [tool.hatch.metadata]

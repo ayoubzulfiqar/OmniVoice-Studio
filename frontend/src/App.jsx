@@ -37,6 +37,7 @@ const AudiobookTab = lazy(() => import('./pages/AudiobookTab'));
 
 import Header from './components/Header';
 import NavRail from './components/NavRail';
+import TitleTabs from './components/TitleTabs';
 import WorkspaceHistory from './components/WorkspaceHistory';
 import WorkspaceVoices from './components/WorkspaceVoices';
 import WorkspaceProjects from './components/WorkspaceProjects';
@@ -68,7 +69,9 @@ const LazyFallback = () => <div className="app-lazy-fallback">{i18n.t('app.loadi
 
 import { Toaster, toast } from 'react-hot-toast';
 import { toastErrorWithReport } from './utils/errorToast';
+import { listenDictationNotice, showDictationNotice } from './utils/dictationNotice';
 import { addBreadcrumb } from './utils/breadcrumbs';
+import { appShellClasses } from './utils/appShellClasses';
 import { recordValueMoment } from './utils/donationMoments';
 import {
   POPULAR_LANGS,
@@ -198,6 +201,9 @@ function App() {
   useEffect(() => {
     addBreadcrumb(`view:${mode}`);
   }, [mode]);
+  // Navigation skin: the icon rail (default) or titlebar tabs (Settings →
+  // Appearance). Only one of the two renders at a time.
+  const navStyle = useAppStore((s) => s.navStyle);
   const [navRailSide, setNavRailSide] = useState(() => {
     try {
       return localStorage.getItem('omnivoice.navRailSide') || 'left';
@@ -239,6 +245,27 @@ function App() {
       if (unlisten) unlisten();
     };
   }, [setMode]);
+
+  // Dictation failures are raised in the widget window, which is never shown —
+  // this is the only place they can reach the user. Without it, a hotkey press
+  // that can't paste (Accessibility ungranted) or can't record (mic denied)
+  // would be indistinguishable from a hotkey that isn't working at all.
+  useEffect(() => {
+    let unlisten;
+    let cancelled = false;
+    (async () => {
+      const stop = await listenDictationNotice(showDictationNotice);
+      // The await above can outlive the effect (StrictMode double-mount, or a
+      // fast unmount) — drop the subscription rather than leaking a listener
+      // that would double every later toast.
+      if (cancelled) stop();
+      else unlisten = stop;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
   const flipNavRailSide = useCallback(() => {
     setNavRailSide((prev) => {
       const next = prev === 'left' ? 'right' : 'left';
@@ -1165,9 +1192,6 @@ function App() {
     return (
       <div style={{ zoom: uiScale }}>
         <BootstrapSplash stage={bootstrapStage} message={bootstrapMessage} />
-        <Suspense fallback={null}>
-          <LogsFooter />
-        </Suspense>
       </div>
     );
   }
@@ -1178,8 +1202,12 @@ function App() {
     // bootstrap being 'ready': while the stage is still settling (checking /
     // awaiting_setup racing the first poll), the wizard must not steal the
     // mount from the install-plan screen.
+    // `--ui-scale`, NOT a bare inline `zoom`: the CSS shrinks the box by the
+    // scale and zooms it back (#504 contract, same as .app-container). An
+    // inline zoom on top of a full-viewport box pushed the pinned
+    // Continue/HF-token row below the window at any scale > 1.
     return (
-      <div className="app-wizard-wrap" style={{ zoom: uiScale }}>
+      <div className="app-wizard-wrap" style={{ '--ui-scale': uiScale }}>
         {/* Invisible drag strip across the top 28 px of the wizard —
             matches the macOS traffic-light zone so the window can be
             dragged / double-click-zoomed from anywhere along the top. */}
@@ -1204,9 +1232,6 @@ function App() {
             }}
           />
         </Suspense>
-        <Suspense fallback={null}>
-          <LogsFooter />
-        </Suspense>
       </div>
     );
   }
@@ -1220,15 +1245,13 @@ function App() {
   return (
     <div
       ref={shellRef}
-      className={[
-        'app-container',
-        isSidebarCollapsed ? 'sidebar-collapsed' : '',
-        hideSidebar ? 'sidebar-hidden' : '',
-        navRailSide === 'right' ? 'rail-right' : '',
+      className={appShellClasses({
+        navStyle,
+        navRailSide,
+        isSidebarCollapsed,
+        hideSidebar,
         shellSizeClass,
-      ]
-        .filter(Boolean)
-        .join(' ')}
+      })}
       style={{ '--ui-scale': uiScale }}
     >
       {pendingTrimFile && (
@@ -1293,6 +1316,7 @@ function App() {
       <Header
         mode={mode}
         setMode={setMode}
+        navStyle={navStyle}
         modelStatus={modelStatus}
         doubleClickMaximize={doubleClickMaximize}
         activeProjectName={activeProjectName}
@@ -1312,7 +1336,9 @@ function App() {
         }}
       />
 
-      <NavRail mode={mode} setMode={setMode} side={navRailSide} onFlipSide={flipNavRailSide} />
+      {navStyle === 'tabs' ? null : (
+        <NavRail mode={mode} setMode={setMode} side={navRailSide} onFlipSide={flipNavRailSide} />
+      )}
 
       <div className="main-content">
         {/* ═══ LAUNCHPAD TAB ═══ */}

@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 import asyncio
@@ -9,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, Executor
 from utils.containment import contain_system_exit
 
 # ── Lazy imports ─────────────────────────────────────────────────────
-# torch and OmniVoice are heavy (~2-3s import on Apple Silicon).
+# torch and VoiceStudio are heavy (~2-3s import on Apple Silicon).
 # Deferring them until first use cuts cold start from ~4s to ~1.5s,
 # so health/status endpoints respond immediately on boot.
 
@@ -25,12 +26,59 @@ def _lazy_torch():
     return _torch
 
 
+def _missing_module_is_omnivoice(exc: ModuleNotFoundError) -> bool:
+    """True when *exc* says the ``omnivoice`` package itself is not importable.
+
+    ``ModuleNotFoundError`` is raised for two very different situations along
+    this import, and only one of them is fixable by putting the source tree on
+    ``sys.path`` (#1415):
+
+    * ``omnivoice`` (or a submodule of it) is genuinely absent — a missing or
+      broken editable install, which the #564 fallback repairs; ``exc.name``
+      names the omnivoice package.
+    * something ``omnivoice`` imports is absent or broken — a torch /
+      torchaudio / torchvision mismatch, or transformers' lazy module refusing
+      an attribute whose backing import failed
+      ("Could not import module 'AutoFeatureExtractor'", which carries no
+      ``name`` at all). Nothing about ``sys.path`` is wrong here.
+
+    Treating the second as the first re-imported from the same broken
+    environment, failed identically, and logged that the editable install was
+    missing — a confident diagnosis of the wrong component.
+
+    ``exc.name`` is the authority, and its absence is decisive rather than
+    unknown: the stdlib always sets it, so a ModuleNotFoundError without one
+    was raised by hand — which is exactly what transformers' lazy module does.
+    """
+    name = getattr(exc, "name", None)
+    if not name:
+        return False
+    return name == "omnivoice" or name.startswith("omnivoice.")
+
+
 def _lazy_omnivoice():
     global _OmniVoice
     if _OmniVoice is None:
         try:
+            # The class is OmniVoice — a library identifier, not product
+            # branding. The VoiceStudio rename must not touch it (checkpoint
+            # configs reference the class name via transformers architectures).
             from omnivoice.models.omnivoice import OmniVoice as _OV
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as exc:
+            if not _missing_module_is_omnivoice(exc):
+                # Something in omnivoice's OWN import chain is missing — not
+                # omnivoice itself (#1415). transformers' lazy module raises
+                # ModuleNotFoundError for any attribute whose backing import
+                # failed ("Could not import module 'AutoFeatureExtractor'"),
+                # and a missing torchaudio/torchvision raises it by name. The
+                # source-tree fallback below cannot fix any of those: it
+                # re-imports from the same broken environment and fails
+                # identically, having logged that the *editable install* is
+                # broken — which sent the reporter, and us, after the wrong
+                # thing. Let it through with its own cause intact; classify()
+                # already names it TRANSFORMERS_IMPORT and hints at the real
+                # remedy.
+                raise
             # The venv's editable install is missing/broken (#564). main.py wires
             # the source fallback at startup, but resolve it here too so the
             # model-load path self-heals and logs the paths it searched.
@@ -46,7 +94,7 @@ from core.config import IDLE_TIMEOUT_SECONDS, CPU_POOL_WORKERS
 
 logger = logging.getLogger("omnivoice.model")
 
-# Per-TTS-job VRAM headroom estimate. OmniVoice's forward + autoregressive
+# Per-TTS-job VRAM headroom estimate. VoiceStudio's forward + autoregressive
 # decode peaks around 1.6 GB, but the interactive clone path co-loads WhisperX
 # large-v3 ASR (~3 GB) to transcribe the reference, so a *concurrent* clone job
 # is realistically ~5 GB. The old 2.5 GB budget over-committed: an 8 GB card
@@ -59,8 +107,52 @@ logger = logging.getLogger("omnivoice.model")
 _GPU_VRAM_PER_JOB_GB = 5.0
 _GPU_WORKER_CAP = 4
 
+class WorkerStopIteration(RuntimeError):
+    """A pool worker raised a bare ``StopIteration``.
+
+    asyncio refuses to put ``StopIteration`` into a Future — ``_copy_future_
+    state`` raises ``TypeError: StopIteration interacts badly with generators
+    and cannot be raised into a Future`` *inside the event loop's callback*, so
+    the ``run_in_executor`` future is never completed and the awaiting caller
+    waits **forever**. Not a theoretical edge: verified on the bundled CPython
+    3.11, and the failure has no error, no event and no timeout — a render just
+    stops, which is indistinguishable to the user from a wedged app.
+
+    Generator-driven engines reach it on ordinary bad input: VoxCPM's
+    ``next_and_close`` is a bare ``next(gen)``, so a generator that ends without
+    yielding (text the model normalises away to nothing, for instance) raises
+    exactly this out of ``backend.generate`` (#1321 class).
+
+    Translating it to a RuntimeError at the pool boundary — the one place every
+    dispatch funnels through — turns a silent hang into a normal failure that
+    the existing per-chapter / per-job error handling reports. Subclasses
+    RuntimeError so every `except Exception` site upstream keeps working.
+    """
+
+
+def _guard_stopiteration(fn):
+    """Wrap `fn` so a bare StopIteration can never escape into a Future."""
+    def _guarded(*a, **kw):
+        try:
+            return fn(*a, **kw)
+        except StopIteration as e:
+            raise WorkerStopIteration(
+                "the engine stopped without producing a result (StopIteration) — "
+                "its generator ended before yielding anything, which usually means "
+                "it could not handle this input"
+            ) from e
+    return _guarded
+
+
+class _GuardedCpuPool(ThreadPoolExecutor):
+    """CPU pool with the same StopIteration guard as the GPU pool."""
+
+    def submit(self, fn, /, *args, **kwargs):
+        return super().submit(_guard_stopiteration(fn), *args, **kwargs)
+
+
 _gpu_pool_singleton: "_ResilientGpuPool | None" = None
-_cpu_pool = ThreadPoolExecutor(max_workers=CPU_POOL_WORKERS)
+_cpu_pool = _GuardedCpuPool(max_workers=CPU_POOL_WORKERS)
 
 
 def _workers_for_free_vram(free_gb: float) -> int:
@@ -107,9 +199,28 @@ def _pick_gpu_workers() -> int:
     return 1
 
 
+# thread_name_prefix for the GPU pool, centralised so the "am I on a gpu-pool
+# worker?" predicates (running_on_gpu_pool below; SubprocessBackend.generate's
+# on-pool skip) cannot drift from the pool's actual prefix. A drift would
+# silently re-introduce the 1-worker self-deadlock this couples against.
+_GPU_POOL_THREAD_PREFIX = "gpu-pool"
+
+
 def _build_gpu_pool() -> ThreadPoolExecutor:
     workers = _pick_gpu_workers()
-    return ThreadPoolExecutor(max_workers=workers, thread_name_prefix="gpu-pool")
+    return ThreadPoolExecutor(
+        max_workers=workers, thread_name_prefix=_GPU_POOL_THREAD_PREFIX)
+
+
+def running_on_gpu_pool() -> bool:
+    """True iff the calling thread is a gpu-pool worker (already holds a slot).
+
+    Routes that dispatch backend work via run_on_gpu_pool_guarded are already on
+    a pool worker; re-acquiring a slot there would self-deadlock on a 1-worker
+    pool (MPS). Used by SubprocessBackend.generate()'s on-pool skip and by
+    _heal_tts_placement.
+    """
+    return threading.current_thread().name.startswith(_GPU_POOL_THREAD_PREFIX)
 
 
 class _ResilientGpuPool(Executor):
@@ -179,7 +290,9 @@ class _ResilientGpuPool(Executor):
                 self._running += 1
             t0 = time.monotonic()
             try:
-                return fn(*a, **kw)
+                # A bare StopIteration here would never reach the caller — it
+                # hangs the awaiting future instead (see WorkerStopIteration).
+                return _guard_stopiteration(fn)(*a, **kw)
             finally:
                 elapsed = time.monotonic() - t0
                 with self._stats_lock:
@@ -295,6 +408,74 @@ GPU_JOB_TIMEOUT_S = float(os.environ.get("OMNIVOICE_GENERATE_TIMEOUT_S", "300.0"
 # bound — crossing it means saturation, which is a retryable 503, not a
 # too-heavy job.
 GPU_QUEUE_TIMEOUT_S = float(os.environ.get("OMNIVOICE_GPU_QUEUE_TIMEOUT_S", "1800.0"))
+
+# ── model-load heartbeats (#1367) ────────────────────────────────────────────
+# A first-use generate on a subprocess engine DOWNLOADS the model inside the
+# job, and the sidecar proves the download is healthy by emitting a progress
+# frame every ~5s. The execution clock above ignored that: a slow connection
+# blew the 300s budget mid-download and the user was told their hardware was
+# too slow, while the sidecar's own watchdog was happily fed. These three make
+# the two clocks agree — a job is only "wedged" when it is SILENT.
+#
+# How long a heartbeat stays fresh. Sidecars emit every ~5s (_HEARTBEAT_S in
+# each engine's main.py); 30s tolerates a stall between frames without keeping
+# a genuinely dead load alive for long.
+MODEL_LOAD_HEARTBEAT_GRACE_S = float(
+    os.environ.get("OMNIVOICE_MODEL_LOAD_HEARTBEAT_GRACE_S", "30.0"))
+# Cap on the EXTRA time heartbeats can buy beyond the normal execution budget.
+# Without a cap, a load that heartbeats but never finishes would hold its
+# worker forever. 1800s of extension ≈ a 5 GB model at ~2.5 MB/s on top of the
+# 300s base — beyond that, telling the user is better than silently waiting.
+MODEL_LOAD_EXTRA_TIMEOUT_S = float(
+    os.environ.get("OMNIVOICE_MODEL_LOAD_TIMEOUT_S", "1800.0"))
+
+# How long a SYNTHESIS heartbeat stays fresh. Much longer than the load grace
+# on purpose: the finest progress signal a generate has is "a chunk finished",
+# and one chunk of a long text on a modest GPU can legitimately take minutes
+# (#1391: an RTX 2060 SUPER with 5.7 GB free). Judging that by the 30s
+# sidecar-frame grace would call every slow-but-healthy render wedged, which is
+# the bug. At this grace the distinction is the honest one: a job that has not
+# finished a single chunk in a whole base budget really has stopped.
+GENERATE_PROGRESS_GRACE_S = float(
+    os.environ.get("OMNIVOICE_GENERATE_PROGRESS_GRACE_S", "300.0"))
+
+#: thread ident -> (monotonic time of its last heartbeat, how long it stays
+#: fresh). Written by report_model_load_activity() / report_generate_progress()
+#: from pool-worker threads, read by the guarded waiter, cleared when the job
+#: ends. Plain dict: CPython dict ops are atomic enough for a small tuple, and
+#: a torn read only costs one 5s wait slice.
+_MODEL_LOAD_ACTIVITY: dict = {}
+
+
+def report_model_load_activity() -> None:
+    """Record that the CURRENT THREAD's job is making model-load progress.
+
+    Called by engine code that can prove liveness — e.g. SubprocessBackend
+    each time a sidecar progress frame arrives during a cold load. The
+    guarded waiter uses it to extend the execution deadline (bounded by
+    MODEL_LOAD_EXTRA_TIMEOUT_S) instead of abandoning a healthy download.
+    """
+    _MODEL_LOAD_ACTIVITY[threading.get_ident()] = (
+        time.monotonic(), MODEL_LOAD_HEARTBEAT_GRACE_S,
+    )
+
+
+def report_generate_progress() -> None:
+    """Record that the CURRENT THREAD's job finished a unit of synthesis.
+
+    Same contract as the load heartbeat, different evidence: a multi-chunk
+    render that just completed chunk 7 of 20 is demonstrably working, however
+    slow it is. Without this, a long text on a modest GPU hit the 300s
+    execution budget mid-render and was abandoned as "too heavy for the
+    available compute" — with most of its chunks already rendered, and no way
+    for the user to tell that from a genuine wedge (#1338/#1348/#1391).
+
+    Carries a longer freshness window than the load heartbeat because chunks
+    are coarse: see GENERATE_PROGRESS_GRACE_S.
+    """
+    _MODEL_LOAD_ACTIVITY[threading.get_ident()] = (
+        time.monotonic(), GENERATE_PROGRESS_GRACE_S,
+    )
 
 
 class GpuJobTimeoutError(TimeoutError):
@@ -457,16 +638,26 @@ async def run_on_gpu_pool_guarded(fn, *, what: str = "GPU job",
 
     started = asyncio.Event()
     _inner = contain_system_exit(fn, what)
+    # The worker thread's ident, published by _job so the waiter can read this
+    # job's model-load heartbeats (#1367). A dict, not a nonlocal: the closure
+    # runs on a pool thread while the waiter reads from the event loop.
+    _ident_box: dict = {}
 
     def _job():
         # First thing the worker does: tell the awaiting coroutine the
         # execution clock may start. call_soon_threadsafe is the only
         # loop-safe way to touch an asyncio primitive from a pool thread.
+        _ident_box["ident"] = threading.get_ident()
         try:
             loop.call_soon_threadsafe(started.set)
         except RuntimeError:
             pass  # loop already closed (caller vanished) — still run the job
-        return _inner()
+        try:
+            return _inner()
+        finally:
+            # Idents are reused by the OS; a stale heartbeat under this ident
+            # must not vouch for some future job on the same thread.
+            _MODEL_LOAD_ACTIVITY.pop(threading.get_ident(), None)
 
     fut = loop.run_in_executor(ex, _job)
     waiter = asyncio.ensure_future(started.wait())
@@ -509,12 +700,71 @@ async def run_on_gpu_pool_guarded(fn, *, what: str = "GPU job",
         )
 
     # Phase 2 — execution. The clock starts here: this job owns a worker.
+    #
+    # Not a single wait_for (#1367): a first-use generate on a subprocess
+    # engine downloads its model inside the job, and the sidecar proves the
+    # download is healthy with progress frames the backend forwards via
+    # report_model_load_activity(). Sliced waiting lets the deadline extend
+    # while those heartbeats stay fresh — bounded by MODEL_LOAD_EXTRA_TIMEOUT_S
+    # — so a slow connection is no longer reported as too-slow hardware. A job
+    # that goes SILENT still dies at the original deadline (± one slice).
+    _t0 = time.monotonic()
+    _soft_deadline = _t0 + timeout
+    _hard_deadline = _soft_deadline + MODEL_LOAD_EXTRA_TIMEOUT_S
+    _extended = False
     try:
-        return await asyncio.wait_for(fut, timeout=timeout)
-    except asyncio.TimeoutError as timeout_exc:
-        # wait_for already cancelled the asyncio wrapper; the worker thread
-        # keeps going regardless. Consume whatever it eventually produces.
+        while True:
+            _now = time.monotonic()
+            if _now < _soft_deadline:
+                _slice = min(_soft_deadline - _now, 5.0)
+            else:
+                # Soft budget exhausted. Keep waiting ONLY on the strength of a
+                # fresh heartbeat from this job's worker thread — a model-load
+                # progress frame, or a completed synthesis chunk. Each carries
+                # its own freshness window (loads report every ~5s; chunks are
+                # minutes apart on slow hardware).
+                _beat = _MODEL_LOAD_ACTIVITY.get(_ident_box.get("ident"))
+                _last, _grace = _beat if _beat else (None, 0.0)
+                if (_last is None
+                        or _now - _last > _grace
+                        or _now >= _hard_deadline):
+                    raise asyncio.TimeoutError()
+                if not _extended:
+                    _extended = True
+                    logger.info(
+                        "%s reached its %.0fs execution budget while still "
+                        "making progress — extending while heartbeats continue "
+                        "(grace %.0fs, cap +%.0fs) (#1367/#1391).",
+                        _log_safe(what), timeout, _grace,
+                        MODEL_LOAD_EXTRA_TIMEOUT_S,
+                    )
+                # Wake at the next decision point (heartbeat expiry or the
+                # cap), not a fixed 5s — a fixed slice overshoots both.
+                _slice = max(0.05, min(
+                    (_last + _grace) - _now,
+                    _hard_deadline - _now,
+                    5.0,
+                ))
+            _done, _ = await asyncio.wait({fut}, timeout=_slice)
+            if _done:
+                return fut.result()
+    except asyncio.CancelledError:
+        # Caller went away mid-execution. The old wait_for cancelled the
+        # wrapper itself; asyncio.wait does not, so do both halves here or the
+        # eventual result is logged as "Future exception was never retrieved".
+        fut.cancel()
         fut.add_done_callback(_swallow_abandoned)
+        raise
+    except asyncio.TimeoutError as timeout_exc:
+        # Parity with the old wait_for semantics: cancel the asyncio wrapper;
+        # the worker thread keeps going regardless. Consume whatever it
+        # eventually produces.
+        fut.cancel()
+        fut.add_done_callback(_swallow_abandoned)
+        # Capture the stacks BEFORE reset(): reset() replaces the executor, and
+        # once the wedged thread is no longer a pool worker we can no longer
+        # tell it apart from any other thread in the process.
+        stacks = log_gpu_pool_worker_stacks(what, timeout, executor=ex)
         _reset = getattr(ex, "reset", None)
         if callable(_reset):
             try:
@@ -529,11 +779,188 @@ async def run_on_gpu_pool_guarded(fn, *, what: str = "GPU job",
                 logger.exception("GPU pool reset after %s timeout failed",
                                  _log_safe(what))
         raise GpuJobTimeoutError(
-            _timeout_guidance(what, timeout, min_vram_gb)
+            _timeout_guidance(
+                what, timeout, min_vram_gb, wedged=_stack_shows_a_wedge(stacks),
+            )
         ) from timeout_exc
 
 
-def _timeout_guidance(what: str, timeout: float, min_vram_gb: float = 0.0) -> str:
+#: Frames to keep per wedged worker. Deep enough to cross the engine adapter
+#: into the model's own call stack, shallow enough that a 1-worker and an
+#: 8-worker host both produce a log a human will actually read.
+_WEDGE_STACK_DEPTH = 25
+
+
+def _live_pool_thread_idents(executor) -> "set | None":
+    """Thread idents belonging to ``executor``'s CURRENT inner pool, or None
+    when they can't be established.
+
+    Needed because a wedged worker survives ``reset()`` — it cannot be
+    cancelled, so it keeps running under the same ``gpu-pool`` name the
+    replacement pool also uses. Without this, the second timeout in a session
+    logs the stale thread alongside the live one with nothing to tell them
+    apart, and the stale stack is the more misleading of the two: it names an
+    operation that is no longer the one that just failed (greptile).
+
+    ``ThreadPoolExecutor._threads`` is private but has been the storage for its
+    worker set since 3.2 and is stable across every version we support; None
+    here is a soft degrade to "label nothing", never an error.
+    """
+    pool = getattr(executor, "_pool", executor)  # unwrap _ResilientGpuPool
+    threads = getattr(pool, "_threads", None)
+    if not threads:
+        return None
+    try:
+        return {t.ident for t in threads if t.ident is not None}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def log_gpu_pool_worker_stacks(what: str, timeout: float, executor=None) -> str:
+    """Log where every GPU-pool worker is currently executing. Never raises.
+
+    The gap this closes (#1338/#1329/#1348): when a job overran its execution
+    budget we logged *that* it had, reset the pool, and returned a message
+    about the machine being too slow — with no record of what the abandoned
+    thread was actually doing. So every report of this class arrived
+    undiagnosable, and the only way forward was to ask the user to reproduce it
+    under a debugger. On an RTX 3060 rendering one sentence, "too heavy for the
+    available compute" is almost certainly the wrong story, and nothing in the
+    log could contradict it.
+
+    ``sys._current_frames()`` reads the frame of every live thread, including
+    one wedged inside a C call — which is exactly the case here, since the
+    worker cannot be cancelled and keeps running after we abandon it. Filtered
+    to gpu-pool workers so the log names the stuck job, not the web server.
+
+    Returns the formatted text (also for tests); empty when nothing matched.
+    """
+    try:
+        import sys as _sys
+        import threading as _threading
+        import traceback as _traceback
+
+        names = {
+            t.ident: t.name for t in _threading.enumerate()
+            if t.ident is not None and t.name.startswith(_GPU_POOL_THREAD_PREFIX)
+        }
+        if not names:
+            return ""
+        live = _live_pool_thread_idents(executor) if executor is not None else None
+        frames = _sys._current_frames()
+        blocks = []
+        for ident, name in sorted(names.items(), key=lambda kv: kv[1]):
+            frame = frames.get(ident)
+            if frame is None:
+                continue
+            if live is None:
+                label = name
+            elif ident in live:
+                label = f"{name} (current pool)"
+            else:
+                label = (
+                    f"{name} (STALE — a worker abandoned by an earlier timeout, "
+                    f"still running; not the job that just failed)"
+                )
+            stack = "".join(_traceback.format_stack(frame, limit=_WEDGE_STACK_DEPTH))
+            blocks.append(f"--- {label} ---\n{stack.rstrip()}")
+        if not blocks:
+            return ""
+        # Stack frames carry absolute source paths, and on a user's machine
+        # those start with their home directory — i.e. their account name. This
+        # log lands in backend.log, which goes into diagnostic bundles and
+        # prefilled bug reports, so it must be sanitized like every other
+        # surfaced text (CWE-532; CodeRabbit). core.failure.sanitize also
+        # redacts HF tokens and *TOKEN*/*KEY*/*SECRET* env values, which a
+        # frame's local-variable-free repr should never contain — but "should
+        # never" is not a reason to log it unredacted.
+        try:
+            from core.failure import sanitize as _sanitize
+            text = _sanitize("\n".join(blocks))
+        except Exception:  # noqa: BLE001 — never lose the diagnostic to this
+            logger.exception("Could not sanitize GPU-pool worker stacks; "
+                             "omitting them rather than logging raw paths")
+            return ""
+        logger.warning(
+            "%s exceeded %.0fs — stack of every GPU-pool worker at the moment "
+            "it was abandoned. The deepest frame is where it is stuck; if that "
+            "is inside the model rather than a data copy, this is a hang and "
+            "not an under-provisioned machine (#1338):\n%s",
+            _log_safe(what), timeout, text,
+        )
+        return text
+    except Exception:  # noqa: BLE001 — diagnostics must never mask the timeout
+        logger.exception("Could not capture GPU-pool worker stacks")
+        return ""
+
+
+#: Standard-library modules whose blocking primitives a wedged worker parks in.
+#: Matched on the *file* of the deepest frame, so a user function that happens
+#: to be named ``wait`` or ``result`` cannot be mistaken for one of these.
+_WEDGE_STDLIB_FILES = (
+    "/threading.py", "\\threading.py",
+    "/asyncio/locks.py", "\\asyncio\\locks.py",
+    "/concurrent/futures/_base.py", "\\concurrent\\futures\\_base.py",
+    "/queue.py", "\\queue.py",
+)
+
+#: Blocking entry points within those modules. A thread sitting in one of these
+#: is waiting on another thread, by definition — there is no slow-but-working
+#: interpretation of it.
+_WEDGE_FUNCTIONS = frozenset({
+    "acquire", "wait", "result", "get", "join", "_wait_for_tstate_lock",
+})
+
+_FRAME_HEAD = re.compile(r'^\s*File "(?P<file>.+)", line \d+, in (?P<func>\S+)\s*$')
+
+
+def _stack_shows_a_wedge(stacks: "str | None") -> bool:
+    """True when the abandoned worker's DEEPEST frame is a blocking wait.
+
+    The message this feeds is the one users actually read, and for years it
+    said the same thing whatever happened: "too heavy for the available
+    compute". That is a specific, testable claim, and when the worker is
+    parked on a lock it is simply false — nothing was computed, so nothing was
+    too heavy. #1416 and #1419 both arrived as "my machine is too slow"
+    reports from people whose jobs never ran at all (a cold load waiting on a
+    lock owned by another event loop, #1417), and #1329 is the same wedge seen
+    from the dub loop. Every one of them was sent to look at their hardware.
+
+    Only the last frame counts, and it must be a blocking primitive in a
+    standard-library module. Both halves matter (CodeRabbit): a compute job's
+    *callers* routinely include a lock it has already left, so scanning the
+    whole stack would flag nearly everything; and an application function
+    named ``wait`` or ``result`` is not evidence of anything, so the function
+    name alone is not enough either.
+
+    Reads the text :func:`log_gpu_pool_worker_stacks` already captured — no
+    second stack walk, and no cost at all on the healthy path.
+
+    Conservative: unknown or unparseable stacks return False and keep the old
+    wording. Claiming a hang we cannot see would be the same mistake pointing
+    the other way.
+    """
+    if not stacks:
+        return False
+    deepest = None
+    for line in str(stacks).splitlines():
+        m = _FRAME_HEAD.match(line)
+        if m:
+            deepest = m
+    if deepest is None:
+        return False
+    func = deepest.group("func")
+    if func not in _WEDGE_FUNCTIONS:
+        return False
+    path = deepest.group("file").replace("\\", "/")
+    return any(
+        path.endswith(tail.replace("\\", "/")) for tail in _WEDGE_STDLIB_FILES
+    )
+
+
+def _timeout_guidance(
+    what: str, timeout: float, min_vram_gb: float = 0.0, *, wedged: bool = False,
+) -> str:
     """Device-aware timeout message (#896): a CPU-only host must never be told
     to "set the engine to CPU" or blamed on VRAM — on CPU the job is simply
     compute-bound. GPU hosts keep the VRAM-contention guidance.
@@ -555,6 +982,20 @@ def _timeout_guidance(what: str, timeout: float, min_vram_gb: float = 0.0) -> st
         device_name, vram_gb = _caps.device_name, _caps.vram_gb
     except Exception:  # noqa: BLE001 — guidance must never mask the timeout
         pass
+    if wedged:
+        # The worker spent the whole budget parked on a lock. None of the
+        # hardware advice below applies — shorter text and a lighter engine
+        # cannot speed up a job that never started (#1416/#1419/#1329).
+        return (
+            f"{what} was abandoned after {timeout:.0f}s without doing any "
+            "work — it spent the whole time waiting on an internal lock, not "
+            "computing. This is a bug in VoiceStudio, not a limit of your "
+            "machine, so shorter text or a lighter engine won't help. "
+            "Restart the backend to clear it (Settings → Logs → Backend has "
+            "the stack trace that was captured), and please report it with "
+            "that log at https://github.com/debpalash/VoiceStudio/issues — "
+            "the trace names exactly where it stopped."
+        )
     common = (
         f"{what} ran for more than {timeout:.0f}s of actual compute time and "
         "was abandoned — the backend is running, but this job was too heavy "
@@ -636,6 +1077,13 @@ def get_watermark_pool() -> ThreadPoolExecutor:
 
 model = None  # type: ignore
 _model_lock = asyncio.Lock()
+
+#: Process-wide exclusion for a cold load that runs INLINE on a GPU-pool
+#: worker (#1417). `_model_lock` cannot serve there — it is an asyncio.Lock
+#: bound to the server loop, and that path arrives on a bootstrap loop from
+#: another thread. A threading.Lock is loop-agnostic, so the two together
+#: guarantee only one cold load is ever in flight whichever route reached it.
+_model_load_thread_lock = threading.Lock()
 _last_used = time.time()
 # Idle timeout is resolved per-tick in _resolve_idle_timeout() (MM2-05) from
 # prefs/env/core.config — no module-level duplicate of IDLE_TIMEOUT_SECONDS.
@@ -749,8 +1197,8 @@ def check_device_compatibility():
     return False, (
         f"{device_name} ({device_arch}) is not supported by this PyTorch build. "
         f"Supported architectures: {', '.join(arch_list)}. "
-        f"Try: pip install torch --index-url "
-        f"https://download.pytorch.org/whl/nightly/cu128"
+        f"Install a build that covers it: pip install --force-reinstall torch "
+        f"--index-url https://download.pytorch.org/whl/cu128"
     )
 
 
@@ -1014,7 +1462,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def should_preload_tts_asr() -> bool:
-    """Whether OmniVoice.from_pretrained should attach PyTorch Whisper.
+    """Whether VoiceStudio.from_pretrained should attach PyTorch Whisper.
 
     The default is intentionally false. On Apple Silicon, eager TTS + ASR
     loading can overcommit unified memory and leave desktop startup stuck
@@ -1024,14 +1472,23 @@ def should_preload_tts_asr() -> bool:
 
 
 def _is_incomplete_cache_error(exc: BaseException) -> bool:
-    """True when `exc` is the truncated-HF-cache class (#352 / #581).
+    """True when `exc` is the truncated-HF-cache class (#352 / #581 / #1273).
 
-    transformers raises an OSError whose message contains "does not appear to
-    have a file named …" when the on-disk snapshot has config/tokenizer files
-    but no weight shard — the signature of an interrupted download. We match on
-    that phrase (stable across transformers 4.x/5.x) rather than the error type,
-    since the same OSError type covers unrelated I/O failures."""
-    return "does not appear to have a file named" in str(exc)
+    transformers raises an OSError when the on-disk snapshot has config and
+    tokenizer files but no weight shard — the signature of an interrupted
+    download. We match on the message (stable across transformers 4.x/5.x)
+    rather than the error type, since the same OSError type covers unrelated
+    I/O failures.
+
+    There are TWO wordings, and this used to match only the first, so a
+    half-written repo whose *subfolder* failed to load (#1273:
+    "Error no file named model.safetensors, … found in directory
+    …/snapshots/<rev>/audio_tokenizer") got neither the automatic repair nor
+    an actionable message — just a raw 500. `core.failure` owns the phrase
+    list so the heal and the error text can't drift apart."""
+    from core.failure import is_incomplete_cache_message
+
+    return is_incomplete_cache_message(str(exc))
 
 
 def _hf_offline() -> bool:
@@ -1105,7 +1562,7 @@ def _manual_cache_delete_hint(checkpoint: str) -> str:
             return ""
         from services.hf_cache_repair import repo_cache_dir
         return (
-            f" If the problem persists, quit OmniVoice, delete "
+            f" If the problem persists, quit VoiceStudio, delete "
             f"{repo_cache_dir(checkpoint)} and restart — the model "
             "re-downloads automatically."
         )
@@ -1257,7 +1714,7 @@ _DEFAULT_OMNIVOICE_CHECKPOINT = "k2-fsa/OmniVoice"
 
 
 def resolve_omnivoice_checkpoint() -> str:
-    """Resolve the OmniVoice TTS checkpoint from ``OMNIVOICE_MODEL``, self-healing
+    """Resolve the VoiceStudio TTS checkpoint from ``OMNIVOICE_MODEL``, self-healing
     a misconfigured value.
 
     A valid checkpoint is either a HuggingFace repo id (``org/repo`` — contains a
@@ -1411,22 +1868,22 @@ def _load_model_sync():
 
     lid = register_listener(_on_hf_progress)
     try:
-        _set_loading("importing", "Importing PyTorch & OmniVoice runtime…")
-        logger.info("Importing PyTorch & OmniVoice runtime…")
+        _set_loading("importing", "Importing PyTorch & VoiceStudio runtime…")
+        logger.info("Importing PyTorch & VoiceStudio runtime…")
         torch = _lazy_torch()
-        OmniVoice = _lazy_omnivoice()
+        VoiceStudio = _lazy_omnivoice()
         device = get_best_device()
 
         checkpoint = resolve_omnivoice_checkpoint()
         _set_loading("loading_weights", f"Loading TTS weights on {device}…")
-        logger.info("Loading OmniVoice model on device: %s", device)
+        logger.info("Loading VoiceStudio model on device: %s", device)
         preload_asr = should_preload_tts_asr()
         if preload_asr:
             logger.info("Preloading PyTorch Whisper with TTS model.")
         else:
             logger.info("Skipping PyTorch Whisper preload; ASR will load on demand.")
         def _load():
-            return OmniVoice.from_pretrained(
+            return VoiceStudio.from_pretrained(
                 checkpoint, device_map=device, dtype=torch.float16, load_asr=preload_asr,
             )
 
@@ -1473,7 +1930,7 @@ def _load_model_sync():
                         f"The TTS model cache for {checkpoint} is incomplete "
                         "(weights missing — usually an interrupted download)."
                         f"{_repair_failure_detail()} "
-                        "Open Settings → Models, delete the OmniVoice TTS model, "
+                        "Open Settings → Models, delete the VoiceStudio TTS model, "
                         f"and install it again.{_manual_cache_delete_hint(checkpoint)}"
                     ) from e
                 _set_loading("loading_weights", f"Loading TTS weights on {device}…")
@@ -1495,21 +1952,21 @@ def _load_model_sync():
                                 raise RuntimeError(
                                     f"The TTS model cache for {checkpoint} is incomplete "
                                     "and could not be auto-repaired. Open Settings → "
-                                    "Models, delete the OmniVoice TTS model, and install "
+                                    "Models, delete the VoiceStudio TTS model, and install "
                                     f"it again.{_manual_cache_delete_hint(checkpoint)}"
                                 ) from e3
                         else:
                             raise RuntimeError(
                                 f"The TTS model cache for {checkpoint} is incomplete and "
                                 f"could not be auto-repaired.{_repair_failure_detail()} "
-                                "Open Settings → Models, delete the OmniVoice TTS model, "
+                                "Open Settings → Models, delete the VoiceStudio TTS model, "
                                 f"and install it again.{_manual_cache_delete_hint(checkpoint)}"
                             ) from e2
                     else:
                         raise RuntimeError(
                             f"The TTS model cache for {checkpoint} is incomplete and "
                             "could not be auto-repaired. Open Settings → Models, delete "
-                            "the OmniVoice TTS model, and install it again."
+                            "the VoiceStudio TTS model, and install it again."
                             f"{_manual_cache_delete_hint(checkpoint)}"
                         ) from e2
 
@@ -1558,7 +2015,7 @@ def _load_model_sync():
             logger.info("torch.compile skipped: %s", e)
 
         _set_loading("ready", "Model ready", progress=100)
-        logger.info("OmniVoice model loaded successfully.")
+        logger.info("VoiceStudio model loaded successfully.")
         return _model
     except ModelLoadInterruptedByShutdown:
         raise
@@ -1675,6 +2132,45 @@ async def get_model():
         # contract unnecessary: a future unbalanced offload can no longer
         # strand the model, because the next generation moves it back.
         await _heal_tts_placement()
+        # Free idle GPU memory before this warm generate reuses the resident
+        # model. The cold-load path already evicts (_make_room_before_tts_load);
+        # this closes the WARM path for every native TTS generate (/generate, WS
+        # TTS, dub, batch, audiobook), not just a couple of routes. No-op on a
+        # roomy machine. Off the event loop because the eviction does gc.collect
+        # + cache drop + ASR teardown that can block for hundreds of ms.
+        await asyncio.get_running_loop().run_in_executor(None, make_room_before_generate)
+        return model
+
+    if running_on_gpu_pool():
+        # Same reasoning as _heal_tts_placement below, applied to the COLD
+        # path it never covered (#1417). We are on a pool worker, reached from
+        # OmniVoiceBackend._ensure_loaded(), which bootstraps a *fresh* event
+        # loop with asyncio.run(). `_model_lock` is bound to the server loop,
+        # so awaiting it here either raises outright:
+        #
+        #   RuntimeError: <asyncio.locks.Lock …> is bound to a different event loop
+        #
+        # (the reported 500 on /v1/audio/speech) or deadlocks, depending on
+        # which loop touched the lock first.
+        #
+        # The load must also run INLINE, in this very thread. Going through
+        # `_load_model_with_timeout()` would hand `_load_model_sync` back to
+        # `_get_gpu_pool()` — the pool we are currently occupying — and MPS
+        # pins that pool to a single worker, so it would wait on itself. That
+        # is the same deadlock wearing a different hat (CodeRabbit, #1418).
+        #
+        # Exclusion comes from `_model_load_thread_lock` rather than the GPU
+        # slot: holding a slot is not exclusion when the pool has more than
+        # one worker, which CUDA hosts do.
+        if model is None:
+            with _model_load_thread_lock:
+                if model is None:  # another thread loaded it while we waited
+                    from core.run_sentinel import touch_activity
+                    touch_activity("model_load", "omnivoice-tts")
+                    # Same reclaim `_load_model_with_timeout` performs; a
+                    # memory-tight machine needs it on this path too.
+                    _make_room_before_tts_load()
+                    model = _load_model_sync()
         return model
 
     async with _model_lock:
@@ -1709,18 +2205,77 @@ def _make_room_before_tts_load() -> None:
         if free_gb is None or free_gb >= _UNIFIED_OFFLOAD_HEADROOM_GB:
             return
         logger.info(
-            "Memory tight before TTS load (%.1f GB free) — releasing idle "
+            "Memory tight before TTS load (%.1f GB free), releasing idle "
             "models first.", free_gb,
         )
+        _release_idle_tts_memory("load")
+    except Exception:  # noqa: BLE001 -- making room must never break loading
+        logger.debug("pre-load memory reclaim skipped", exc_info=True)
+
+
+def _release_idle_tts_memory(stage):
+    """Drop capture-ASR, TTS side caches, and allocator caches. Best-effort;
+    never raises (a cleanup failure must not break the load/generate that called
+    it). Shared by the cold-load and warm-generate make-room paths so the
+    eviction recipe cannot drift between them (#730/#1190)."""
+    try:
         try:
             from services.asr_backend import release_idle_capture_backend
             release_idle_capture_backend(0.0)  # 0s idle = release if unleased
-        except Exception:  # noqa: BLE001 — best-effort, never block the load
-            logger.debug("capture-ASR pre-load release failed", exc_info=True)
+        except Exception:  # noqa: BLE001 -- best-effort, never blocks the caller
+            logger.debug("capture-ASR pre-%s release failed", stage, exc_info=True)
         release_tts_side_caches()
         free_vram()
-    except Exception:  # noqa: BLE001 — making room must never break loading
-        logger.debug("pre-load memory reclaim skipped", exc_info=True)
+    except Exception:  # noqa: BLE001 -- a cleanup failure must never break the caller
+        logger.debug("pre-%s memory reclaim skipped", stage, exc_info=True)
+
+
+def _should_make_room_for_generate():
+    """Decide whether to free idle GPU memory before a generate (#730/#1190).
+
+    Modes (OMNIVOICE_FREE_VRAM_BEFORE_GENERATE):
+      auto (default): free when free system RAM is below the unified headroom,
+        mirroring _make_room_before_tts_load. A roomy machine pays nothing.
+      always: free before every generate (small per-call cost from gc.collect +
+        cache drop).
+      never: opt out.
+    """
+    mode = os.environ.get("OMNIVOICE_FREE_VRAM_BEFORE_GENERATE", "auto").strip().lower()
+    if mode == "never":
+        return False
+    if mode == "always":
+        return True
+    try:
+        from services.memory_budget import available_memory
+        free_gb = (available_memory() or {}).get("ram_available_gb")
+        if free_gb is not None and free_gb < _UNIFIED_OFFLOAD_HEADROOM_GB:
+            return True
+    except Exception:  # noqa: BLE001 -- a probe failure must never block a generate
+        logger.debug("make_room memory probe failed", exc_info=True)
+    return False
+
+
+def make_room_before_generate():
+    """Free idle GPU memory before a warm, heavy generate (#730/#1190).
+
+    The cold LOAD path already evicts (``_make_room_before_tts_load`` runs inside
+    ``_load_model_with_timeout``), but the warm path (model already resident,
+    ``get_model`` returns early at the cache check) skipped it. A long generate
+    on a VRAM-tight MPS box then contended with capture-ASR and the clone-prompt
+    side cache until it exceeded the execution budget and was abandoned, which is
+    exactly how one slow synth cascaded into a stuck, device-holding backend.
+    This runs the same fail-safe eviction the load path uses, just before a
+    generate the policy says is likely to starve.
+
+    Deliberately NOT admission control and NOT a device reclaim. It only drops
+    things the app already releases on idle, just now instead of later, so a
+    roomy machine or a short synth pays nothing. It cannot kill an already
+    abandoned worker; only a crash-isolated subprocess engine can (see
+    services.subprocess_backend).
+    """
+    if not _should_make_room_for_generate():
+        return
+    _release_idle_tts_memory("generate")
 
 
 def _checkpoint_in_local_cache(checkpoint: str) -> bool:
@@ -1790,6 +2345,39 @@ async def preload_model():
         # distinguishes a real dependency problem from a shutdown-interrupted
         # import.
         logger.warning("Model preload failed (non-fatal): %s", e, exc_info=e)
+        # Non-fatal must not mean invisible (#1415). A broken dependency in the
+        # model's import chain fails here and nowhere else until the user tries
+        # to generate — so the app starts clean, reports itself healthy, and
+        # simply produces nothing, which is how the reporter's environment
+        # looked. Record it on the status the UI already reads, with the
+        # classified remedy attached; the next successful load clears it.
+        try:
+            from core.failure import build_failure
+
+            from core.failure import describe_exception
+
+            # The whole chain, not just the surface: transformers reports a
+            # broken dependency as a lazy-attribute error and keeps the real
+            # cause in __cause__, so classifying the outermost message alone
+            # loses the only part that names a remedy.
+            reason = " | ".join(
+                describe_exception(exc) for exc in _exception_chain(e)
+            ) or describe_exception(e)
+            failure = build_failure(
+                reason, stage="model-preload", include_diagnostic=False,
+            )
+            detail = failure.get("hint") or failure.get("reason") or str(e)
+        except Exception:  # noqa: BLE001 — never lose the warning to this
+            # NOT str(e): the whole point of build_failure is that it sanitizes,
+            # and an exception message routinely carries absolute paths — i.e.
+            # the user's account name — which this string is about to publish
+            # through /model/status (CWE-532; CodeRabbit). A fixed message that
+            # points at the log beats leaking one into the API.
+            detail = (
+                "The TTS model could not be loaded. Settings → Logs → Backend "
+                "has the full error."
+            )
+        _set_loading("failed", detail, error=detail)
 
 def get_model_status():
     is_loaded = model is not None
@@ -1841,7 +2429,7 @@ async def idle_worker():
         idle_timeout = _resolve_idle_timeout()
         async with _model_lock:
             if model is not None and time.time() - _last_used > idle_timeout:
-                logger.info("Idle timeout reached. Unloading OmniVoice model to free VRAM.")
+                logger.info("Idle timeout reached. Unloading VoiceStudio model to free VRAM.")
                 model = None
                 release_tts_side_caches()
                 free_vram()
@@ -2105,7 +2693,7 @@ async def _heal_tts_placement() -> None:
     """
     if _stranded_tts_target() is None:
         return
-    if threading.current_thread().name.startswith("gpu-pool"):
+    if running_on_gpu_pool():
         # Reached from a GPU-pool thread — OmniVoiceBackend._ensure_loaded()
         # bootstraps a fresh loop with asyncio.run(get_model()) from inside
         # generate(). We already hold the GPU slot, so we already have the
