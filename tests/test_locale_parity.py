@@ -39,6 +39,14 @@ _PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 # and ar.json's `__الخامس_0__` ("{{n}}" with the V literally translated).
 _CORRUPTED_TOKEN = re.compile(r"_V_\d+__|__\w+_\d+__")
 
+# Keys whose value may legitimately be nothing but placeholders + punctuation.
+# EMPTY, and worth keeping that way: the one candidate (settings.engine_switched,
+# "{{family}} → {{engine}}") turned out to be shipping the same untranslated
+# arrow in all 21 files, which is the bug this test exists to catch rather than
+# an exception to it (CodeRabbit, #1280). Add an entry only for a string no
+# translator could influence, with the reason inline.
+_PLACEHOLDER_ONLY_ALLOWLIST: set[str] = set()
+
 # Keys whose translations may deliberately omit en's placeholders.
 _PLACEHOLDER_ALLOWLIST = {
     # en: "Switch to {{lang}}?" — each locale bakes its own language name into
@@ -48,15 +56,53 @@ _PLACEHOLDER_ALLOWLIST = {
     "bootstrap.suggest_lang",
 }
 
+# Engine brand names that must never appear in a status string covering work a
+# *different* engine may be doing. ASR and TTS are both user-selectable
+# (Settings → Models), so "Transcribing with Whisper…" was a lie for anyone on
+# Parakeet or a transformers pipeline (#1352). Latin spellings only — several
+# locales transliterate ("ウィスパー", "Bisikan", "الهمس"), which no practical
+# pattern catches; the keys below are checked in every locale anyway, so the
+# common case (translators keeping the brand verbatim, as de/es/fr/nl/pt/ru all
+# did) still fails loudly, and en.json — where every one of these enters the
+# codebase first — is covered outright.
+#
+# ASCII-letter boundaries rather than ``\b``: Python's ``\b`` is unicode-aware,
+# so ``\bwhisper\b`` does NOT match "Whisperで文字起こし中" — a CJK translation
+# that keeps the Latin brand glued to the following character would slip
+# straight through (CodeRabbit). Excluding only A-Z either side still rejects
+# "whispered" and "barks", which is the point of having a boundary at all.
+_ENGINE_BRANDS = re.compile(
+    r"(?<![A-Za-z])(whisper|parakeet|demucs|cosyvoice|indextts|supertonic|"
+    r"kokoro|piper|xtts|bark|vall-?e|seed-?vc|pocket-?tts)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+
+# Status/progress strings that describe a pipeline STAGE, not a specific
+# implementation of it. Naming an engine here is a correctness bug, not a style
+# one: the label is shown while some other engine is running.
+#
+# Every transcription-stage label, not just the one #1352 reported: they are
+# the same string in four places (dub overlay, dub workflow, batch, capture),
+# so whatever put an engine name in one would have put it in the others.
+_ENGINE_AGNOSTIC_KEYS = (
+    "dub.transcribing",
+    "dub_workflow.transcribing_audio",
+    "dub_workflow.transcription_failed",
+    "batch.stage_transcribe",
+    "capture.transcribing_label",
+    "capture.transcription_failed",
+    "demo.dictation_transcribing",
+)
+
 # Missing-key ratchet: highest allowed number of en.json keys absent from each
 # locale. Counts may only go DOWN — translate keys and tighten the number.
 # Never raise one: if this fails after adding en.json keys, add the keys to
 # every locale (translated) in the same change instead.
 _MISSING_BASELINE = {
-    "ar": 518, "de": 518, "es": 518, "fr": 518, "hi": 518, "id": 518,
-    "it": 518, "ja": 518, "ko": 518, "nl": 518, "pl": 518, "pt": 518,
-    "ru": 518, "sv": 518, "th": 518, "tr": 518, "uk": 518, "vi": 518,
-    "zh-CN": 511, "zh-TW": 518,
+    "ar": 517, "de": 517, "es": 517, "fr": 517, "hi": 517, "id": 517,
+    "it": 517, "ja": 517, "ko": 517, "nl": 517, "pl": 517, "pt": 517,
+    "ru": 517, "sv": 517, "th": 517, "tr": 517, "uk": 517, "vi": 517,
+    "zh-CN": 510, "zh-TW": 517,
 }
 
 
@@ -179,6 +225,39 @@ def test_placeholders_match_en(locale):
 
 
 @pytest.mark.parametrize("locale", _LOCALES)
+def test_no_placeholder_only_values(locale):
+    """A value made of nothing but {{placeholders}} and punctuation is not a
+    translation — it is a missing string.
+
+    #1280 shipped ``engines.selectWithCaveat`` as ``"{{engine}}: {{reason}}"``
+    in all 21 files. The review read that as 20 untranslated locales, but
+    en.json said the same thing: the English string had never been written, so
+    every "translation" faithfully copied a non-sentence. Users in all 21
+    languages would have seen a bare ``omnivoice: <English backend text>``.
+
+    Parity tests cannot catch this — the key is present everywhere and the
+    placeholders match perfectly. Only the absence of prose gives it away, and
+    en.json is checked too because that is where this one started.
+    """
+    bad = []
+    for key, value in sorted(_flatten(_load(locale)).items()):
+        if not isinstance(value, str) or key in _PLACEHOLDER_ONLY_ALLOWLIST:
+            continue
+        if not _PLACEHOLDER.search(value):
+            continue
+        # \w is unicode-aware: CJK, Thai, Devanagari and Arabic all count as
+        # prose, so a real translation never trips this.
+        if not re.search(r"\w", _PLACEHOLDER.sub("", value)):
+            bad.append(f"  {key}: {value!r}")
+    assert not bad, (
+        f"{locale}.json has {len(bad)} placeholder-only value(s) — write the "
+        f"sentence around the placeholders (in en.json first, then translate "
+        f"it), or allowlist the key in _PLACEHOLDER_ONLY_ALLOWLIST with a "
+        f"reason:\n" + "\n".join(bad[:25])
+    )
+
+
+@pytest.mark.parametrize("locale", _LOCALES)
 def test_no_corrupted_placeholder_tokens(locale):
     """Guard the whole class of the vi.json incident: a translation pass that
     rewrites `{{count}}` into `_V_0__` (or similar) ships the garbage token
@@ -192,3 +271,75 @@ def test_no_corrupted_placeholder_tokens(locale):
         f"{locale}.json contains corrupted placeholder tokens "
         f"(restore the real {{{{name}}}} from en.json):\n" + "\n".join(bad[:25])
     )
+
+
+@pytest.mark.parametrize("locale", _LOCALES)
+def test_engine_agnostic_labels_name_no_engine(locale):
+    """A stage label must not name the engine that happens to implement it.
+
+    The dub overlay said "Transcribing with Whisper…" in all 21 languages while
+    ASR is a Settings → Models choice, so anyone on Parakeet or a transformers
+    pipeline was told the wrong engine was running — and a user debugging a slow
+    or failing transcription would go read Whisper's docs (#1352, thanks
+    @paoloantinori!). The same trap is one line away for any future stage label,
+    which is why this is a list to extend rather than a one-off assertion.
+
+    Deliberately checked in EVERY locale, not just en: the fix for #1352 landed
+    in en first and 5 translations kept the old engine name for a while, which
+    is exactly the drift a parity test cannot see (the key is present, the
+    placeholders match — only the brand name gives it away).
+    """
+    flat = _flatten(_load(locale))
+    bad = []
+    for key in _ENGINE_AGNOSTIC_KEYS:
+        value = flat.get(key)
+        if not isinstance(value, str):
+            continue  # absent here; the missing-key ratchet owns that case
+        hit = _ENGINE_BRANDS.search(value)
+        if hit:
+            bad.append(f"  {key}: {value!r} names {hit.group(0)!r}")
+    assert not bad, (
+        f"{locale}.json names a specific engine in a stage label that other "
+        f"engines also run — describe the STAGE, not the implementation "
+        f"(en: 'Transcribing audio…'):\n" + "\n".join(bad)
+    )
+
+
+def test_engine_brand_matcher_catches_the_forms_that_actually_ship():
+    """The matcher itself, not the current locale contents.
+
+    Every assertion here is a string a translator could plausibly write, and the
+    check is only worth having if it survives them. The CJK case is the one that
+    motivated the ASCII-letter boundaries: Python's ``\\b`` is unicode-aware, so
+    ``\\bwhisper\\b`` does not match a brand name glued to a following kana
+    (CodeRabbit).
+    """
+    caught = (
+        "Transcribing with Whisper\u2026",      # the #1352 string
+        "Whisper\u3067\u6587\u5b57\u8d77\u3053\u3057\u4e2d",  # Latin brand + kana, no ASCII boundary
+        "Transkrypcja (whisper)",                # punctuation either side
+        "\u0442\u0440\u0430\u043d\u0441\u043a\u0440\u0438\u043f\u0446\u0438\u044f Whisper",  # Cyrillic + Latin brand
+        "Bark, then transcribe",                 # short brand, still a brand
+    )
+    for value in caught:
+        assert _ENGINE_BRANDS.search(value), f"matcher missed an engine name in {value!r}"
+
+    not_caught = (
+        "whispered instructions",   # substring of an ordinary word
+        "The dog barks",            # ditto, and 'bark' is the risky short one
+        "Transcribing audio\u2026",     # the corrected en string
+    )
+    for value in not_caught:
+        assert not _ENGINE_BRANDS.search(value), f"matcher false-positived on {value!r}"
+
+
+def test_transliterated_brands_are_a_known_gap():
+    """Documented limit, asserted so it cannot be mistaken for coverage.
+
+    Several locales transliterate rather than keep the Latin spelling
+    (\u30a6\u30a3\u30b9\u30d1\u30fc, Bisikan, \u0627\u0644\u0647\u0645\u0633), and no practical pattern catches those
+    without a per-language brand table that would rot. Those five were fixed by
+    hand in #1352; if this ever starts passing because such a table was added,
+    delete this test rather than weakening the one above.
+    """
+    assert not _ENGINE_BRANDS.search("\u30a6\u30a3\u30b9\u30d1\u30fc\u3067\u6587\u5b57\u8d77\u3053\u3057\u4e2d")

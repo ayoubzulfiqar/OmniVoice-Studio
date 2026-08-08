@@ -1,8 +1,8 @@
 """SubprocessBackend — long-lived sidecar-process TTS primitive (Phase 2.1).
 
 The architectural keystone for engine isolation. Engines that need their
-own Python venv (because their dependency pins conflict with OmniVoice's
-— IndexTTS demands `transformers<5`, OmniVoice demands `transformers>=5.3`)
+own Python venv (because their dependency pins conflict with VoiceStudio's
+— IndexTTS demands `transformers<5`, VoiceStudio demands `transformers>=5.3`)
 run inside a `subprocess.Popen` child interpreter. The parent backend
 talks to them through length-prefixed JSON over the child's stdin/stdout.
 
@@ -106,7 +106,7 @@ RECV_TIMEOUT_S = 60.0
 #
 # A subprocess engine's sidecar holds a process and, for GPU engines, VRAM —
 # for the whole life of the backend, even when the user has moved on to another
-# engine. The default in-process OmniVoice model already idle-unloads via
+# engine. The default in-process VoiceStudio model already idle-unloads via
 # model_manager.idle_worker; this gives the *subprocess* engine class the same
 # treatment: a background reaper shuts down sidecars that have been idle past a
 # timeout, and the next request transparently respawns one (the base already
@@ -279,6 +279,15 @@ class SubprocessBackend(TTSBackend):
 
     # Default sample rate; subclasses override.
     _DEFAULT_SAMPLE_RATE = 24000
+
+    # Per-engine recv timeout for generate(): how long the parent waits for the
+    # sidecar's audio frame before the watchdog hard-kills the child and reclaims
+    # its VRAM/device. Default is the conservative RECV_TIMEOUT_S (60s). A
+    # subclass whose legitimate generates run longer overrides it (or exposes it
+    # as a property) so a slow-but-valid synth is not falsely killed, while a
+    # genuinely wedged one is still reclaimed. health_check() keeps using
+    # RECV_TIMEOUT_S directly, since a ping must stay fast.
+    recv_timeout_s: float = RECV_TIMEOUT_S
 
     # ── instance state (initialised in __init__) ───────────────────────────
 
@@ -518,22 +527,39 @@ class SubprocessBackend(TTSBackend):
         sample rate. Decodes the int16 PCM the sidecar returns into float32
         in [-1, 1].
         """
-        # Lazy-import the GPU pool so importing this module doesn't pull in
-        # the entire model_manager + torch ecosystem at registry-listing time.
-        from services.model_manager import _get_gpu_pool
+        # On-pool callers (every HTTP/dub/batch generate, dispatched via
+        # run_on_gpu_pool_guarded) already own a pool slot; re-acquiring would
+        # self-deadlock on a 1-worker (MPS) pool, so skip it. Off-pool callers
+        # (the deep-synth diagnostic probe in diagnose.py; the Settings
+        # self-test rejects subprocess-isolated engines with a 400) hold a real
+        # slot for the whole synthesis via _occupy so they serialize against
+        # pool jobs instead of over-subscribing the GPU.
+        from services.model_manager import running_on_gpu_pool
+        _held = None
+        # Bound before the branch: only the off-pool path assigns a real
+        # future, and `_held is not None` already implies that — but CodeQL
+        # (py/uninitialized-local-variable) reads the two as independent, and
+        # so would anyone adding a third exit path later.
+        slot_future = None
+        if not running_on_gpu_pool():
+            # Lazy-import the GPU pool so importing this module doesn't pull in
+            # the entire model_manager + torch ecosystem at registry-listing time.
+            from services.model_manager import _get_gpu_pool
+            pool = _get_gpu_pool()
+            _held = threading.Event()
+            _acquired = threading.Event()
 
-        # Acquire a GPU pool worker for the duration of this generate. The
-        # try/finally guarantees the slot is released even if the sidecar
-        # dies mid-frame (T-02-02 / Pitfall 7).
-        pool = _get_gpu_pool()
-        slot_future = pool.submit(lambda: None)
-        try:
-            slot_future.result(timeout=10)  # wait for our turn
-        except Exception:
-            slot_future.cancel()
-            raise
+            def _occupy():
+                _acquired.set()
+                _held.wait()
+
+            slot_future = pool.submit(_occupy)
 
         try:
+            if _held is not None and not _acquired.wait(timeout=10):
+                if slot_future is not None:
+                    slot_future.cancel()
+                raise TimeoutError("timed out waiting for a free GPU worker")
             with self._lock:
                 self._spawn()
                 msg = {"op": "synthesize", "text": text}
@@ -544,7 +570,31 @@ class SubprocessBackend(TTSBackend):
                     if _is_jsonable(v):
                         msg[k] = v
                 self._send(msg)
-                reply = self._recv_with_timeout(RECV_TIMEOUT_S)
+                reply = self._recv_with_timeout(self.recv_timeout_s)
+                # A cold sidecar may emit non-terminal {"op": "progress"} frames
+                # (during a model load, etc.) before the terminal audio frame.
+                # Each recv re-arms the watchdog, so a long-but-active load
+                # survives while a silent wedge is still killed at the deadline.
+                #
+                # Each frame is also reported to the GPU pool's execution clock
+                # (#1367): the sidecar heartbeats every ~5s precisely to prove a
+                # cold download is healthy, and without this the outer 300s
+                # generate budget expired mid-download and blamed the hardware.
+                while reply is not None and reply.get("op") == "progress":
+                    try:
+                        from services.model_manager import (
+                            report_model_load_activity, running_on_gpu_pool,
+                        )
+                        # Pool jobs only: an off-pool caller (the diagnostic
+                        # probe) never runs _job(), so its thread ident would
+                        # never be cleared — and a pool worker later reusing
+                        # that ident would inherit up to a grace period of
+                        # unearned extension (CodeRabbit on #1379).
+                        if running_on_gpu_pool():
+                            report_model_load_activity()
+                    except Exception:
+                        pass  # the heartbeat is best-effort; never fail a synth over it
+                    reply = self._recv_with_timeout(self.recv_timeout_s)
             if not reply:
                 raise RuntimeError(f"{self.id} sidecar closed pipe mid-generate")
             if reply.get("op") == "error":
@@ -561,12 +611,11 @@ class SubprocessBackend(TTSBackend):
             tensor = torch.from_numpy(arr.copy()).unsqueeze(0)
             return tensor
         finally:
-            # Slot is released the instant this thread leaves the pool's
-            # task — by holding slot_future we kept one worker busy; nothing
-            # further to do. (ThreadPoolExecutor doesn't expose a manual
-            # release; the slot returns to the pool when our submitted no-op
-            # finishes, which happens immediately after .result() above.)
-            pass
+            # Release the held GPU-pool worker (off-pool path only). _occupy
+            # blocks the worker until this fires, so the slot is held for the
+            # whole synthesis even though this thread isn't the pool worker.
+            if _held is not None:
+                _held.set()
 
     # ── wire protocol ──────────────────────────────────────────────────────
 

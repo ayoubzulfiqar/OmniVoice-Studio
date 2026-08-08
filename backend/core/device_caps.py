@@ -30,6 +30,7 @@ from __future__ import annotations
 import functools
 import os
 import platform as _platform
+import re
 import sys
 from dataclasses import dataclass
 from typing import Literal
@@ -111,6 +112,53 @@ def build_arch_list(torch) -> list[str]:
     return []
 
 
+_CUDA_ARCH_TAG = re.compile(r"^(sm|compute)_(\d+)([a-z]?)$")
+
+
+def cuda_build_covers(arch_list, major: int, minor: int) -> bool:
+    """Can a torch build compiled for ``arch_list`` run on CC ``major.minor``?
+
+    NOT an exact-tag match, because NVIDIA's compatibility rules are not exact
+    and PyTorch depends on that (#1285):
+
+    * **SASS (``sm_XY``) is binary-compatible upward within a major version** —
+      a cubin built for 8.6 runs on any 8.x device with minor ≥ 6. This is why
+      the official wheels ship ``sm_80``/``sm_86`` and **no ``sm_89``**: the
+      8.6 kernels already cover Ada. An exact-match gate therefore declared
+      every RTX 40-series card (4060…4090, all sm_89) unsupported and
+      force-routed it to CPU, which is exactly what #1285 reported.
+    * **PTX (``compute_XY``) JIT-compiles forward** to any newer architecture,
+      so embedded PTX at or below the device's capability is a valid path.
+    * **An ``a``/``f`` suffix (``sm_90a``) is architecture-SPECIFIC** — those
+      cubins deliberately do not forward-run, so they only count on an exact
+      capability match.
+
+    Unparseable entries are skipped rather than guessed at.
+    """
+    device_cc = major * 10 + minor
+    for entry in arch_list or ():
+        m = _CUDA_ARCH_TAG.match(str(entry).strip())
+        if not m:
+            continue
+        kind, digits, suffix = m.group(1), m.group(2), m.group(3)
+        try:
+            cc = int(digits)
+        except ValueError:
+            continue
+        e_major, e_minor = divmod(cc, 10)
+        if suffix:
+            # Arch-specific: exact capability only, whatever the kind.
+            if cc == device_cc:
+                return True
+            continue
+        if kind == "sm":
+            if e_major == major and e_minor <= minor:
+                return True
+        elif cc <= device_cc:
+            return True
+    return False
+
+
 def gfx_for_hsa_override(value: str) -> str | None:
     """``"11.0.0"`` → ``"gfx1100"``. The inverse of :func:`hsa_override_for`.
 
@@ -124,6 +172,110 @@ def gfx_for_hsa_override(value: str) -> str | None:
     if len(minor) != 1 or len(step) != 1:
         return None
     return f"gfx{int(major)}{minor}{step}"
+
+
+#: The ROCm kernel driver interface. Its absence, or its presence without
+#: permission, are the two commonest reasons a ROCm host silently runs on CPU.
+_KFD_DEVICE = "/dev/kfd"
+
+
+def why_no_gpu(torch) -> tuple[str, ...]:
+    """Why ``torch.cuda.is_available()`` said no, as user-facing advisories.
+
+    This branch used to produce **nothing** (#1274/#1228). A host with a GPU
+    the app could not use reported "Compute device: cpu / GPU active: no" and
+    stopped there — true, useless, and indistinguishable from a machine that
+    has no GPU at all. Two rounds of back-and-forth per report followed, and
+    the reporter still ended up guessing (numeric ``--group-add`` values
+    copied from another host, an ``HSA_OVERRIDE_GFX_VERSION`` that may or may
+    not have been needed).
+
+    The distinctions worth making are cheap, and the probe already knows them:
+
+    * the wheel has no GPU support compiled in at all — no amount of
+      device-passing or env vars will change that;
+    * it is a ROCm wheel and ``/dev/kfd`` is absent — in a container that is a
+      missing ``--device`` flag, not a driver problem;
+    * ``/dev/kfd`` is there but this process cannot open it — a group
+      membership problem, which is the one that bites hardest in Docker
+      because the ``render``/``video`` GIDs differ between hosts and the
+      numbers are usually copied from somewhere else;
+    * everything is present and the runtime still enumerated nothing — the
+      GPU is likely newer than this build's ROCm.
+
+    Never raises, and returns ``()`` rather than guessing when it cannot tell.
+    """
+    # Metadata access itself can raise: `torch.version` is a module attribute
+    # on a real torch, but a partially-initialised or shimmed torch-like object
+    # can expose it as a property that throws. This function's contract is that
+    # it never raises — it is called from the diagnostics path, where an
+    # exception would take out the very report meant to explain the problem
+    # (CodeRabbit, #1425).
+    try:
+        version = getattr(torch, "version", None)
+        hip = getattr(version, "hip", None)
+        cuda = getattr(version, "cuda", None)
+    except Exception:  # noqa: BLE001 - never raise from a diagnostic
+        return ()
+
+    if not hip and not cuda:
+        # A build with no GPU support compiled in. Deliberately silent: this
+        # is also every macOS wheel (MPS is probed separately, below) and
+        # every CPU Docker image, so a note here would fire on hosts that are
+        # working exactly as intended. The situations worth explaining are the
+        # ones where the build clearly meant to use a GPU and could not.
+        return ()
+
+    if hip:
+        # /dev/kfd only exists on Linux; on any other platform its absence
+        # says nothing, so don't invent a reason.
+        if sys.platform.startswith("linux"):
+            if not os.path.exists(_KFD_DEVICE):
+                return (
+                    f"ROCm {hip} is installed but {_KFD_DEVICE} is not "
+                    "present — the amdgpu kernel driver isn't loaded, or (in "
+                    "Docker) the container was started without "
+                    "--device /dev/kfd --device /dev/dri",
+                )
+            if not os.access(_KFD_DEVICE, os.R_OK | os.W_OK):
+                return (
+                    f"ROCm {hip} is installed and {_KFD_DEVICE} exists, but "
+                    "this process cannot open it — add the groups that own "
+                    "it (`ls -l /dev/kfd /dev/dri/render*`; in Docker pass "
+                    "--group-add with THAT host's render/video GIDs, which "
+                    "differ between machines)",
+                )
+        override = (os.environ.get("HSA_OVERRIDE_GFX_VERSION") or "").strip()
+        if override:
+            # Checked BEFORE blaming the ROCm version, because it is the more
+            # likely cause and the cheaper thing to test. An override remaps
+            # the GPU onto a different architecture, and pointing a natively
+            # supported card at one the runtime cannot match to the physical
+            # agent can leave HSA with no usable agents at all — which is not
+            # "a kernel failed" but "there is no device", exactly what the
+            # #1274 reporter saw. Their card (gfx1151) is natively supported
+            # by the ROCm this image ships, so the override they set is very
+            # likely what hid it.
+            return (
+                f"ROCm {hip} is installed and the device nodes are reachable, "
+                f"but no GPU was enumerated while HSA_OVERRIDE_GFX_VERSION="
+                f"{override} is set. Try removing that override first — this "
+                "ROCm supports most current cards natively, and remapping one "
+                "it already supports can leave the runtime with no usable "
+                "device. VoiceStudio sets the override itself when a card "
+                "genuinely needs it",
+            )
+        return (
+            f"ROCm {hip} is installed and the device nodes are reachable, but "
+            "no GPU was enumerated — most often a card newer than this "
+            "build's ROCm. Check `rocminfo` on the host",
+        )
+
+    return (
+        f"this is a CUDA {cuda} build but no CUDA device was found — the "
+        "NVIDIA driver is missing or too old, or (in Docker) the container "
+        "was started without --gpus all",
+    )
 
 
 def arch_unsupported(torch) -> tuple[str, tuple[str, ...]] | None:
@@ -186,7 +338,7 @@ def arch_unsupported(torch) -> tuple[str, tuple[str, ...]] | None:
         # ── CUDA: arch_list holds sm_/compute_ tags ──────────────────────
         major, minor = torch.cuda.get_device_capability(0)
         sm_tag = f"sm_{major}{minor}"
-        if sm_tag in arch_list or f"compute_{major}{minor}" in arch_list:
+        if cuda_build_covers(arch_list, major, minor):
             return None
         return sm_tag, tuple(arch_list)
     except Exception:
@@ -248,9 +400,11 @@ def _probe() -> HostCaps:
 
     # ── CUDA / ROCm (both present through torch.cuda) ────────────────────
     cuda_ok = False
+    cuda_probe_failed = False
     try:
         cuda_ok = bool(torch.cuda.is_available())
     except Exception as exc:  # broken CUDA init (forked process / driver crash)
+        cuda_probe_failed = True
         notes.append(f"CUDA init raised: {type(exc).__name__}")
 
     if cuda_ok:
@@ -286,6 +440,19 @@ def _probe() -> HostCaps:
                     f"{device_name or 'GPU'} ({device_arch}) not in this torch "
                     f"build's archs ({', '.join(archs)}) — {KERNEL_RISK_MARKER}"
                 )
+
+    elif not cuda_probe_failed:
+        # A GPU-capable build that found nothing must say why (#1274/#1228).
+        # Silence here is what made "Compute device: cpu" indistinguishable
+        # from a machine with no GPU at all.
+        #
+        # Only when the probe actually completed, though. If
+        # `torch.cuda.is_available()` RAISED we know nothing about the host's
+        # devices, and `why_no_gpu()` would report its findings as fact —
+        # "no CUDA device was found" beside "CUDA init raised", which reads as
+        # a diagnosis when it is an unfinished probe. The exception note above
+        # is the whole truth in that case (CodeRabbit, #1425).
+        notes.extend(why_no_gpu(torch))
 
     # ── Intel XPU via IPEX ───────────────────────────────────────────────
     try:

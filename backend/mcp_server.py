@@ -1,5 +1,5 @@
 """
-OmniVoice MCP Server — expose voice synthesis as AI-agent tools.
+VoiceStudio MCP Server — expose voice synthesis as AI-agent tools.
 
 Run standalone:
     python -m backend.mcp_server          # stdio transport (Claude Desktop)
@@ -99,9 +99,9 @@ def create_mcp_server():
     """Build and return the FastMCP server instance."""
     FastMCP = _ensure_mcp()
     mcp = FastMCP(
-        "OmniVoice Studio",
+        "VoiceStudio",
         instructions=(
-            "AI-agent interface for OmniVoice Studio — voice cloning, "
+            "AI-agent interface for VoiceStudio — voice cloning, "
             "voice design, and video dubbing in 646 languages."
         ),
     )
@@ -113,6 +113,24 @@ def create_mcp_server():
         mcp.settings.streamable_http_path = "/"
     except Exception:
         pass
+
+    # Extend the MCP SDK's DNS-rebinding allowlist so agents on non-localhost
+    # hosts (Docker's host.containers.internal, a LAN IP, a reverse proxy) can
+    # reach the /mcp endpoint. The SDK default is localhost-only.
+    _mcp_hosts = os.environ.get("OMNIVOICE_MCP_ALLOWED_HOSTS", "")
+    if _mcp_hosts.strip():
+        hosts = [h.strip() for h in _mcp_hosts.split(",") if h.strip()]
+        try:
+            mcp.settings.transport_security.allowed_hosts.extend(hosts)
+            # Also extend origins for both http and https (browser-based MCP
+            # clients behind a proxy send an Origin header — agent clients
+            # typically don't, but a reverse proxy may use either scheme).
+            origins = [
+                f"{scheme}://{h}" for h in hosts for scheme in ("http", "https")
+            ]
+            mcp.settings.transport_security.allowed_origins.extend(origins)
+        except Exception as e:
+            logger.warning("OMNIVOICE_MCP_ALLOWED_HOSTS not applied (%s)", e)
 
     # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -236,7 +254,7 @@ def create_mcp_server():
     async def list_languages() -> str:
         """List a sample of supported TTS languages.
 
-        OmniVoice supports 646 languages. This returns the most popular ones
+        VoiceStudio supports 646 languages. This returns the most popular ones
         plus a note about the full count.
         """
         return (
@@ -276,7 +294,7 @@ def create_mcp_server():
 
     @mcp.tool()
     async def check_health() -> str:
-        """Check if the OmniVoice backend is running and what GPU device is active."""
+        """Check if the VoiceStudio backend is running and what GPU device is active."""
         info = await _api_get("/health")
         return str(info)
 
@@ -389,7 +407,7 @@ def mount_mcp(app) -> bool:
 # ── CLI entrypoint ──────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="OmniVoice MCP Server")
+    parser = argparse.ArgumentParser(description="VoiceStudio MCP Server")
     parser.add_argument(
         "--sse", action="store_true",
         help="Use SSE transport instead of stdio (for remote agents)",

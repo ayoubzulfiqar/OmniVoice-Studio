@@ -14,6 +14,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
 
 from services.ffmpeg_utils import find_ffmpeg, spawn_subprocess
+from core.http_headers import content_disposition
 
 router = APIRouter()
 
@@ -38,7 +39,7 @@ async def stories_encode(
     synthesis producer — it never calls a TTS engine, so it must not call
     mark_synthetic (the upload may be arbitrary user audio, and marking human
     speech as synthetic would be wrong). Audio the Stories Editor stitched
-    from OmniVoice generations is already marked at its producing route, and
+    from VoiceStudio generations is already marked at its producing route, and
     the AudioSeal mark survives the lossy encode here.
     """
     fmt = (format or "mp3").lower()
@@ -76,7 +77,7 @@ async def stories_encode(
         return Response(
             content=encoded,
             media_type=mime,
-            headers={"Content-Disposition": f'attachment; filename="story.{ext}"'},
+            headers={"Content-Disposition": content_disposition(f"story.{ext}")},
         )
     finally:
         for p in (in_path, out_path):

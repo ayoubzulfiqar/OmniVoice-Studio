@@ -46,6 +46,24 @@ def _profile_instruct(row):
     return heal_design_instruct(row["instruct"], vd)
 
 
+def _note_generate_progress() -> None:
+    """Tell the pool guard this render just finished a unit of work (#1391).
+
+    Every multi-part render calls this after each part. A job that keeps
+    completing chunks is working, however slowly, and must not be abandoned as
+    "too heavy for the available compute" the way #1338/#1348/#1391 were —
+    while a job that produces nothing for a whole base budget still dies on
+    time. Never raises: a liveness signal that can break a render is worse
+    than no signal.
+    """
+    try:
+        from services.model_manager import report_generate_progress
+
+        report_generate_progress()
+    except Exception:  # noqa: BLE001 — diagnostics must not break synthesis
+        pass
+
+
 def _render_with_pauses(gen_span, segments, sample_rate):
     """Synthesize ``[(text, pause_ms), ...]`` spans and stitch silence between
     them (issue #276).
@@ -62,6 +80,7 @@ def _render_with_pauses(gen_span, segments, sample_rate):
     for span_text, pause_ms in segments:
         if span_text and span_text.strip():
             items.append(("a", gen_span(span_text)))
+            _note_generate_progress()
         if pause_ms > 0:
             n = int(round(sample_rate * pause_ms / 1000.0))
             if n > 0:
@@ -109,7 +128,7 @@ def _apply_effect_chain(audio_out, sample_rate, effect_preset, *, skip_mastering
     ``skip_mastering`` honors a backend's ``applies_own_mastering`` flag
     (issue #312): studio engines (e.g. VoxCPM2's native 48 kHz output)
     opt out of the broadcast highpass + Compressor pre-stage that's tuned
-    for OmniVoice's 24 kHz clone output. Loudness normalization still runs —
+    for VoiceStudio's 24 kHz clone output. Loudness normalization still runs —
     it's a benign peak scale. Mirrors ``_run_tts`` in openai_compat.py.
     """
     from services.audio_dsp import (
@@ -217,6 +236,24 @@ _NETWORK_MSG_SIGNATURES = (
     "getaddrinfo failed",                    # DNS down (Windows)
 )
 
+# #1335: a TLS connection cut mid-download. core/failure.py already classifies
+# this for the dub/transcribe surfaces (TLS_CONNECTION_DROPPED, #1301), but
+# /generate has its own taxonomy and never learned it — so the reporter got a
+# bare 500 carrying `_ssl.c:1016`, which means nothing to anyone. It is a
+# dropped download, so the network branch is the right owner: retry, not Flush.
+#
+# Gated on an "ssl" marker rather than matched bare (CodeRabbit): "eof occurred
+# in violation of protocol" is OpenSSL's wording, but nothing stops an
+# unrelated component from saying something similar, and mislabelling a local
+# fault as a network problem sends the user to check their connection for a
+# failure that has nothing to do with it. The real message always carries the
+# marker: "[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of
+# protocol (_ssl.c:1016)".
+_TLS_DROP_SIGNATURES = (
+    "unexpected_eof_while_reading",
+    "eof occurred in violation of protocol",
+)
+
 
 def _is_network_failure(e) -> bool:
     """True iff the failure (anywhere in its chain) is an HTTP-client
@@ -227,6 +264,8 @@ def _is_network_failure(e) -> bool:
             return True
         low = str(exc).lower()
         if any(sig in low for sig in _NETWORK_MSG_SIGNATURES):
+            return True
+        if "ssl" in low and any(sig in low for sig in _TLS_DROP_SIGNATURES):
             return True
     return False
 
@@ -294,6 +333,46 @@ def _is_config_failure(e) -> bool:
         if _CONFIG_ENV_RE.search(low) and (
             "not set" in low or "point it to" in low or "set omnivoice_" in low
         ):
+            return True
+    return False
+
+
+# Exception types that mean "the budget ran out", not "something broke".
+# asyncio.TimeoutError is an alias of the builtin on 3.11+, but the engines'
+# own wrappers are separate classes, so match by name across the chain.
+_TIMEOUT_EXC_NAMES = frozenset({
+    "TimeoutError", "GpuJobTimeoutError", "FuturesTimeoutError",
+})
+
+# Same class, stringified into a wrapper (all lowercase).
+_TIMEOUT_MSG_SIGNATURES = (
+    "timed out",
+    "timeout expired",
+    "exceeded its time budget",
+)
+
+
+def _is_timeout_failure(e) -> bool:
+    """True iff the generation ran out of *time* rather than failing (#1368).
+
+    A bare ``TimeoutError`` used to fall through to the unrecognized-error
+    catch-all, so the user was told to "retry once and report it with the full
+    trace" for the one failure mode whose cause is fully known and whose
+    message is usually EMPTY — ``TimeoutError:`` with nothing after the colon
+    tells them nothing at all.
+
+    Deliberately checked before the OOM branch: a job killed at its deadline is
+    not an allocation failure, and Flush is the wrong remedy for it.
+    """
+    for exc in _exception_chain(e):
+        if isinstance(exc, TimeoutError) or type(exc).__name__ in _TIMEOUT_EXC_NAMES:
+            return True
+        low = str(exc).lower()
+        if any(sig in low for sig in _TIMEOUT_MSG_SIGNATURES):
+            # "read timed out" is a download dying, which _is_network_failure
+            # owns and explains better; don't steal it.
+            if "read timed out" in low:
+                continue
             return True
     return False
 
@@ -371,13 +450,13 @@ def _oom_friendly_reraise(e):
     if ("[winerror 4551]" in _low or "[winerror 1260]" in _low
             or "application control policy" in _low):
         raise RuntimeError(
-            f"Windows blocked a file OmniVoice needs from running — an "
+            f"Windows blocked a file VoiceStudio needs from running — an "
             f"Application Control policy (Smart App Control, WDAC, or "
             f"AppLocker) refused to load it. On a personal PC: Windows "
             f"Security → App & browser control → Smart App Control → Off "
             f"(note Windows only lets you turn it off once — re-enabling "
-            f"needs a Windows reset), then restart OmniVoice. On a managed/"
-            f"work PC ask IT to allow the OmniVoice install folder. The Flush "
+            f"needs a Windows reset), then restart VoiceStudio. On a managed/"
+            f"work PC ask IT to allow the VoiceStudio install folder. The Flush "
             f"button won't help. Underlying error: {e}"
         ) from e
     # #1221: libsndfile/soundfile could not read or write an audio file. Its
@@ -392,7 +471,7 @@ def _oom_friendly_reraise(e):
             f"the OS level). This is a file/disk problem, not a memory one: "
             f"check the drive isn't full, the output and temp folders exist "
             f"and are writable, and that antivirus or OneDrive isn't locking "
-            f"them (add an OmniVoice exclusion if you use one). If it happens "
+            f"them (add a VoiceStudio exclusion if you use one). If it happens "
             f"only with one reference clip, re-import that clip. Underlying "
             f"error: {e}"
         ) from e
@@ -453,7 +532,7 @@ def _oom_friendly_reraise(e):
             f"This TTS engine isn't set up yet — it needs a model path or "
             f"environment variable that isn't configured, so nothing was "
             f"generated. Set it as the underlying error describes (it names the "
-            f"exact variable and what to point it at), then restart OmniVoice — "
+            f"exact variable and what to point it at), then restart VoiceStudio — "
             f"or pick a ready engine in Settings → Engines. This is a setup "
             f"problem, not a memory one. Underlying error: {e}"
         ) from e
@@ -462,13 +541,52 @@ def _oom_friendly_reraise(e):
     # never ran out of. Only claim OOM when something in the chain actually
     # looks like one; everything else surfaces as what it is — unrecognized —
     # with the real error front and center.
+    # #1368: a generate killed at its deadline is not an unrecognized fault.
+    # It arrived as a bare `TimeoutError:` with an EMPTY message, so the
+    # catch-all below asked the user to report a trace that says nothing.
+    # Checked before the OOM branch — a job that ran out of time did not run
+    # out of memory, and Flush is the wrong remedy.
+    if _is_timeout_failure(e):
+        # `TimeoutError` is routinely raised with no message, so the usual
+        # "Underlying error: …" tail rendered as a bare `TimeoutError:` —
+        # a sentence stopping mid-thought. Append it only when it says
+        # something (#1368).
+        # Test the MESSAGE, not _safe_exc_text() — that always prefixes the
+        # type name, so it is never empty and the check would never fire.
+        _tail = f" Underlying error: {_safe_exc_text(e)}" if str(e).strip() else ""
+        raise RuntimeError(
+            "The engine hit its time limit before finishing, so generation was "
+            "stopped. Nothing is broken and flushing memory won't help. The "
+            "usual causes are a first-use model download still in progress "
+            "(retry once it finishes — it resumes), a very long input, or an "
+            "engine running on CPU. Shorter text, or raising "
+            "OMNIVOICE_GENERATE_TIMEOUT_S, will get it through."
+            + _tail
+        ) from e
+    # #1334: Windows refusing to back a large model mapping (WinError 1455) is
+    # a paging-file limit, not a working-set shortage. It was matching the OOM
+    # branch below and telling the user to press Flush — advice that cannot
+    # work, as the shared hint for this class says outright ("closing other
+    # apps usually won't fix it"). Checked first so the specific case wins.
+    _low_1455 = str(e).lower()
+    if "paging file is too small" in _low_1455 or (
+        "1455" in _low_1455 and ("winerror" in _low_1455 or "os error" in _low_1455)
+    ):
+        from core.failure import _HINTS
+        raise RuntimeError(
+            "Windows ran out of virtual memory while mapping the model — its "
+            "paging file is smaller than the model needs. This is not your RAM "
+            "being full, it is not a network problem, and Flush cannot help. "
+            + _HINTS["WINDOWS_PAGING_FILE_TOO_SMALL"]
+            + f" Underlying error: {e}"
+        ) from e
     if _is_oom_failure(e):
         raise RuntimeError(
             f"TTS engine stopped mid-generation. This usually means it ran out of memory. "
             f"Try the Flush button to reload the model, then regenerate. Underlying error: {e}"
         ) from e
     raise RuntimeError(
-        f"TTS engine stopped mid-generation with an error OmniVoice doesn't "
+        f"TTS engine stopped mid-generation with an error VoiceStudio doesn't "
         f"recognize. Retry once; if it keeps failing, please report it with "
         f"the full trace. Underlying error: {_safe_exc_text(e)}"
     ) from e
@@ -491,7 +609,7 @@ def _run_inference(
     num_step, guidance_scale, speed, t_shift, denoise,
     postprocess_output, layer_penalty_factor, position_temperature,
     class_temperature, used_seed, effect_preset="broadcast",
-    max_chunk_chars=None, crossfade_ms=None,
+    max_chunk_chars=None, crossfade_ms=None, *, dropped_sink=None,
 ):
     import torch
     try:
@@ -551,11 +669,14 @@ def _run_inference(
                     if used_seed is not None:
                         torch.manual_seed(used_seed + i)
                     parts.append(_gen(chunk_text, None)[0])
-                audio_out = concatenate_audio_chunks(parts, sr, _xfade_ms)
+                    _note_generate_progress()
+                audio_out = concatenate_audio_chunks(parts, sr, _xfade_ms,
+                                                     texts=text_chunks,
+                                                     sink=dropped_sink)
             else:
                 audio_out = _gen(text, duration)[0]
 
-        # Apply DSP effect preset. The OmniVoice model never masters its own
+        # Apply DSP effect preset. The VoiceStudio model never masters its own
         # output, so mastering always runs here (unchanged behavior).
         return _apply_effect_chain(audio_out, sr, effect_preset)
 
@@ -570,15 +691,15 @@ def _run_backend_inference(
     backend, text, language, ref_audio_path, ref_text, instruct, duration,
     num_step, guidance_scale, speed, denoise, postprocess_output,
     used_seed, effect_preset="broadcast",
-    max_chunk_chars=None, crossfade_ms=None,
+    max_chunk_chars=None, crossfade_ms=None, *, dropped_sink=None,
 ):
     """Engine-aware twin of :func:`_run_inference` (issue #312).
 
     Runs the request through a pluggable ``TTSBackend`` adapter instead of the
-    OmniVoice model directly. The adapter protocol is narrower than the
-    OmniVoice-native surface — engine-specific extras (``t_shift``,
+    VoiceStudio model directly. The adapter protocol is narrower than the
+    VoiceStudio-native surface — engine-specific extras (``t_shift``,
     ``layer_penalty_factor``, …) only exist on the native path, which is why
-    OmniVoice itself still goes through ``_run_inference``.
+    VoiceStudio itself still goes through ``_run_inference``.
     """
     import torch
     try:
@@ -623,7 +744,10 @@ def _run_backend_inference(
                     if used_seed is not None:
                         torch.manual_seed(used_seed + i)
                     parts.append(backend.generate(chunk_text, duration=None, **gen_kwargs))
-                audio_out = concatenate_audio_chunks(parts, sr, _xfade_ms)
+                    _note_generate_progress()
+                audio_out = concatenate_audio_chunks(parts, sr, _xfade_ms,
+                                                     texts=text_chunks,
+                                                     sink=dropped_sink)
             else:
                 audio_out = backend.generate(text, duration=duration, **gen_kwargs)
 
@@ -634,9 +758,64 @@ def _run_backend_inference(
 
     except ValueError as e:
         # Don't wrap validation errors in OOM message
-        raise e
+        raise _language_rejection_or(e, backend, language)
     except Exception as e:
+        rewritten = _language_rejection_or(e, backend, language)
+        if rewritten is not e:
+            raise rewritten from e
         _oom_friendly_reraise(e)
+
+
+# #1257: the language picker offers all 646 languages regardless of engine,
+# because MLXAudioBackend.supported_languages() returns ["multi"] on the stated
+# assumption that "each engine silently ignores languages it doesn't know".
+# That assumption is false — the underlying library raises, and the reporter got
+# a bare 400 that recited 23 language codes without saying which engine was
+# refusing, or that switching engines was the fix.
+# Each signature must be about the LANGUAGE itself. "Unsupported language" as a
+# bare prefix also matches "Unsupported language model configuration" — a model
+# problem handed engine-switch advice it has no use for (#1257 review) — so the
+# looser wordings require the rejected thing to end there or be a code/name.
+_LANGUAGE_REJECTION_SIGNATURES = (
+    "invalid language code",
+    "language not supported",
+    "language is not supported",
+    "unsupported language code",
+)
+
+#: `unsupported language: xx` / `unsupported language 'xx'` — but not
+#: `unsupported language model ...`.
+_LANGUAGE_REJECTION_RE = re.compile(
+    r"unsupported language\s*[:=]|unsupported language\s*['\"]|"
+    r"unsupported language\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _language_rejection_or(e: BaseException, backend, language):
+    """``e`` rewritten with engine context when it's a language rejection.
+
+    Returns ``e`` unchanged otherwise, so this is safe to wrap any failure in.
+    Matched on the message, not the type: the engines multiplex third-party
+    libraries that each raise their own class.
+    """
+    text = str(e)
+    low = text.lower()
+    if not any(sig in low for sig in _LANGUAGE_REJECTION_SIGNATURES) and not (
+        _LANGUAGE_REJECTION_RE.search(text)
+    ):
+        return e
+    engine = getattr(backend, "display_name", None) or getattr(
+        type(backend), "id", type(backend).__name__
+    )
+    requested = f" '{language}'" if language else ""
+    return ValueError(
+        f"The {engine} engine can't speak{requested}. VoiceStudio offers every "
+        f"language its default engine supports, but each engine covers a "
+        f"different set — pick one this engine supports, or switch engine in "
+        f"Settings → Engines (the VoiceStudio engine has the widest coverage) "
+        f"and generate again. Engine's own message: {e}"
+    )
 
 
 def _persist_profile_ref_text(profile_id: str, ref_text: str) -> None:
@@ -831,7 +1010,7 @@ async def generate_speech(
     # The request runs on the engine selected in Settings (POST /engines/select,
     # env var OMNIVOICE_TTS_BACKEND wins), or an explicit per-request `engine`
     # override — same pattern as /ws/tts's `engine` field and /v1/audio/speech's
-    # `model`. Omitting both keeps the historical default (OmniVoice), so
+    # `model`. Omitting both keeps the historical default (VoiceStudio), so
     # existing API consumers see no change.
     from services.tts_backend import (
         OmniVoiceBackend, _mask_hf_tokens, active_backend_id, get_backend_class,
@@ -876,10 +1055,13 @@ async def generate_speech(
     except Exception:
         pass
 
+    # VRAM eviction runs in get_model()'s warm-return path now, so every native
+    # TTS generate (this route, WS TTS, dub, batch, audiobook) is covered.
+
     _model = None
     _backend = None
     if backend_cls is OmniVoiceBackend:
-        # OmniVoice keeps its native path: it carries the full advanced
+        # VoiceStudio keeps its native path: it carries the full advanced
         # parameter surface (t_shift, layer/position/class controls) that the
         # generic adapter protocol doesn't. Byte-identical to the old behavior.
         _model = await get_model()
@@ -1094,7 +1276,7 @@ async def generate_speech(
     # [[…]] one-off overrides to the text, here — AFTER `language` is fully
     # resolved (a profile may fill it above) so per-language entries match the
     # real render language, and BEFORE the text reaches either inference path
-    # (native OmniVoice or a pluggable backend) and the chunk splitter. This is
+    # (native VoiceStudio or a pluggable backend) and the chunk splitter. This is
     # the single point user text → normalized text → model, so the transform
     # covers generate for every engine. Pure text substitution → identical on
     # mac/Win/Linux. A disabled pref or empty dictionary is a pass-through, so
@@ -1143,6 +1325,10 @@ async def generate_speech(
         _segments = parse_pause_markers(text)
         _has_pause = len(_segments) > 1 or (_segments and _segments[0][1] > 0)
         _text_chunks = [] if _has_pause else split_text_into_chunks(text, max_chunk_chars)
+        # #1330 — see the non-streaming path: chunks the engine rendered to
+        # nothing land here so the stream can say the take is missing text
+        # instead of quietly handing back a short one.
+        _dropped_sink: list = []
 
         def _render_stream_chunk(i: int, chunk_text: str):
             """One text chunk → (raw engine tensor, preview-DSP tensor, sr).
@@ -1208,7 +1394,9 @@ async def generate_speech(
             non-streaming multi-chunk loop runs, as one pool job."""
             from services.chunked_tts import concatenate_audio_chunks
             try:
-                audio_out = concatenate_audio_chunks(parts, sr, crossfade_ms)
+                audio_out = concatenate_audio_chunks(parts, sr, crossfade_ms,
+                                                     texts=_text_chunks,
+                                                     sink=_dropped_sink)
                 skip = (getattr(_backend, "applies_own_mastering", False)
                         if _backend is not None else False)
                 return _apply_effect_chain(audio_out, sr, effect_preset, skip_mastering=skip)
@@ -1326,10 +1514,21 @@ async def generate_speech(
                     instruct=instruct, resolved_profile_id=resolved_profile_id,
                     used_seed=used_seed, start_time=start_time,
                 )
+                # #1330: before `done`, say what the take is missing. Its own
+                # frame rather than a `done` field so a consumer that only
+                # handles known types still surfaces it, and so the shape
+                # matches `error` (which clients already special-case).
+                if _dropped_sink:
+                    yield _line({
+                        "type": "warning", "code": "dropped_chunks",
+                        "count": len(_dropped_sink),
+                        "text": [t for t in _dropped_sink if t],
+                    })
                 yield _line({
                     "type": "done", "id": meta["id"], "audio_path": meta["filename"],
                     "duration": meta["duration"], "gen_time": meta["gen_time"],
                     "seed": used_seed, "sample_rate": sample_rate,
+                    "dropped_chunks": len(_dropped_sink),
                 })
             except (asyncio.CancelledError, GeneratorExit):
                 # Client went away mid-stream — same semantics as aborting a
@@ -1375,6 +1574,12 @@ async def generate_speech(
             headers=_stream_headers,
         )
 
+    # #1330: text whose chunk rendered to nothing. The engine dropping a chunk
+    # is silent in the waveform — the take sounds clean and is simply missing a
+    # sentence — so the render collects what it lost here and the response says
+    # so. A warning in a log the user never opens is a record of the bug, not a
+    # fix for it.
+    _dropped_text: list = []
     try:
         if _backend is not None:
             # Bounded + pool-reset on hang so a wedged generate can't starve the
@@ -1385,7 +1590,7 @@ async def generate_speech(
                     _backend, text, language, ref_audio_path, ref_text, instruct,
                     duration, num_step, guidance_scale, speed, denoise,
                     postprocess_output, used_seed, effect_preset,
-                    max_chunk_chars, crossfade_ms,
+                    max_chunk_chars, crossfade_ms, dropped_sink=_dropped_text,
                 ),
                 what="TTS generate",
                 min_vram_gb=_engine_min_vram_gb,
@@ -1402,7 +1607,7 @@ async def generate_speech(
                     num_step, guidance_scale, speed, t_shift, denoise,
                     postprocess_output, layer_penalty_factor, position_temperature,
                     class_temperature, used_seed, effect_preset,
-                    max_chunk_chars, crossfade_ms,
+                    max_chunk_chars, crossfade_ms, dropped_sink=_dropped_text,
                 ),
                 what="TTS generate",
                 min_vram_gb=_engine_min_vram_gb,
@@ -1440,6 +1645,15 @@ async def generate_speech(
             "X-Audio-Duration": str(audio_dur),
             "Content-Length": str(len(wav_bytes)),
         }
+        # #1330: the body is a WAV, so the header channel carries the notice
+        # that some of the text produced no audio. Count first (always exact),
+        # then as much of the lost text as a header can safely hold.
+        if _dropped_text:
+            from services.engine_routing import header_safe_reason
+            _resp_headers["X-OmniVoice-Dropped-Chunks"] = str(len(_dropped_text))
+            _lost = header_safe_reason(" | ".join(t for t in _dropped_text if t))
+            if _lost:
+                _resp_headers["X-OmniVoice-Dropped-Text"] = _lost
         # Routing notice (#21): cpu_fallback or accelerated-with-caveat only;
         # the WAV body is binary so the header channel is the carrier.
         if _routing_notice:

@@ -234,7 +234,7 @@ function JourneyRail({ t }) {
   return (
     <nav
       className="flex flex-wrap items-center gap-x-5 gap-y-2"
-      aria-label={t('bootstrap.title', 'OmniVoice Studio')}
+      aria-label={t('bootstrap.title', 'VoiceStudio')}
     >
       {stages.map(([label, state]) => (
         <span
@@ -613,7 +613,7 @@ export function BootstrapSplash({ stage, message }) {
                   screenshot from any of them identifies the build. */}
               <div className="flex flex-wrap items-baseline gap-2.5">
                 <h1 className="m-0 font-serif text-[clamp(1.6rem,3vw,2.2rem)] font-semibold leading-tight tracking-tight">
-                  {t('bootstrap.title', 'OmniVoice Studio')}
+                  {t('bootstrap.title', 'VoiceStudio')}
                 </h1>
                 <span className="font-mono text-[0.62rem] tracking-[0.14em] text-fg-subtle">
                   v{APP_VERSION}
@@ -913,7 +913,21 @@ export function useBootstrapStage(pollMs = 1000) {
     // (stage,message) change resets the clock so a live install never trips it.
     let lastChangeTs = Date.now();
     let lastKey = '';
-    const stallBudgetMs = (stage) => (stage === 'installing_deps' ? 20 * 60 * 1000 : 120 * 1000);
+    // `awaiting_setup` is gated on a HUMAN, not on work. Rust parks there
+    // deliberately ("nothing downloads or installs in this stage —
+    // complete_setup is the only way out of it") and waits for the install
+    // plan: mode, storage locations, region, mirrors. That is a screen built
+    // for deliberation, and a person reading it routinely takes longer than
+    // any machine stage — so a stall budget there fires on a perfectly healthy
+    // first run, replaces the setup screen with "Setup failed", and stops the
+    // IPC poll. Retry re-enters the bootstrap, which parks at awaiting_setup
+    // again, and it fails again on the same clock: an unescapable loop on the
+    // very first thing a new user sees (#1376). No budget for a stage only a
+    // person can leave.
+    const stallBudgetMs = (stage) => {
+      if (stage === 'awaiting_setup') return Infinity;
+      return stage === 'installing_deps' ? 20 * 60 * 1000 : 120 * 1000;
+    };
     const invoke = async () => {
       try {
         const { invoke: tauriInvoke } = await import('@tauri-apps/api/core');
