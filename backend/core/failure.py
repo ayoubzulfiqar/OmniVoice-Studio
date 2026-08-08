@@ -39,18 +39,40 @@ _HINTS: dict[str, str] = {
     "APPIMAGE_WEBKIT_WHITESCREEN": "Launch with WEBKIT_DISABLE_DMABUF_RENDERER=1 set.",
     "HF_AUTH_FAILED": "Set a valid HF_TOKEN in Settings → Hugging Face and retry.",
     "PYANNOTE_LICENSE_REQUIRED": "Accept the pyannote model licenses on Hugging Face, then retry.",
-    "COMPUTE_TYPE_UNSUPPORTED": "Your GPU doesn't support float16 — OmniVoice retried on int8. If transcription still fails, set OMNIVOICE/ASR_COMPUTE_TYPE=int8 or use CPU.",
-    "TRANSFORMERS_IMPORT": "Your transformers install is incomplete, or a package it loads models through (torchaudio) is missing or mismatched with your torch. Reinstall them together (`uv pip install --reinstall torch torchaudio transformers`), then restart the backend. If only transcription is affected, switching ASR to faster-whisper (Settings → Models) also works around it.",
-    "WINDOWS_APP_CONTROL_BLOCKED": "Windows refused to load a file OmniVoice needs — an Application Control policy (Smart App Control, WDAC, or AppLocker) blocked it. On a personal PC: Windows Security → App & browser control → Smart App Control → Off (Windows only lets you turn it off once — re-enabling requires a Windows reset), then restart OmniVoice. On a managed/work PC, ask IT to allow the OmniVoice install folder.",
-    "AUDIO_IO_FAILED": "An audio file couldn't be read or written at the OS level. Check the drive isn't full, that the output and temp folders exist and are writable, and that antivirus or OneDrive isn't locking them (add an OmniVoice exclusion if you use one).",
-    "VIDEO_DOWNLOAD_OS_ERROR": "The OS refused a file operation while saving the downloaded video — this is a disk/folder problem, not a network one, so retrying the same link won't help. The download is written to a job folder under your OmniVoice data directory (Settings → Storage shows the path): check that drive isn't full, that the folder exists and is writable, and that antivirus or a cloud-sync client (OneDrive, Dropbox) isn't locking it — add an OmniVoice exclusion if you use one. If your data directory sits on a synced or network drive, move it to a local one.",
-    "OS_INVALID_ARGUMENT": "The OS rejected a file operation (Errno 22 / invalid argument) — in the transcribe path this is the temporary WAV write before ASR. It's almost always the temp directory: missing, read-only, on a full or removed drive, or blocked by antivirus. Check that your system TEMP/TMP folder exists and is writable and the drive has free space (add an OmniVoice antivirus exclusion if you use one), then retry.",
-    "SOCKS_PROXY_SUPPORT_MISSING": "A SOCKS proxy is configured in your environment (ALL_PROXY/HTTPS_PROXY=socks5://…) and the backend's HTTP client is missing SOCKS support. Newer OmniVoice builds ship SOCKS support (the socksio package) — update the app. If you still see this, unset ALL_PROXY/HTTPS_PROXY for OmniVoice, or run `uv pip install 'httpx[socks]'` in the backend venv, then restart.",
-    "SSL_HANDSHAKE_FAILURE": "A corporate or antivirus proxy is intercepting HTTPS traffic and re-signing certificates with its own CA — your OS trusts that CA, but Python's bundled certifi CA list doesn't, so the TLS handshake fails even though the connection reached the server. Newer OmniVoice builds trust the OS certificate store at startup (the truststore package), which should already fix this — update the app and retry. If you still see this, add an HTTPS-scanning exclusion for OmniVoice/Python in your antivirus, or ask IT for the proxy's CA bundle and set SSL_CERT_FILE to it, then restart.",
+    "COMPUTE_TYPE_UNSUPPORTED": "Your GPU doesn't support float16 — VoiceStudio retried on int8. If transcription still fails, set OMNIVOICE/ASR_COMPUTE_TYPE=int8 or use CPU.",
+    # Literal versions, not `--constraint deploy/torch-constraints.txt`:
+    # desktop installs don't ship deploy/ (tauri.conf.json bundles only
+    # pyproject/uv.lock/backend/omnivoice), so the file-based command would
+    # fail with "file not found" for exactly the users most likely to need it
+    # (greptile on #1377). tests/test_failure_classify.py pins these literals
+    # to the constraint file so they cannot drift when the pins bump.
+    "TRANSFORMERS_IMPORT": "Your transformers install is incomplete, or a package it loads models through (torchaudio, torchvision) is missing or mismatched with your torch — a torch/torchvision version mismatch fails with exactly this wording. Reinstall them together at the pinned versions (`uv pip install --python .venv --reinstall torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 transformers` in the project folder), then restart the backend. If only transcription is affected, switching ASR to faster-whisper (Settings → Models) also works around it.",
+    "WINDOWS_APP_CONTROL_BLOCKED": "Windows refused to load a file VoiceStudio needs — an Application Control policy (Smart App Control, WDAC, or AppLocker) blocked it. On a personal PC: Windows Security → App & browser control → Smart App Control → Off (Windows only lets you turn it off once — re-enabling requires a Windows reset), then restart VoiceStudio. On a managed/work PC, ask IT to allow the VoiceStudio install folder.",
+    "WINDOWS_PAGING_FILE_TOO_SMALL": "Windows ran out of virtual memory while mapping the model into memory — its paging file is smaller than the model needs. This is not the same as your RAM being full, and closing other apps usually won't fix it: Windows has to be allowed to back the mapping. Set a bigger paging file — Settings → System → About → Advanced system settings → Performance → Settings → Advanced → Virtual memory → Change: untick \"Automatically manage\", pick your system drive, choose \"Custom size\" and set both Initial and Maximum to at least 32768 MB (more than the model's size), then OK and restart Windows. A smaller/quantized engine (OmniVoice GGUF, Supertonic-3) also avoids the large mapping entirely.",
+    "MEDIA_TOOL_MISSING": "VoiceStudio's media engine (ffmpeg/ffprobe) wasn't on the system path when a component went looking for it. Open Settings → Audio tools and use Download/Repair to fetch the bundled copy, then retry — a restart picks it up for everything. If you'd rather use a system install, install ffmpeg (macOS: `brew install ffmpeg`; Windows: `winget install Gyan.FFmpeg`; Linux: your package manager) and restart VoiceStudio, or point FFMPEG_PATH / OMNIVOICE_FFPROBE_PATH at the binaries in Settings.",
+    "AUDIO_IO_FAILED": "An audio file couldn't be read or written at the OS level. Check the drive isn't full, that the output and temp folders exist and are writable, and that antivirus or OneDrive isn't locking them (add a VoiceStudio exclusion if you use one).",
+    "VIDEO_DOWNLOAD_OS_ERROR": "The OS refused a file operation while saving the downloaded video — this is a disk/folder problem, not a network one, so retrying the same link won't help. The download is written to a job folder under your VoiceStudio data directory (Settings → Storage shows the path): check that drive isn't full, that the folder exists and is writable, and that antivirus or a cloud-sync client (OneDrive, Dropbox) isn't locking it — add a VoiceStudio exclusion if you use one. If your data directory sits on a synced or network drive, move it to a local one.",
+    "OS_INVALID_ARGUMENT": "The OS rejected a file operation (Errno 22 / invalid argument) — in the transcribe path this is the temporary WAV write before ASR. It's almost always the temp directory: missing, read-only, on a full or removed drive, or blocked by antivirus. Check that your system TEMP/TMP folder exists and is writable and the drive has free space (add a VoiceStudio antivirus exclusion if you use one), then retry.",
+    "SOCKS_PROXY_SUPPORT_MISSING": "A SOCKS proxy is configured in your environment (ALL_PROXY/HTTPS_PROXY=socks5://…) and the backend's HTTP client is missing SOCKS support. Newer VoiceStudio builds ship SOCKS support (the socksio package) — update the app. If you still see this, unset ALL_PROXY/HTTPS_PROXY for VoiceStudio, or run `uv pip install 'httpx[socks]'` in the backend venv, then restart.",
+    "SSL_HANDSHAKE_FAILURE": "A corporate or antivirus proxy is intercepting HTTPS traffic and re-signing certificates with its own CA — your OS trusts that CA, but Python's bundled certifi CA list doesn't, so the TLS handshake fails even though the connection reached the server. Newer VoiceStudio builds trust the OS certificate store at startup (the truststore package), which should already fix this — update the app and retry. If you still see this, add an HTTPS-scanning exclusion for VoiceStudio/Python in your antivirus, or ask IT for the proxy's CA bundle and set SSL_CERT_FILE to it, then restart.",
     "UNSUPPORTED_VIDEO_URL": "This link isn't a directly downloadable video. Paste a direct video page (e.g. a youtube.com/watch?v=… or douyin.com/video/<id> link), not a share/profile/feed link — or download the file and drop it in directly.",
-    "VIDEO_DOWNLOAD_NETWORK": "The connection to the video server dropped mid-download (often a transient CDN/network blip or a regional rate-limit). Just retry — OmniVoice already cleaned up the partial download. If it keeps failing, check your network/VPN.",
-    "BROKEN_VENV": "The Python backend environment was moved or damaged. OmniVoice rebuilds it automatically on the next launch; if it keeps failing, use Clean & Retry on the setup screen.",
-    "MODEL_CACHE_CORRUPT": "The model cache had broken file links — snapshot entries that no longer point at their downloaded data (interrupted renames or antivirus interference can cause this). OmniVoice repairs this automatically and retries the load once. If the error persists, quit OmniVoice, delete the model's models--<org>--<name> folder inside the Hugging Face cache, and restart — the model re-downloads automatically.",
+    "VIDEO_DRM_PROTECTED": "The video host only offered VoiceStudio a DRM-protected copy, which can't be downloaded. This is often not a property of the video itself — the host serves a different format set to different clients, and VoiceStudio already retried through every client it has. Try the link again in a minute, or download the video with a browser extension / the host's own download button and drop the file into Dubbing directly.",
+    # #1301: distinct from SSL_HANDSHAKE_FAILURE. The handshake did not fail on
+    # trust — the connection was CUT while TLS was in progress, so the certifi /
+    # proxy-CA advice above would send the user to fix something that isn't
+    # broken. Raw form is "[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in
+    # violation of protocol (_ssl.c:1016)", which means nothing to anyone.
+    "TLS_CONNECTION_DROPPED": "The secure connection was cut off mid-transfer — the other end (or something between you and it) closed the socket during the TLS exchange. This is almost always transient: flaky Wi-Fi, a VPN reconnecting, a captive portal, or a download server dropping a long transfer. Retrying is safe: a partly-downloaded MODEL is picked up where it left off rather than started over. If it repeats every time, a VPN or an HTTPS-inspecting proxy is terminating long-lived connections — try without the VPN, or on another network.",
+    "VIDEO_DOWNLOAD_NETWORK": "The connection to the video server dropped mid-download (often a transient CDN/network blip or a regional rate-limit). Just retry — VoiceStudio already cleaned up the partial download. If it keeps failing, check your network/VPN.",
+    # #1347: the transformers pipeline fails to import a component it was
+    # DOWNLOADING when the shared HTTP client closed underneath it (#880). The
+    # message names AutoFeatureExtractor, so TRANSFORMERS_IMPORT matched and
+    # told the reporter to reinstall transformers — advice that cannot work,
+    # because nothing is wrong with their install. Checked first so the cause
+    # wins over the symptom.
+    "MODEL_DOWNLOAD_INTERRUPTED": "A model download was cut off mid-request, and the component it was fetching then failed to load. Nothing is wrong with your install — reinstalling won't help, and the partial download is resumed rather than restarted. Just retry. If it keeps happening, check your connection (and any VPN, proxy or HF mirror setting); if only transcription is affected, switching ASR to faster-whisper in Settings → Models avoids the pipeline that downloads this component.",
+    "BROKEN_VENV": "The Python backend environment was moved or damaged. VoiceStudio rebuilds it automatically on the next launch; if it keeps failing, use Clean & Retry on the setup screen.",
+    "MODEL_CACHE_CORRUPT": "The model cache had broken file links — snapshot entries that no longer point at their downloaded data (interrupted renames or antivirus interference can cause this). VoiceStudio repairs this automatically and retries the load once. If the error persists, quit VoiceStudio, delete the model's models--<org>--<name> folder inside the Hugging Face cache, and restart — the model re-downloads automatically.",
     # HF_MIRROR_UNREACHABLE has a DYNAMIC hint (it names the configured mirror)
     # — see hf_mirror_hint(); build_failure special-cases it.
 }
@@ -189,7 +211,7 @@ def hf_mirror_hint(reason: Optional[str]) -> str:
         "first-run setup, use the mirror picker right on this screen — or "
         "wait for the mirror to recover, then retry: downloads pick up a "
         "mirror change immediately. If a retry still fails after switching, "
-        "restart OmniVoice."
+        "restart VoiceStudio."
     )
 
 
@@ -213,6 +235,18 @@ def append_hf_mirror_hint(text: str) -> str:
 _CONTEXT_FREE_HINT_CLASSES = frozenset({
     "SOCKS_PROXY_SUPPORT_MISSING",
     "SSL_HANDSHAKE_FAILURE",
+    # Its trigger is an exact OpenSSL string, so it cannot be confused with
+    # another failure the way a bare "timed out" could.
+    "TLS_CONNECTION_DROPPED",
+    # Requires the exact httpx closed-client wording AND an import/transformers
+    # term together, so it cannot fire on an unrelated failure (#1347).
+    "MODEL_DOWNLOAD_INTERRUPTED",
+    # #1334: triggered by WinError/os error 1455 or the literal "paging file is
+    # too small" — both unmistakable. It reached /generate as a bare 500
+    # carrying only the OS sentence, so the reporter had no way to know it was
+    # a Windows virtual-memory setting rather than a connectivity problem, and
+    # the detailed hint we already had for it never reached them.
+    "WINDOWS_PAGING_FILE_TOO_SMALL",
 })
 
 
@@ -265,26 +299,58 @@ def classify(reason: str) -> str:
     # transformers + site-packages markers, which this signature lacks.
     # #1225: the same errno raised by the DUB video download is a different
     # class with a different remedy — the failing directory is the job folder
-    # under the OmniVoice data dir, not the system temp dir. Checked first so
+    # under the VoiceStudio data dir, not the system temp dir. Checked first so
     # a download's errno 22 stops being handed the transcribe path's
     # "check your TEMP folder" hint, which sends the user to the wrong place.
     if is_os_write_refusal(reason) and any(
         marker in low for marker in _DOWNLOAD_CONTEXT_MARKERS
     ):
         return "VIDEO_DOWNLOAD_OS_ERROR"
+    # #1256: a third-party library shelled out to `ffprobe`/`ffmpeg` BY NAME and
+    # the OS had nothing to run. VoiceStudio's own code always resolves the
+    # bundled sidecar explicitly, so this only ever comes from a dependency —
+    # which meant it arrived with no class at all and the user was told the
+    # engine "stopped with an error VoiceStudio doesn't recognize". Checked
+    # before the generic errno-2 rules, which would otherwise claim it.
+    if _is_missing_media_tool(low):
+        return "MEDIA_TOOL_MISSING"
+    # #1251: Windows refused to map the model because the PAGING FILE is too
+    # small. The generate path already counted this as an OOM, but that hint
+    # ("close other apps, use a lighter engine") is the wrong remedy — the
+    # machine had 32 GB of RAM. Matched on the numeric code too, since the OS
+    # translates the message text, and in both the Python (`[WinError 1455]`)
+    # and Rust (`os error 1455`, from the safetensors mmap) spellings.
+    if "1455" in low and ("winerror" in low or "os error" in low):
+        return "WINDOWS_PAGING_FILE_TOO_SMALL"
+    if "paging file is too small" in low:
+        return "WINDOWS_PAGING_FILE_TOO_SMALL"
     if "errno 22" in low:
         return "OS_INVALID_ARGUMENT"
     # An HF cache whose snapshot entries don't resolve (dangling symlinks /
-    # zero-byte stand-ins): transformers reports the weights missing ("does
-    # not appear to have a file named pytorch_model.bin or model.safetensors")
-    # even though the blobs are fully on disk. model_manager self-heals this
-    # (delete broken entries → snapshot_download → retry once); the class here
-    # covers both the raw transformers wording (any load surface can leak it)
-    # and OmniVoice's own repair messages, so the user-facing error and the
-    # auto bug report name the class and its automatic repair.
-    if ("does not appear to have a file named" in low
-            or "broken file link" in low):
+    # zero-byte stand-ins) or which is simply missing its weight shard.
+    # model_manager self-heals this (delete broken entries → snapshot_download
+    # → retry once); the class here covers the raw transformers wordings (any
+    # load surface can leak them) and VoiceStudio's own repair messages, so the
+    # user-facing error and the auto bug report name the class and its
+    # automatic repair.
+    if is_incomplete_cache_message(low) or "broken file link" in low:
         return "MODEL_CACHE_CORRUPT"
+    # #1347: an import that failed because its DOWNLOAD died is a network
+    # problem wearing an import problem's clothes. The reporter's message named
+    # AutoFeatureExtractor *and* carried "Cannot send a request, as the client
+    # has been closed" (#880) — TRANSFORMERS_IMPORT won on the former and told
+    # them to reinstall transformers, which cannot fix a dropped connection.
+    # Checked BEFORE the import rules so the cause beats the symptom.
+    # Requires the closed-client wording itself, not merely "cannot send a
+    # request" (CodeRabbit): the latter is generic enough to appear in an
+    # unrelated failure that also mentions an import, and overriding
+    # TRANSFORMERS_IMPORT there would replace correct reinstall advice with a
+    # "just retry" that never succeeds — the same defect in the other
+    # direction.
+    if "client has been closed" in low and (
+        "import" in low or "transformers" in low or "autofeatureextractor" in low
+    ):
+        return "MODEL_DOWNLOAD_INTERRUPTED"
     if (
         "could not import module" in low
         or "autofeatureextractor" in low
@@ -319,6 +385,18 @@ def classify(reason: str) -> str:
     # certifi list doesn't (a different failure mode from #984's TCP-level
     # "can't reach the host at all"). Requires "ssl" plus a handshake/cert-
     # verify marker so a generic connection error isn't mislabelled.
+    # Check the dropped-connection shape FIRST: its text also contains "ssl",
+    # and the handshake branch below would otherwise claim it and hand out
+    # proxy/certifi advice for a socket that was simply cut (#1301).
+    # Requires an "ssl" marker as well: "unexpected EOF" on its own is a phrase
+    # a parser or an unrelated transport can also produce, and stamping the TLS
+    # taxonomy on those would hand out VPN/proxy advice for something else
+    # entirely. The OpenSSL text always carries the marker.
+    if "ssl" in low and (
+        "unexpected_eof_while_reading" in low
+        or "eof occurred in violation of protocol" in low
+    ):
+        return "TLS_CONNECTION_DROPPED"
     if "ssl" in low and (
         "handshake" in low
         or "certificate verify failed" in low
@@ -343,6 +421,13 @@ def classify(reason: str) -> str:
     # Broken pipe" still classifies as a network blip.
     if "unsupported url" in low or "no video formats" in low or "is not a valid url" in low:
         return "UNSUPPORTED_VIDEO_URL"
+    # #1254: reported as intermittent — the same URL failed, then succeeded on
+    # a retry. That is a per-player-client format set, not real DRM, so the
+    # download path now escalates the client the way it does for a 403. If
+    # every client still says DRM, the video genuinely can't be fetched and the
+    # user needs to hear that rather than retry a fourth time.
+    if "drm protected" in low or "drm-protected" in low:
+        return "VIDEO_DRM_PROTECTED"
     if (
         "broken pipe" in low
         or "connection reset" in low
@@ -381,6 +466,80 @@ def classify(reason: str) -> str:
     if "no module named 'omnivoice'" in low:
         return "BROKEN_VENV"
     return ""
+
+
+# ffmpeg/ffprobe write a version banner to STDERR on every invocation, before
+# doing any work. When a command fails we capture that stderr and it becomes
+# the error message — so the user is shown the build configuration of their
+# ffmpeg instead of what went wrong (#1309: a dub extract failure reported as
+# "extract: ffmpeg version N-125781-gacf6b520c1-20260727 Copyright (c) …").
+#
+# The real diagnosis is always AFTER the banner. Strip the boilerplate so the
+# message starts at the first line that is actually about this run.
+_FFMPEG_BANNER_START = re.compile(r"^\s*(ffmpeg|ffprobe)\s+version\s", re.IGNORECASE)
+_FFMPEG_BANNER_CONT = re.compile(
+    r"^\s+(built with|configuration:|lib[a-z]+\s+\d)", re.IGNORECASE
+)
+
+
+def strip_ffmpeg_banner(text: Optional[str]) -> str:
+    """Drop ffmpeg's version/configuration preamble from a captured stderr.
+
+    Returns the text unchanged when no banner is present, and — importantly —
+    when stripping would leave nothing: a message that is *only* a banner is
+    unhelpful, but an empty one is worse.
+    """
+    if not text:
+        return text or ""
+    lines = str(text).splitlines()
+    kept, in_banner = [], False
+    for line in lines:
+        if _FFMPEG_BANNER_START.match(line):
+            in_banner = True
+            continue
+        if in_banner:
+            # The banner is the version line plus its indented continuation
+            # block; the first line that is not part of that ends it.
+            if not line.strip() or _FFMPEG_BANNER_CONT.match(line):
+                continue
+            in_banner = False
+        kept.append(line)
+    out = "\n".join(kept).strip()
+    return out or str(text).strip()
+
+
+# Terminal escape sequences from a captured stderr (#1344). Command-line tools
+# colourize their output whenever they think a terminal is attached, and the
+# frozen backend's pipes are enough for several of them to decide that: yt-dlp
+# reported "download: ^[[0;31mERROR:^[[0m [youtube] …" verbatim into the UI,
+# where the escapes render as literal mojibake in the middle of the sentence.
+#
+# Stripping matters for more than looks: this text is also the input to the
+# pattern matching below. ``classify()``'s patterns happen to match past the
+# escape and survive it, but ``strip_ffmpeg_banner`` is anchored to the start
+# of a line — a leading colour code hides "ffmpeg version " from it and
+# quietly reinstates #1309 for any ffmpeg build that colours its output. Hence
+# the strip runs FIRST, at the choke point every failure passes through.
+#
+# CSI (colour, cursor movement) plus OSC (window title / hyperlink), which
+# yt-dlp and ffmpeg both emit and which carries its own terminator.
+_ANSI_ESCAPE = re.compile(
+    r"\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"
+)
+
+
+def strip_ansi(text: Optional[str]) -> str:
+    """Remove terminal escape sequences from a captured stderr/stdout.
+
+    Returns the text unchanged when there are none, and empty when the input
+    was nothing BUT escapes. Emptying it is correct rather than lossy:
+    ``build_failure`` already falls back to the exception class name for an
+    empty ``reason``, and a class name is a real answer where a run of escape
+    bytes copied into ``reason``/``error``/``detail`` is not (CodeRabbit).
+    """
+    if not text:
+        return text or ""
+    return _ANSI_ESCAPE.sub("", str(text))
 
 
 def sanitize(text: Optional[str]) -> str:
@@ -445,7 +604,7 @@ def _env_summary() -> str:
 def diagnostic(*, reason: str, error_class: str, stage: str) -> str:
     """A sanitized, copy-paste-friendly diagnostic block for a failed job."""
     block = (
-        "OmniVoice diagnostic\n"
+        "VoiceStudio diagnostic\n"
         "--------------------\n"
         f"Stage:   {stage}\n"
         f"Error:   {error_class}\n"
@@ -478,6 +637,71 @@ _DOWNLOAD_CONTEXT_MARKERS = (
     "yt_dlp",
     "yt-dlp",
 )
+
+
+#: The media binaries a dependency may shell out to by bare name.
+_MEDIA_TOOLS = ("ffprobe", "ffmpeg")
+
+
+def _is_missing_media_tool(low: str) -> bool:
+    """True when the failure is "the OS could not find ffprobe/ffmpeg" (#1256).
+
+    Deliberately narrow: it must name the binary *as the thing that could not
+    be found*, so a perfectly ordinary "ffmpeg failed: no such file or
+    directory: /path/to/input.wav" — a missing INPUT, an entirely different
+    problem — is not handed the "install the media engine" remedy.
+    """
+    if "no such file or directory" not in low and "[winerror 2]" not in low:
+        return False
+    # The name must appear UNQUALIFIED — quoted with no directory part, which
+    # is how a bare-name spawn fails. A path that merely ends in the tool's
+    # name ('/tmp/ffmpeg', '~/Movies/my-ffmpeg-export.mp4') is a missing FILE,
+    # an entirely different problem that must not get the "repair your media
+    # engine" remedy (#1256 review).
+    return any(
+        f"'{tool}'" in low or f'"{tool}"' in low
+        for tool in _MEDIA_TOOLS
+    )
+
+
+#: transformers' two ways of saying "this snapshot has no weight shard".
+#:
+#: They come from different code paths and share no wording, so matching only
+#: the first — which both the classifier and model_manager's self-heal used to
+#: do — silently missed half the class (#1273):
+#:
+#:   hub load:   "<repo> does not appear to have a file named
+#:                pytorch_model.bin or model.safetensors"
+#:   local dir:  "Error no file named model.safetensors, or pytorch_model.bin,
+#:                found in directory <path>"
+#:
+#: The second is what a load of a *subfolder* inside a cached snapshot raises
+#: (e.g. `audio_tokenizer/`), which is exactly where an interrupted download
+#: leaves a repo half-written. Both mean the same thing and both are repaired
+#: the same way, so both must classify and both must trigger the heal.
+_INCOMPLETE_CACHE_PHRASES = (
+    "does not appear to have a file named",
+    # Matched as two fragments: the file list between them varies with the
+    # transformers version and the requested weight variant.
+    ("error no file named", "found in directory"),
+)
+
+
+def is_incomplete_cache_message(text: str) -> bool:
+    """True when *text* is transformers reporting a snapshot with no weights.
+
+    Takes an already-lowercased string. Shared by :func:`classify` and
+    model_manager's cache self-heal so the healer and the error message can
+    never disagree about what an interrupted download looks like.
+    """
+    low = str(text).lower()
+    for phrase in _INCOMPLETE_CACHE_PHRASES:
+        if isinstance(phrase, tuple):
+            if all(part in low for part in phrase):
+                return True
+        elif phrase in low:
+            return True
+    return False
 
 
 def is_os_write_refusal(reason: Optional[str]) -> bool:
@@ -516,6 +740,33 @@ def describe_path_target(path: str) -> str:
     return "; ".join(facts)
 
 
+#: Exception types whose ``str()`` is a bare VALUE rather than a sentence, so
+#: showing it alone tells the user nothing about what went wrong.
+#: ``str(KeyError("mgw39lx3"))`` is ``"'mgw39lx3'"`` — the repr of the key.
+_VALUE_ONLY_STR_EXCEPTIONS = (KeyError,)
+
+
+def describe_exception(exc: BaseException) -> str:
+    """``str(exc)`` in a form a human can act on.
+
+    #1252/#1253: a dub ingest failed with the toast ``ingest: 'mgw39lx3'`` and
+    nothing else — the entire user-facing reason was the repr of a dict key,
+    because ``str(KeyError)`` does not mention that a lookup failed, or that it
+    was an exception at all. The reporter's ``'mgw39lx3'`` was their own job id
+    reflected back at them with no context.
+
+    Naming the class is the floor, not the goal: a failure that reaches here at
+    all is one nobody wrote a message for. It keeps the report diagnosable
+    instead of cryptic while the specific path gets its own handling.
+    """
+    text = str(exc).strip()
+    if not text:
+        return type(exc).__name__
+    if isinstance(exc, _VALUE_ONLY_STR_EXCEPTIONS):
+        return f"{type(exc).__name__}: {text}"
+    return text
+
+
 def build_failure(
     exc_or_msg: Any,
     *,
@@ -529,11 +780,18 @@ def build_failure(
     """
     if isinstance(exc_or_msg, BaseException):
         error_class = type(exc_or_msg).__name__
-        raw = str(exc_or_msg).strip() or error_class
+        raw = describe_exception(exc_or_msg)
     else:
         error_class = "Error"
         raw = str(exc_or_msg).strip() or "Unknown failure"
 
+    # Normalise the captured text before anything reads it — both the
+    # user-facing reason and classify() below, which would otherwise be
+    # matching against a build configuration string (#1309) or against
+    # terminal colour codes (#1344).
+    # ANSI first: the banner matcher anchors on "ffmpeg version " at the start
+    # of a line, which a leading colour code would push out of reach.
+    raw = strip_ffmpeg_banner(strip_ansi(raw))
     reason = sanitize(raw) or error_class
     docs_topic = classify(raw)
     # HF_MIRROR_UNREACHABLE's hint is dynamic (it names the configured mirror)

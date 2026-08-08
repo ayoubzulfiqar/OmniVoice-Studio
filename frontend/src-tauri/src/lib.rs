@@ -1,4 +1,4 @@
-//! OmniVoice Studio — Tauri desktop shell.
+//! VoiceStudio — Tauri desktop shell.
 //!
 //! Module layout:
 //!   config    – persistent app config, region helpers
@@ -52,6 +52,12 @@ pub struct BackendState {
 
 pub struct AppFlags {
     pub quitting: AtomicBool,
+    /// Whether dictation is currently recording. The tray's Start/Stop item
+    /// used to infer this from `widget.is_visible()`, which stopped meaning
+    /// anything once the widget became a permanently hidden host. The frontend
+    /// already reports every start and stop via `set_tray_recording` (it drives
+    /// the tray icon), so that same call keeps this in step.
+    pub dictating: AtomicBool,
 }
 
 pub struct TrayHandle {
@@ -282,13 +288,15 @@ fn mark_pill_noactivate(win: &tauri::WebviewWindow) {
     }
 }
 
-/// Show the pill without granting it foreground activation. Used instead of
-/// `WebviewWindow::show()` at the pill's dictation-trigger call sites on
-/// Windows — `.show()` maps to plain `ShowWindow(SW_SHOW)`, which relies on
-/// the NOACTIVATE style alone to suppress activation; `SW_SHOWNOACTIVATE` is
-/// the explicit, documented way to show a window without activating it and
-/// costs nothing extra now that the style bit is also set (#982).
+/// Show the pill without granting it foreground activation.
+///
+/// Retained but unused: the widget window is never shown (owner decision,
+/// 2026-08-07), so there is no call site left. Kept because it is the correct
+/// answer to #982 and the only place that knowledge is written down — if a
+/// visible pill ever comes back, showing it any other way re-breaks paste on
+/// Windows by stealing foreground from the app being dictated into.
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn show_pill_noactivate(win: &tauri::WebviewWindow) {
     use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
     let Ok(hwnd) = win.hwnd() else {
@@ -363,9 +371,17 @@ pub fn run() {
         // Single-instance MUST be registered first.
         .plugin(tauri_plugin_single_instance::init(move |app, _argv, _cwd| {
             log::info!("Second instance attempted — focusing existing window");
-            let target = if pill_mode { "widget" } else { "main" };
-            if let Some(win) = app.get_webview_window(target) {
+            // Always the studio window, never the widget. In pill mode this
+            // used to target "widget" and show() it — which is precisely the
+            // empty rectangle the hidden-host contract exists to prevent, and
+            // relaunching the app is a plausible thing to do when one is stuck
+            // on your desktop. Pill mode hides the studio window rather than
+            // closing it, and a second launch is the user asking for the app,
+            // so show that instead — the same thing the tray's "Open
+            if let Some(win) = app.get_webview_window("main") {
                 let _ = win.show();
+                #[cfg(not(target_os = "macos"))]
+                let _ = win.set_skip_taskbar(false);
                 let _ = win.unminimize();
                 let _ = win.set_focus();
             }
@@ -492,6 +508,18 @@ pub fn run() {
                 .visible(false)
                 .skip_taskbar(true)
                 .center()
+                // Stamp the window's identity BEFORE any app script runs.
+                // main-app.jsx used to learn it from `getCurrentWindow().label`,
+                // which throws if `__TAURI_INTERNALS__` isn't injected yet; the
+                // catch then fell back to a URL query Tauri 2 cannot set, so the
+                // widget silently decided it was the main window. It then
+                // rendered <App/> instead of <CaptureWidget/>: no
+                // `data-window="widget"` (opaque chrome background), no pill,
+                // and — because the idle-hide reconcile lives in CaptureWidget —
+                // nothing left that could ever hide it. That is the dark
+                // rectangle stuck on the desktop until the app was killed.
+                // An init script cannot race: it is evaluated before page load.
+                .initialization_script("window.__OV_WINDOW__ = 'widget';")
                 .build();
                 if let Err(e) = &result {
                     log::error!("Failed to create widget window: {e:?}");
@@ -506,6 +534,7 @@ pub fn run() {
 
             app.manage(AppFlags {
                 quitting: AtomicBool::new(false),
+                dictating: AtomicBool::new(false),
             });
             app.manage(TrayHandle {
                 tray: Mutex::new(None),
@@ -527,27 +556,11 @@ pub fn run() {
                             match event.state {
                                 ShortcutState::Pressed => {
                                     log::info!("Global shortcut pressed: dictation start");
-                                    // Show the widget window (works in both pill + studio mode)
-                                    if let Some(win) = app_handle.get_webview_window("widget") {
-                                        // Position pill at bottom-center — WhisperFlow / Ghost-Pepper
-                                        // style — via tauri-plugin-positioner. Falls back to center()
-                                        // if the plugin can't resolve the monitor geometry.
-                                        if win.move_window(Position::BottomCenter).is_err() {
-                                            let _ = win.center();
-                                        }
-                                        // Windows: show without granting foreground activation
-                                        // (#982) — `.show()` on other platforms is unaffected.
-                                        #[cfg(target_os = "windows")]
-                                        show_pill_noactivate(&win);
-                                        #[cfg(not(target_os = "windows"))]
-                                        let _ = win.show();
-                                        // Don't steal focus on macOS or Windows: the simulated
-                                        // ⌘V/Ctrl+V from simulate_paste() must land in the app
-                                        // the user is dictating into — focusing the widget would
-                                        // swallow it (#287 macOS, #982 Windows).
-                                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                                        let _ = win.set_focus();
-                                    }
+                                    // The widget window is never shown (owner
+                                    // decision, 2026-08-07): it stays a hidden
+                                    // host for the recorder, and dictation gives
+                                    // no on-screen pill. See the window builder
+                                    // above for why it must still exist.
                                     let _ = app_handle.emit("tray-dictate", ());
                                 }
                                 ShortcutState::Released => {
@@ -592,7 +605,7 @@ pub fn run() {
                 let dictate_i = MenuItemBuilder::new("Start Dictation  ⌘⇧Space")
                     .id("dictate")
                     .build(app)?;
-                let open_studio_i = MenuItemBuilder::new("Open OmniVoice Studio")
+                let open_studio_i = MenuItemBuilder::new("Open VoiceStudio")
                     .id("open_studio")
                     .build(app)?;
                 let quit_i = MenuItemBuilder::new("Quit Dictation")
@@ -607,7 +620,7 @@ pub fn run() {
                     .build()?
             } else {
                 // Studio mode: full tray
-                let show_i = MenuItemBuilder::new("Show OmniVoice")
+                let show_i = MenuItemBuilder::new("Show VoiceStudio")
                     .id("show")
                     .build(app)?;
                 let dictate_i = MenuItemBuilder::new("Start Dictation  ⌘⇧Space")
@@ -619,7 +632,7 @@ pub fn run() {
                 let settings_i = MenuItemBuilder::new("Settings")
                     .id("settings")
                     .build(app)?;
-                let quit_i = MenuItemBuilder::new("Quit OmniVoice")
+                let quit_i = MenuItemBuilder::new("Quit VoiceStudio")
                     .id("quit")
                     .build(app)?;
                 MenuBuilder::new(app)
@@ -637,7 +650,7 @@ pub fn run() {
             let tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&tray_menu)
-                .tooltip(if pill_mode_tray { "OmniVoice Dictation" } else { "OmniVoice Studio" })
+                .tooltip(if pill_mode_tray { "VoiceStudio Dictation" } else { "VoiceStudio" })
                 .on_menu_event(move |app, event| {
                     match event.id().as_ref() {
                         "show" => {
@@ -691,35 +704,15 @@ pub fn run() {
                             app.exit(0);
                         }
                         "dictate" => {
-                            // Toggle: if the widget is visible (recording), stop;
-                            // otherwise start dictation. On start, show + position
-                            // + focus the widget BEFORE emitting tray-dictate so
-                            // the user sees the pill instead of silent recording.
-                            // Positioning mirrors the global-shortcut handler:
-                            // bottom-center (WhisperFlow style). Windows skips the
-                            // focus (and uses a non-activating show) for the same
-                            // reason the global-shortcut handler does — see #982.
-                            if let Some(win) = app.get_webview_window("widget") {
-                                if win.is_visible().unwrap_or(false) {
-                                    let _ = app.emit("tray-dictate-stop", ());
-                                } else {
-                                    if win.move_window(Position::BottomCenter).is_err() {
-                                        let _ = win.center();
-                                    }
-                                    #[cfg(target_os = "windows")]
-                                    show_pill_noactivate(&win);
-                                    #[cfg(not(target_os = "windows"))]
-                                    {
-                                        let _ = win.show();
-                                        let _ = win.set_focus();
-                                    }
-                                    let _ = app.emit("tray-dictate", ());
-                                }
+                            // Toggle start/stop. This used to ask the widget
+                            // window whether it was visible; the widget is now a
+                            // permanently hidden host, so visibility says nothing
+                            // about whether we are recording. `dictating` is kept
+                            // current by the frontend's existing
+                            // `set_tray_recording` call on every start and stop.
+                            if app.state::<AppFlags>().dictating.load(Ordering::SeqCst) {
+                                let _ = app.emit("tray-dictate-stop", ());
                             } else {
-                                log::warn!(
-                                    "Tray dictate: widget window not found — \
-                                     emitting tray-dictate without visible UI"
-                                );
                                 let _ = app.emit("tray-dictate", ());
                             }
                         }
@@ -762,7 +755,7 @@ pub fn run() {
                 // shortcut or tray 'Start Dictation'. Pre-position it now so
                 // the first show appears at bottom-center without an
                 // animation/frame flicker. Trade-off accepted vs the original
-                // 'looks-launch-failed' concern: the tray icon + 'OmniVoice
+                // 'looks-launch-failed' concern: the tray icon + 'VoiceStudio
                 // Dictation' tooltip provide the app-running signal.
                 match app.get_webview_window("widget") {
                     Some(win) => {
@@ -845,7 +838,7 @@ pub fn run() {
                     Some(v) if backend::same_app_version(&v) => {
                         if backend::backend_deep_healthy(backend_port()) {
                             log::info!(
-                                "Port {} already serving OmniVoice backend v{} — attaching",
+                                "Port {} already serving VoiceStudio backend v{} — attaching",
                                 backend_port(), v
                             );
                             set_stage(&stage_handle, BootstrapStage::Ready);
@@ -855,7 +848,7 @@ pub fn run() {
                         // install was wiped/corrupted while it kept running. Attaching
                         // would look alive and 500 on everything — replace it.
                         log::warn!(
-                            "Port {} serves OmniVoice v{} but failed the deep health probe — replacing it",
+                            "Port {} serves VoiceStudio v{} but failed the deep health probe — replacing it",
                             backend_port(), v
                         );
                         backend::kill_orphan_on_port(backend_port());
@@ -867,7 +860,7 @@ pub fn run() {
                         // old backend code. Replace it (see backend.rs
                         // same_app_version for the full story).
                         log::warn!(
-                            "Port {} serves a stale OmniVoice backend (v{} != app v{}) — replacing it",
+                            "Port {} serves a stale VoiceStudio backend (v{} != app v{}) — replacing it",
                             backend_port(),
                             if v.is_empty() { "<unknown>" } else { v.as_str() },
                             env!("CARGO_PKG_VERSION"),

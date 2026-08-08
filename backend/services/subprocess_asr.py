@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from pathlib import Path
 
 from services.subprocess_backend import (
@@ -81,17 +82,31 @@ class SubprocessASRBackend(SubprocessBackend):
         broken-pipe) — and the *next* call respawns a fresh sidecar via
         ``_spawn``'s dead-process check. Acquires a GPU-pool slot for the
         duration, released even if the child dies (the base's try/finally)."""
-        from services.model_manager import _get_gpu_pool
+        # On-pool callers (run_transcribe_guarded dispatches via run_in_executor
+        # on the GPU pool) already own a pool slot; re-acquiring would
+        # self-deadlock on a 1-worker (MPS) pool, so skip it. Off-pool callers
+        # hold a real slot for the whole transcription via _occupy. Mirrors
+        # SubprocessBackend.generate()'s path-aware slot block.
+        from services.model_manager import running_on_gpu_pool
+        _held = None
+        slot_future = None
+        if not running_on_gpu_pool():
+            from services.model_manager import _get_gpu_pool
+            pool = _get_gpu_pool()
+            _held = threading.Event()
+            _acquired = threading.Event()
 
-        pool = _get_gpu_pool()
-        slot = pool.submit(lambda: None)
-        try:
-            slot.result(timeout=10)
-        except Exception:
-            slot.cancel()
-            raise
+            def _occupy():
+                _acquired.set()
+                _held.wait()
+
+            slot_future = pool.submit(_occupy)
 
         try:
+            if _held is not None and not _acquired.wait(timeout=10):
+                if slot_future is not None:
+                    slot_future.cancel()
+                raise TimeoutError("timed out waiting for a free GPU worker")
             with self._lock:
                 self._spawn()
                 self._send({
@@ -118,7 +133,8 @@ class SubprocessASRBackend(SubprocessBackend):
                 )
             return reply.get("result") or {"segments": [], "language": "unknown"}
         finally:
-            pass  # slot returns to the pool when the no-op task completes
+            if _held is not None:
+                _held.set()
 
 
 class IsolatedFasterWhisperBackend(SubprocessASRBackend):
@@ -145,7 +161,13 @@ class IsolatedFasterWhisperBackend(SubprocessASRBackend):
             return False, f"faster-whisper not installed: {e}"
         if not cls.sidecar_script().is_file():
             return False, f"ASR sidecar script missing at {cls.sidecar_script()}"
-        return True, "ready"
+        # Same CTranslate2 engine, same cuDNN 8 requirement (#1371). Crash
+        # isolation means a missing cuDNN 8 kills only the child — so instead of
+        # a dead backend the user gets a sidecar that fails every transcribe
+        # with no explanation. Report it here, where Settings → Engines shows it.
+        from services.asr_backend import _ctranslate2_cudnn_ok
+
+        return _ctranslate2_cudnn_ok()
 
     @classmethod
     def venv_python(cls) -> Path:
