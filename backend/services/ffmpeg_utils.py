@@ -194,7 +194,7 @@ def find_ffmpeg():
       1. ``FFMPEG_PATH`` env var (set by Tauri when a sidecar is bundled, or
          by the user's Settings → Audio tools override via prefs).
       2. ``imageio-ffmpeg`` pip package (ships a static binary per platform).
-      3. OmniVoice-acquired static bundle (``services.media_tools``) — the
+      3. VoiceStudio-acquired static bundle (``services.media_tools``) — the
          checksummed build the app downloads itself when nothing else
          resolves; the only bundled tier that also ships ffprobe.
       4. Common system paths / ``PATH``.
@@ -216,7 +216,7 @@ def find_ffmpeg():
         logger.debug("imageio_ffmpeg binary not usable at %s", candidate)
     except Exception as e:
         logger.debug("imageio_ffmpeg unavailable: %s", e)
-    # 3. OmniVoice-acquired bundled static binary (never downloads here —
+    # 3. VoiceStudio-acquired bundled static binary (never downloads here —
     # acquisition is media_tools' background job; this only picks up an
     # already-installed build).
     candidate = _acquired_bundled("ffmpeg")
@@ -263,7 +263,7 @@ def resolve_ffprobe() -> str | None:
       2. ``FFPROBE_PATH`` env var — legacy alias kept for backward
          compatibility with older Tauri shells / dev environments; also the
          key Settings → Audio tools persists a user override under.
-      3. OmniVoice-acquired static bundle (``services.media_tools``) —
+      3. VoiceStudio-acquired static bundle (``services.media_tools``) —
          imageio-ffmpeg ships no ffprobe, so this is the bundled tier that
          closes the source-install gap.
       4. ``shutil.which("ffprobe")`` — system ``PATH`` fallback.
@@ -312,6 +312,67 @@ def find_ffprobe():
     except Exception:
         pass
     return None
+
+
+def ensure_media_tools_on_path() -> list[str]:
+    """Put the resolved ffmpeg/ffprobe on ``PATH`` for third-party code (#1256).
+
+    VoiceStudio's own call sites always resolve an explicit path, so a bundled
+    sidecar that was never on ``PATH`` works fine for us. Our dependencies do
+    not get that courtesy: a library that shells out to ``ffprobe`` by bare
+    name dies with ``FileNotFoundError: [Errno 2] No such file or directory:
+    'ffprobe'``. The reporter of #1256 hit that mid-synthesis and was told the
+    engine had "stopped with an error VoiceStudio doesn't recognize", on a Mac
+    where the app's OWN ffprobe was sitting on disk, resolvable, the whole
+    time.
+
+    Prepending the resolved binaries' directories fixes every such dependency
+    at once, rather than chasing them one import at a time. Prepended (not
+    appended) so the copy we validated wins over a broken system one.
+
+    Returns the directories added. Idempotent, best-effort, never raises.
+    """
+    added: list[str] = []
+    try:
+        directories: list[str] = []
+        for resolve in (find_ffmpeg, find_ffprobe):
+            try:
+                path = resolve()
+            except Exception:
+                continue
+            if not path:
+                continue
+            directory = os.path.dirname(os.path.abspath(path))
+            if directory and directory not in directories:
+                directories.append(directory)
+
+        current = os.environ.get("PATH", "")
+        entries = current.split(os.pathsep) if current else []
+        # Case-insensitive comparison on Windows/macOS, where PATH is not
+        # case-sensitive and "already present" must not depend on casing.
+        normalize = os.path.normcase
+        present = {normalize(e) for e in entries if e}
+        for directory in directories:
+            if normalize(directory) in present:
+                continue
+            entries.insert(0, directory)
+            present.add(normalize(directory))
+            added.append(directory)
+
+        if added:
+            os.environ["PATH"] = os.pathsep.join(entries)
+            # Count, not paths: a user-set FFMPEG_PATH resolves under their home
+            # directory, and absolute home paths must not reach the log
+            # (#1256 review). find_ffmpeg/find_ffprobe already log their own
+            # resolution at debug level when that detail is wanted.
+            logger.info(
+                "Published %d media-tool director%s on PATH so dependencies can "
+                "find ffmpeg/ffprobe (#1256)",
+                len(added), "y" if len(added) == 1 else "ies",
+            )
+    except Exception as e:  # diagnosis must never break the thing it helps
+        logger.debug("ensure_media_tools_on_path failed (non-fatal): %s", e)
+    return added
 
 
 async def _spawn_async(cmd, **kwargs):

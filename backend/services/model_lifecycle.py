@@ -73,7 +73,7 @@ def list_loaded() -> dict:
     models: list[dict] = []
     active_tts = _active_tts_id()
 
-    # 1. In-process TTS model (OmniVoice)
+    # 1. In-process TTS model (VoiceStudio)
     if mm.model is not None:
         try:
             device = str(next(mm.model.parameters()).device) if hasattr(mm.model, "parameters") else get_best_device()
@@ -81,7 +81,7 @@ def list_loaded() -> dict:
             device = get_best_device()
         models.append({
             "id": "tts",
-            "name": "OmniVoice TTS",
+            "name": "VoiceStudio TTS",
             "checkpoint": mm.resolve_omnivoice_checkpoint(),  # #693: effective checkpoint, not a leaked raw value
             "device": device,
             "vram_mb": round(_tts_vram_mb(), 1),
@@ -135,8 +135,8 @@ def list_loaded() -> dict:
 
     # 5. In-process engine instances that hold a model (mlx-audio, cosyvoice,
     #    voxcpm2, kittentts, …). These live in the generate path's instance
-    #    cache, separate from the OmniVoice core above — and were INVISIBLE here
-    #    until now, so a resident non-OmniVoice engine (up to a few GB) didn't
+    #    cache, separate from the VoiceStudio core above — and were INVISIBLE here
+    #    until now, so a resident non-VoiceStudio engine (up to a few GB) didn't
     #    show in the panel at all. Report each that currently holds a model.
     #    VRAM isn't self-reported by these engines → 0 (unmeasured), same
     #    convention as a CPU/uninstrumented sidecar. Enumeration is best-effort.
@@ -224,6 +224,45 @@ async def unload(model_id: str) -> dict:
             mm.free_vram()
             return {"unloaded": "diarization", "success": True}
         return {"unloaded": "diarization", "success": False, "reason": "not loaded"}
+
+    # The warm dictation ASR (#1247, same defect). It is listed with
+    # ``"unloadable": True`` and had no branch either — found by the contract
+    # test written for the engine case, which is the whole reason that test
+    # enumerates the listing instead of hard-coding ids.
+    if model_id == "capture-asr":
+        import services.asr_backend as ab
+
+        if getattr(ab, "_capture_backend", None) is None:
+            return {"unloaded": model_id, "success": False, "reason": "not loaded"}
+        # idle_s=0 → release now. Still declines while a dictation stream holds
+        # a lease; yanking the model out from under an open session is exactly
+        # what the lease exists to prevent.
+        if ab.release_idle_capture_backend(0.0):
+            return {"unloaded": model_id, "success": True}
+        return {"unloaded": model_id, "success": False, "reason": "in use by dictation"}
+
+    # In-process engines (#1247). `list_loaded_models` has advertised these as
+    # `engine:<id>` with `"unloadable": True` since they were made visible in
+    # the panel — but this dispatcher never grew a branch for them, so pressing
+    # Unload on any of those rows answered `400 Unknown model id:
+    # engine:kittentts`. The engines already implement `unload()`; only the
+    # routing was missing.
+    if model_id.startswith("engine:"):
+        engine_id = model_id.split(":", 1)[1]
+        from api.routers.engines import _ENGINE_INSTANCES
+
+        for cls, inst in list(_ENGINE_INSTANCES.items()):
+            if (getattr(cls, "id", cls.__name__)) != engine_id:
+                continue
+            held = any(
+                getattr(inst, attr, None) is not None
+                for attr in getattr(inst, "_MODEL_ATTRS", ("_model", "_tts"))
+            )
+            if not held:
+                return {"unloaded": model_id, "success": False, "reason": "not loaded"}
+            inst.unload()  # idempotent by contract; frees device caches itself
+            return {"unloaded": model_id, "success": True}
+        return {"unloaded": model_id, "success": False, "reason": "not loaded"}
 
     raise ValueError(f"Unknown model id: {model_id}")
 
